@@ -16,6 +16,10 @@ thao tác.
 3. [Hướng dẫn từng bước: app "Đơn xin nghỉ"](09-tutorial-leave-request.md) —
    tutorial hoàn chỉnh một app thật: form + bảng dữ liệu + danh tính user.
 
+**Dùng terminal hoặc AI agent** — [CLI `erp` & AI agent](10-cli-va-ai-agent.md):
+`erp doctor` để chẩn đoán kết nối/quyền, `erp objects show` để xem schema thật,
+`erp init` để sinh app chạy được, `erp skill install` để agent nắm cách làm.
+
 **Tra cứu khi viết code:**
 
 | Tài liệu | Nội dung |
@@ -26,6 +30,7 @@ thao tác.
 | [06 — Phân quyền](06-phan-quyen.md) | Service account, khai báo permission, `can()`/`assertPermissions()`, các tầng IAM |
 | [07 — Triển khai & vận hành](07-trien-khai-van-hanh.md) | Cài app (template/repo/zip), vòng đời deploy, ENV được inject, logs, logo, lỗi thường gặp |
 | [08 — API reference](08-api-reference.md) | Toàn bộ export của SDK: chữ ký hàm, kiểu dữ liệu, error |
+| [10 — CLI `erp` & AI agent](10-cli-va-ai-agent.md) | Khám phá workspace từ terminal (`doctor`, `objects show`, `records query`), sinh app bằng `erp init`, cài skill cho agent |
 
 ## Bức tranh 30 giây
 

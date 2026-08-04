@@ -12,7 +12,7 @@ function createMiniApp(config: MiniAppConfig): Promise<ErpClient>
 
 interface MiniAppConfig {
   baseUrl: string;                    // SDK tự thêm /api/v1
-  apiKey?: string;                    // erp_sk_... — xác thực service account (header X-API-Key)
+  apiKey?: string;                    // API key IAM (erp_sk_... service account, erp_uk_... user) — header X-API-Key
   accessToken?: string;               // hoặc JWT user (header Authorization: Bearer)
   workspaceId?: string;               // cần khi dùng accessToken và user không có default workspace;
                                       // bị bỏ qua khi dùng apiKey (key tự pin workspace)
@@ -21,8 +21,10 @@ interface MiniAppConfig {
 }
 ```
 
-Throw nếu không có `apiKey` lẫn `accessToken`, hoặc `apiKey` không bắt đầu
-bằng `erp_sk_` (`API_KEY_PREFIX`).
+Throw nếu không có `apiKey` lẫn `accessToken`. SDK không kiểm tra prefix của
+key — key sai/hết hạn sẽ lộ ra ở request đầu tiên dưới dạng `ErpApiError` 401.
+(`API_KEY_PREFIX = "erp_sk_"` vẫn export để tham chiếu, không còn dùng để
+validate.)
 
 ## ErpClient
 

@@ -3,7 +3,7 @@ import {
   UnknownFieldError,
   UnknownObjectError,
 } from "./errors";
-import { API_KEY_PREFIX, FetchHttp, type Http } from "./http";
+import { FetchHttp, type Http } from "./http";
 import { ObjectHandle } from "./objects";
 import { isAllowed, missingPermissions } from "./permissions";
 import type {
@@ -19,7 +19,7 @@ import type {
 
 export interface MiniAppConfig {
   baseUrl: string;
-  /** Service-account API key (erp_sk_...) issued from IAM. */
+  /** API key issued from IAM — service account (erp_sk_...) or user (erp_uk_...). */
   apiKey?: string;
   /** Alternative: a user access token (JWT) for user-context apps. */
   accessToken?: string;
@@ -227,9 +227,6 @@ export class ErpClient {
 export async function createMiniApp(config: MiniAppConfig): Promise<ErpClient> {
   if (!config.apiKey && !config.accessToken) {
     throw new Error("Either apiKey or accessToken is required");
-  }
-  if (config.apiKey && !config.apiKey.startsWith(API_KEY_PREFIX)) {
-    throw new Error(`apiKey must start with "${API_KEY_PREFIX}"`);
   }
 
   const http = new FetchHttp(config);

@@ -17,6 +17,40 @@ belong on a server — don't ship `erp_sk_*` keys to browsers.
 npm install erp-sdk        # or: npm install ../erp-sdk (local path while unpublished)
 ```
 
+## CLI
+
+Installing the package also installs `erp`, a JSON-first CLI for exploring a
+workspace and scaffolding apps — for humans in a terminal and for coding agents
+alike. Results print as JSON on stdout; notes and errors as JSON on stderr.
+
+```bash
+export ERP_BASE_URL=http://localhost:8000 ERP_API_KEY=erp_sk_...
+
+npx erp doctor --require object:record:create   # env, connectivity, permissions
+npx erp objects show "Đơn xin nghỉ"             # fields, types, config
+npx erp records query "Hóa đơn" --where "Trạng thái=approved" --sort "Tổng tiền:desc" --limit 20
+npx erp records create "Hóa đơn" --set "Trạng thái=draft" --set "Tổng tiền=500000"
+npx erp schema dump --out schema.json           # whole workspace as JSON
+npx erp init my-app --name "Đơn xin nghỉ"       # runnable Express mini app
+```
+
+Errors carry what you need to fix them — `UnknownFieldError` lists the valid
+fields, `MissingPermissionsError` lists the exact `resource:action` pairs to
+grant. `erp help` for the command list, `erp help <command>` for details.
+
+## For AI agents
+
+`erp help --json` returns the entire command surface as machine-readable JSON,
+and the package ships a skill teaching agents this SDK — the mini app model,
+initData, the two authority modes, and the CLI:
+
+```bash
+npx erp skill install               # → .claude/skills/erp-miniapp
+npx erp skill path                  # or just point an agent at the files
+```
+
+See [docs/10-cli-va-ai-agent.md](docs/10-cli-va-ai-agent.md) (tiếng Việt).
+
 ## Quick start
 
 When the app is installed through the ERP's **Mini App module**
