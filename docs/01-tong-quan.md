@@ -28,6 +28,9 @@ Admin cài app (POST /mini-apps: template / repo git / upload zip)
 ERP tạo service account riêng cho app + API key erp_sk_…
         │
         ▼
+Source có schema.json?  ──► workspace chưa khớp: schemaStatus "pending",
+        │                    KHÔNG build gì cho tới khi người deploy duyệt
+        ▼
 Worker deploy:  clone/giải nén source ──► nixpacks build image
                 ──► chạy container sau Traefik
                 ──► inject ENV: ERP_BASE_URL, ERP_API_KEY, ERP_WORKSPACE_ID, PORT
@@ -54,7 +57,9 @@ tự chọn workspace khác; backend tự scope mọi request theo key.
 ### 2. Service account — danh tính của app
 
 Lúc cài, ERP tạo một service account (một "user máy") riêng cho app, gắn
-membership vào workspace với role admin/member/viewer do người cài chọn.
+membership vào workspace với role `member` (mặc định — đọc/ghi record) hoặc
+`viewer` (chỉ đọc) do người cài chọn. **Không còn role `admin`**: app không bao
+giờ được tự tạo bảng.
 Record do app tạo mang `createdBy` = service account đó. API key `erp_sk_…`
 chính là credential của service account này.
 
@@ -63,8 +68,10 @@ chính là credential của service account này.
 Thay vì tự dựng Postgres, app dùng bảng của ERP: **object** (bảng) chứa
 **field** (cột, 18 kiểu: text, number, date, single_select, relation…) chứa
 **record** (dòng, có version để optimistic lock, soft delete + restore).
-App có thể tự tạo bảng của riêng nó lúc boot (`ensureObject` — idempotent)
-hoặc đọc/ghi bảng có sẵn của workspace. Chi tiết: [03 — Dữ liệu](03-du-lieu.md).
+App **khai báo** bảng nó cần trong `schema.json` ở gốc source; người deploy
+duyệt bản so sánh (khai báo ⟷ workspace) rồi áp dụng bằng quyền của chính họ.
+App chỉ kiểm tra lại lúc boot bằng `assertSchema`, và đọc/ghi record như bình
+thường. Chi tiết: [03 — Dữ liệu](03-du-lieu.md).
 
 ### 4. initData — danh tính của người dùng
 
@@ -116,10 +123,11 @@ Chi tiết: [06 — Phân quyền](06-phan-quyen.md).
 | --- | --- |
 | Khởi tạo | `createMiniApp(config)` → `ErpClient`; fail-fast nếu key thiếu quyền |
 | Dữ liệu | `app.object(name)` → `ObjectHandle`: CRUD record, query builder, links, schema |
+| Schema | `app.assertSchema(schema.json)` chặn boot khi workspace chưa khớp; `app.schemaPlan()` xem diff; `validateSchema()` soi khai báo |
 | Phân tích | `query.toFrame()` → `DataFrame` kiểu pandas |
 | Danh tính | `app.session(initData)`, `app.issueInitData()` (phía app chủ), helpers browser: `readInitDataFromLocation`, `receiveInitData`, `parseInitData`, `sendInitDataToFrame` |
 | Quyền | `app.can()`, `app.assertPermissions()`, `app.myPermissions()` |
-| Lỗi | `ErpApiError`, `MissingPermissionsError`, `UnknownObjectError`, `UnknownFieldError` |
+| Lỗi | `ErpApiError`, `MissingPermissionsError`, `SchemaMismatchError`, `UnknownObjectError`, `UnknownFieldError` |
 
 Tất cả chỉ là lớp mỏng trên REST API (`<ERP>/api/v1/...`, response bọc
 envelope `{ success, message, statusCode, data }` — SDK tự bóc `data`).

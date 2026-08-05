@@ -89,7 +89,8 @@ ERP_BASE_URL=http://localhost:8000 ERP_API_KEY=erp_sk_... PORT=4567 npm start
 ```
 
 Nếu boot ném `MissingPermissionsError`: gắn IAM rule cấp các quyền còn thiếu
-cho service account (hoặc tạo SA với role admin khi dev cho nhanh).
+cho service account (hoặc tạo SA với role admin khi dev cho nhanh — nhưng nhớ
+app thật chạy bằng `member`, đừng dựa vào quyền dev không có ở production).
 
 ## 4. Cài lên ERP
 
@@ -121,9 +122,23 @@ curl -X POST "$ERP/api/v1/mini-apps" \
 **Từ template có sẵn:** `GET /mini-apps/templates` rồi
 `{"source":"builtin","templateKey":"..."}`.
 
-Về `role`: đó là quyền của service account app. App **tự tạo bảng lúc boot**
-(`ensureObject`) thì cần `admin` — hoặc `member` + IAM rule cấp thêm
-`object`/`object:field` create. App chỉ đọc/ghi bảng có sẵn thì `member` đủ.
+Về `role`: quyền của service account app, chỉ còn `member` (đọc/ghi record —
+mặc định, hợp với hầu hết app) hoặc `viewer` (chỉ đọc — app dashboard/báo cáo).
+`admin` đã bị loại bỏ; truyền vào là `400`.
+
+App cần bảng riêng thì **không tự tạo** mà khai trong `schema.json` ở gốc zip:
+
+```json
+{ "objects": [ { "name": "Đơn xin nghỉ", "fields": [ { "name": "Lý do", "type": "long_text" } ] } ] }
+```
+
+```bash
+npx erp schema check      # soi cú pháp + diff với workspace trước khi zip
+```
+
+Nếu workspace chưa có đủ, response cài app trả `schemaStatus: "pending"` và
+**chưa build gì cả** — mở màn duyệt schema, áp dụng, rồi mới tới bước 5. Xem
+[03 — Dữ liệu](03-du-lieu.md#khai-báo-schema--schemajson).
 
 ## 5. Chờ build & mở app
 
@@ -132,6 +147,9 @@ Về `role`: đó là quyền của service account app. App **tự tạo bảng
 curl "$ERP/api/v1/mini-apps/<appId>" -H ... 
 # pending → building → running   (build đầu có thể vài phút, sau đó <1 phút)
 ```
+
+Trước khi poll, kiểm tra `schemaStatus`: `"pending"` nghĩa là chưa có build nào
+được xếp hàng, poll bao lâu cũng không đổi — phải duyệt schema trước.
 
 Khi `running`, response có `url` — app sống tại `<MINIAPP_PUBLIC_URL>/apps/<slug>-<id>`
 sau Traefik. `failed` thì `statusMessage` chứa output build để debug, và
@@ -143,7 +161,7 @@ hiện tại (repo thì pull lại branch).
 
 ## 6. Tiếp theo
 
-- App cần bảng dữ liệu riêng → [03 — Dữ liệu](03-du-lieu.md), phần `ensureObject`.
+- App cần bảng dữ liệu riêng → [03 — Dữ liệu](03-du-lieu.md), phần `schema.json`.
 - App cần biết ai đang dùng → [05 — Danh tính người dùng](05-danh-tinh-nguoi-dung.md).
 - Làm một app hoàn chỉnh có UI → [09 — Tutorial "Đơn xin nghỉ"](09-tutorial-leave-request.md).
 - Deploy sâu hơn (ENV, logo, logs, lỗi hay gặp) → [07 — Triển khai & vận hành](07-trien-khai-van-hanh.md).

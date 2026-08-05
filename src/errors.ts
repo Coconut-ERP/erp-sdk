@@ -30,6 +30,47 @@ export class UnknownObjectError extends Error {
   }
 }
 
+export interface SchemaGap {
+  object: string;
+  /** Absent when the whole table is missing. */
+  field?: string;
+  /** The type the app declares for a missing or conflicting field. */
+  type?: string;
+  /** Only on a conflict: the type the workspace currently holds. */
+  currentType?: string;
+}
+
+/**
+ * The workspace does not hold what `schema.json` declares. The app cannot fix
+ * this itself — creating tables is the deployer's reviewed step.
+ */
+export class SchemaMismatchError extends Error {
+  constructor(
+    /** Tables and fields that are missing. */
+    readonly missing: SchemaGap[],
+    /** Fields that exist with a different type — a human has to resolve these. */
+    readonly conflicts: SchemaGap[] = [],
+  ) {
+    const describe = (gap: SchemaGap) =>
+      gap.field ? `${gap.object}.${gap.field}` : gap.object;
+    const parts = [];
+    if (missing.length > 0) {
+      parts.push(`missing ${missing.map(describe).join(", ")}`);
+    }
+    for (const gap of conflicts) {
+      parts.push(
+        `${describe(gap)} is ${gap.currentType}, this app needs ${gap.type}`,
+      );
+    }
+    super(
+      `The workspace does not match schema.json: ${parts.join("; ")}. ` +
+        "Ask whoever deploys this app to review its schema " +
+        "(mini app detail → “Duyệt schema” → Áp dụng & deploy).",
+    );
+    this.name = "SchemaMismatchError";
+  }
+}
+
 export class UnknownFieldError extends Error {
   constructor(
     readonly field: string,

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -292,6 +292,130 @@ describe("usage errors", () => {
   });
 });
 
+describe("schema", () => {
+  const dirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  async function tempFile(name: string, content: unknown): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "erp-schema-"));
+    dirs.push(dir);
+    const file = join(dir, name);
+    await writeFile(file, `${JSON.stringify(content, null, 2)}\n`, "utf8");
+    return file;
+  }
+
+  it("checks the file alone when there are no credentials", async () => {
+    const file = await tempFile("schema.json", {
+      objects: [{ name: "Hóa đơn", fields: [{ name: "Ghi chú", type: "long_text" }] }],
+    });
+    const cli = harness({});
+    expect(await cli.run(["schema", "check", file], { ERP_API_KEY: undefined })).toBe(0);
+    expect(cli.json()).toMatchObject({ ok: true, checked: "file", problems: [] });
+    expect(cli.calls).toHaveLength(0);
+  });
+
+  it("fails on a declaration the backend would reject at upload", async () => {
+    const file = await tempFile("schema.json", {
+      objects: [{ name: "Hóa đơn", fields: [{ name: "Tổng", type: "rollup" }] }],
+    });
+    const cli = harness(SCHEMA_ROUTES);
+    expect(await cli.run(["schema", "check", file])).toBe(1);
+    expect(cli.json().problems[0]).toContain("computed from other fields");
+  });
+
+  it("diffs against the workspace and names the conflict", async () => {
+    const file = await tempFile("schema.json", {
+      objects: [
+        {
+          name: "Hóa đơn",
+          fields: [
+            { name: "Trạng thái", type: "single_select" },
+            { name: "Tổng tiền", type: "number" },
+            { name: "Ghi chú", type: "long_text" },
+          ],
+        },
+        { name: "Khách hàng", fields: [{ name: "Tên", type: "text" }] },
+      ],
+    });
+    const cli = harness(SCHEMA_ROUTES);
+    expect(await cli.run(["schema", "check", file])).toBe(1);
+
+    const result = cli.json();
+    expect(result.wouldBe).toBe("pending");
+    expect(result.objects[0]).toMatchObject({ name: "Hóa đơn", action: "update" });
+    expect(result.objects[0].fields).toEqual([
+      { name: "Trạng thái", type: "single_select", action: "unchanged" },
+      { name: "Tổng tiền", type: "number", action: "conflict", currentType: "currency" },
+      { name: "Ghi chú", type: "long_text", action: "create" },
+    ]);
+    expect(result.objects[1]).toMatchObject({ name: "Khách hàng", action: "create" });
+    expect(result.problems[0]).toContain("Tổng tiền is currency");
+  });
+
+  it("reports a workspace that already matches as applied", async () => {
+    const file = await tempFile("schema.json", {
+      objects: [{ name: "Hóa đơn", fields: [{ name: "Tổng tiền", type: "currency" }] }],
+    });
+    const cli = harness(SCHEMA_ROUTES);
+    expect(await cli.run(["schema", "check", file])).toBe(0);
+    expect(cli.json()).toMatchObject({ ok: true, wouldBe: "applied" });
+  });
+
+  it("exports live objects as a declaration, minus the computed columns", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "erp-schema-"));
+    dirs.push(dir);
+    const file = join(dir, "schema.json");
+    const cli = harness({
+      "GET /api/v1/objects": [
+        ...OBJECTS,
+        { id: "obj-2", workspaceId: "ws-1", name: "Khách hàng", position: 1 },
+      ],
+      "GET /api/v1/objects/obj-1/fields": [
+        ...FIELDS,
+        {
+          id: "f-3",
+          objectId: "obj-1",
+          key: "customer",
+          name: "Khách hàng",
+          type: "relation",
+          config: { targetObjectId: "obj-2" },
+          position: 2,
+          isArchived: false,
+        },
+        {
+          id: "f-4",
+          objectId: "obj-1",
+          key: "customer_name",
+          name: "Tên khách",
+          type: "lookup",
+          config: {},
+          position: 3,
+          isArchived: false,
+        },
+      ],
+    });
+
+    expect(await cli.run(["schema", "init", file, "--object", "Hóa đơn"])).toBe(0);
+    expect(cli.json()).toMatchObject({ objects: 1, fields: 3, problems: [] });
+
+    const written = JSON.parse(await readFile(file, "utf8")) as {
+      objects: { name: string; fields: { name: string; type: string; config?: unknown }[] }[];
+    };
+    expect(written.objects[0]?.fields[2]).toMatchObject({
+      name: "Khách hàng",
+      type: "relation",
+      config: { targetObject: "Khách hàng" },
+    });
+    expect(written.objects[0]?.fields.some((f) => f.type === "lookup")).toBe(false);
+    expect(cli.err()).toContain("computed columns cannot be declared");
+
+    expect(await cli.run(["schema", "init", file, "--object", "Hóa đơn"])).toBe(2);
+  });
+});
+
 describe("scaffolding", () => {
   const dirs: string[] = [];
 
@@ -305,13 +429,19 @@ describe("scaffolding", () => {
     return dir;
   }
 
-  it("writes a runnable mini app", async () => {
+  it("writes a runnable mini app that declares its tables", async () => {
     const dir = await temp();
     const cli = harness({});
     expect(await cli.run(["init", join(dir, "don-xin-nghi"), "--name", "Đơn xin nghỉ"])).toBe(0);
 
     const result = cli.json();
     expect(result.files).toContain("server.js");
+    expect(result.files).toContain("schema.json");
+
+    const declaration = JSON.parse(
+      await readFile(join(dir, "don-xin-nghi", "schema.json"), "utf8"),
+    ) as { objects: { name: string }[] };
+    expect(declaration.objects[0]?.name).toBe("Đơn xin nghỉ");
     const manifest = JSON.parse(
       await readFile(join(dir, "don-xin-nghi", "package.json"), "utf8"),
     ) as { name: string; dependencies: Record<string, string> };

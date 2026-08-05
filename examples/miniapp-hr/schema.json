@@ -1,0 +1,699 @@
+{
+  "objects": [
+    {
+      "name": "Phòng ban",
+      "position": 0,
+      "fields": [
+        {
+          "name": "Tên phòng ban",
+          "type": "text",
+          "position": 0
+        },
+        {
+          "name": "Mã phòng ban",
+          "type": "text",
+          "position": 1
+        },
+        {
+          "name": "Mô tả",
+          "type": "long_text",
+          "position": 2
+        },
+        {
+          "name": "Phòng ban cha",
+          "type": "relation",
+          "config": {
+            "targetObject": "Phòng ban"
+          },
+          "position": 3
+        }
+      ]
+    },
+    {
+      "name": "Chức danh",
+      "position": 1,
+      "fields": [
+        {
+          "name": "Tên chức danh",
+          "type": "text",
+          "position": 0
+        },
+        {
+          "name": "Mã chức danh",
+          "type": "text",
+          "position": 1
+        },
+        {
+          "name": "Cấp bậc",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Nhân viên",
+              "Chuyên viên",
+              "Trưởng nhóm",
+              "Quản lý",
+              "Giám đốc"
+            ]
+          },
+          "position": 2
+        },
+        {
+          "name": "Mô tả",
+          "type": "long_text",
+          "position": 3
+        }
+      ]
+    },
+    {
+      "name": "Nhân sự",
+      "position": 2,
+      "fields": [
+        {
+          "name": "Mã nhân viên",
+          "type": "text",
+          "position": 0
+        },
+        {
+          "name": "Họ và tên",
+          "type": "text",
+          "position": 1
+        },
+        {
+          "name": "Tài khoản",
+          "type": "single_select",
+          "config": {
+            "source": "workspace_users"
+          },
+          "position": 2
+        },
+        {
+          "name": "Email công việc",
+          "type": "email",
+          "position": 3
+        },
+        {
+          "name": "Số điện thoại",
+          "type": "phone",
+          "position": 4
+        },
+        {
+          "name": "Ngày sinh",
+          "type": "date",
+          "position": 5
+        },
+        {
+          "name": "Giới tính",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Nam",
+              "Nữ",
+              "Khác"
+            ]
+          },
+          "position": 6
+        },
+        {
+          "name": "Số CCCD",
+          "type": "text",
+          "position": 7
+        },
+        {
+          "name": "Ngày cấp CCCD",
+          "type": "date",
+          "position": 8
+        },
+        {
+          "name": "Nơi cấp CCCD",
+          "type": "text",
+          "position": 9
+        },
+        {
+          "name": "Tình trạng hôn nhân",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Độc thân",
+              "Đã kết hôn",
+              "Khác"
+            ]
+          },
+          "position": 10
+        },
+        {
+          "name": "Địa chỉ thường trú",
+          "type": "long_text",
+          "position": 11
+        },
+        {
+          "name": "Địa chỉ hiện tại",
+          "type": "long_text",
+          "position": 12
+        },
+        {
+          "name": "Mã số thuế",
+          "type": "text",
+          "position": 13
+        },
+        {
+          "name": "Số sổ BHXH",
+          "type": "text",
+          "position": 14
+        },
+        {
+          "name": "Số tài khoản ngân hàng",
+          "type": "text",
+          "position": 15
+        },
+        {
+          "name": "Ngân hàng",
+          "type": "text",
+          "position": 16
+        },
+        {
+          "name": "Ngày vào công ty",
+          "type": "date",
+          "position": 17
+        },
+        {
+          "name": "Loại hợp đồng",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Thử việc",
+              "Xác định thời hạn",
+              "Không xác định thời hạn",
+              "Thời vụ",
+              "Cộng tác viên"
+            ]
+          },
+          "position": 18
+        },
+        {
+          "name": "Trạng thái làm việc",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Đang làm việc",
+              "Nghỉ thai sản",
+              "Tạm hoãn hợp đồng",
+              "Đã nghỉ việc"
+            ]
+          },
+          "position": 19
+        },
+        {
+          "name": "Phòng ban",
+          "type": "relation",
+          "config": {
+            "targetObject": "Phòng ban"
+          },
+          "position": 20
+        },
+        {
+          "name": "Chức danh",
+          "type": "relation",
+          "config": {
+            "targetObject": "Chức danh"
+          },
+          "position": 21
+        },
+        {
+          "name": "Quản lý trực tiếp",
+          "type": "relation",
+          "config": {
+            "targetObject": "Nhân sự"
+          },
+          "position": 22
+        }
+      ]
+    },
+    {
+      "name": "Liên hệ khẩn cấp",
+      "position": 3,
+      "fields": [
+        {
+          "name": "Họ và tên",
+          "type": "text",
+          "position": 0
+        },
+        {
+          "name": "Mối quan hệ",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Bố",
+              "Mẹ",
+              "Vợ/Chồng",
+              "Con",
+              "Anh/Chị/Em",
+              "Khác"
+            ]
+          },
+          "position": 1
+        },
+        {
+          "name": "Số điện thoại",
+          "type": "phone",
+          "position": 2
+        },
+        {
+          "name": "Email",
+          "type": "email",
+          "position": 3
+        },
+        {
+          "name": "Địa chỉ",
+          "type": "long_text",
+          "position": 4
+        },
+        {
+          "name": "Liên hệ chính",
+          "type": "checkbox",
+          "position": 5
+        },
+        {
+          "name": "Nhân sự",
+          "type": "relation",
+          "config": {
+            "targetObject": "Nhân sự"
+          },
+          "position": 6
+        }
+      ]
+    },
+    {
+      "name": "Người phụ thuộc",
+      "position": 4,
+      "fields": [
+        {
+          "name": "Họ và tên",
+          "type": "text",
+          "position": 0
+        },
+        {
+          "name": "Quan hệ",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Bố",
+              "Mẹ",
+              "Vợ/Chồng",
+              "Con",
+              "Anh/Chị/Em",
+              "Khác"
+            ]
+          },
+          "position": 1
+        },
+        {
+          "name": "Ngày sinh",
+          "type": "date",
+          "position": 2
+        },
+        {
+          "name": "Mã số thuế",
+          "type": "text",
+          "position": 3
+        },
+        {
+          "name": "Số CCCD/Giấy khai sinh",
+          "type": "text",
+          "position": 4
+        },
+        {
+          "name": "Đăng ký giảm trừ",
+          "type": "checkbox",
+          "position": 5
+        },
+        {
+          "name": "Giảm trừ từ ngày",
+          "type": "date",
+          "position": 6
+        },
+        {
+          "name": "Giảm trừ đến ngày",
+          "type": "date",
+          "position": 7
+        },
+        {
+          "name": "Nhân sự",
+          "type": "relation",
+          "config": {
+            "targetObject": "Nhân sự"
+          },
+          "position": 8
+        }
+      ]
+    },
+    {
+      "name": "Trình độ & bằng cấp",
+      "position": 5,
+      "fields": [
+        {
+          "name": "Loại",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Bằng cấp",
+              "Chứng chỉ",
+              "Khoá đào tạo"
+            ]
+          },
+          "position": 0
+        },
+        {
+          "name": "Tên văn bằng",
+          "type": "text",
+          "position": 1
+        },
+        {
+          "name": "Nơi đào tạo / cấp",
+          "type": "text",
+          "position": 2
+        },
+        {
+          "name": "Chuyên ngành",
+          "type": "text",
+          "position": 3
+        },
+        {
+          "name": "Xếp loại",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Xuất sắc",
+              "Giỏi",
+              "Khá",
+              "Trung bình",
+              "Không xếp loại"
+            ]
+          },
+          "position": 4
+        },
+        {
+          "name": "Ngày cấp",
+          "type": "date",
+          "position": 5
+        },
+        {
+          "name": "Ngày hết hạn",
+          "type": "date",
+          "position": 6
+        },
+        {
+          "name": "Ghi chú",
+          "type": "long_text",
+          "position": 7
+        },
+        {
+          "name": "Nhân sự",
+          "type": "relation",
+          "config": {
+            "targetObject": "Nhân sự"
+          },
+          "position": 8
+        }
+      ]
+    },
+    {
+      "name": "Quá trình công tác",
+      "position": 6,
+      "fields": [
+        {
+          "name": "Tổ chức bên ngoài",
+          "type": "text",
+          "position": 0
+        },
+        {
+          "name": "Hình thức",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Tuyển mới",
+              "Điều chuyển",
+              "Bổ nhiệm",
+              "Thăng chức",
+              "Nghỉ việc",
+              "Bên ngoài"
+            ]
+          },
+          "position": 1
+        },
+        {
+          "name": "Từ ngày",
+          "type": "date",
+          "position": 2
+        },
+        {
+          "name": "Đến ngày",
+          "type": "date",
+          "position": 3
+        },
+        {
+          "name": "Số quyết định",
+          "type": "text",
+          "position": 4
+        },
+        {
+          "name": "Ghi chú",
+          "type": "long_text",
+          "position": 5
+        },
+        {
+          "name": "Nhân sự",
+          "type": "relation",
+          "config": {
+            "targetObject": "Nhân sự"
+          },
+          "position": 6
+        },
+        {
+          "name": "Phòng ban",
+          "type": "relation",
+          "config": {
+            "targetObject": "Phòng ban"
+          },
+          "position": 7
+        },
+        {
+          "name": "Chức danh",
+          "type": "relation",
+          "config": {
+            "targetObject": "Chức danh"
+          },
+          "position": 8
+        }
+      ]
+    },
+    {
+      "name": "Danh mục tài sản",
+      "position": 7,
+      "fields": [
+        {
+          "name": "Mã tài sản",
+          "type": "text",
+          "position": 0
+        },
+        {
+          "name": "Tên tài sản",
+          "type": "text",
+          "position": 1
+        },
+        {
+          "name": "Loại tài sản",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Laptop",
+              "Màn hình",
+              "Điện thoại",
+              "Thiết bị văn phòng",
+              "Đồng phục",
+              "Phương tiện",
+              "Khác"
+            ]
+          },
+          "position": 2
+        },
+        {
+          "name": "Đơn vị tính",
+          "type": "text",
+          "position": 3
+        },
+        {
+          "name": "Số serial",
+          "type": "text",
+          "position": 4
+        },
+        {
+          "name": "Nguyên giá",
+          "type": "currency",
+          "position": 5
+        },
+        {
+          "name": "Tình trạng",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Sẵn sàng",
+              "Đang sử dụng",
+              "Bảo trì",
+              "Thanh lý"
+            ]
+          },
+          "position": 6
+        },
+        {
+          "name": "Ghi chú",
+          "type": "long_text",
+          "position": 7
+        }
+      ]
+    },
+    {
+      "name": "Cấp phát tài sản",
+      "position": 8,
+      "fields": [
+        {
+          "name": "Số lượng",
+          "type": "number",
+          "position": 0
+        },
+        {
+          "name": "Ngày cấp",
+          "type": "date",
+          "position": 1
+        },
+        {
+          "name": "Ngày thu hồi",
+          "type": "date",
+          "position": 2
+        },
+        {
+          "name": "Tình trạng bàn giao",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Đang sử dụng",
+              "Đã thu hồi",
+              "Mất/Hỏng"
+            ]
+          },
+          "position": 3
+        },
+        {
+          "name": "Ghi chú",
+          "type": "long_text",
+          "position": 4
+        },
+        {
+          "name": "Nhân sự",
+          "type": "relation",
+          "config": {
+            "targetObject": "Nhân sự"
+          },
+          "position": 5
+        },
+        {
+          "name": "Tài sản",
+          "type": "relation",
+          "config": {
+            "targetObject": "Danh mục tài sản"
+          },
+          "position": 6
+        }
+      ]
+    },
+    {
+      "name": "Quy định & chính sách",
+      "position": 9,
+      "fields": [
+        {
+          "name": "Tiêu đề",
+          "type": "text",
+          "position": 0
+        },
+        {
+          "name": "Mã văn bản",
+          "type": "text",
+          "position": 1
+        },
+        {
+          "name": "Loại văn bản",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Quy định",
+              "Chính sách",
+              "Quy trình",
+              "Biểu mẫu",
+              "Thông báo"
+            ]
+          },
+          "position": 2
+        },
+        {
+          "name": "Tóm tắt",
+          "type": "long_text",
+          "position": 3
+        },
+        {
+          "name": "Nội dung",
+          "type": "long_text",
+          "position": 4
+        },
+        {
+          "name": "Ngày ban hành",
+          "type": "date",
+          "position": 5
+        },
+        {
+          "name": "Ngày hiệu lực",
+          "type": "date",
+          "position": 6
+        },
+        {
+          "name": "Đường dẫn tài liệu",
+          "type": "url",
+          "position": 7
+        },
+        {
+          "name": "Trạng thái",
+          "type": "single_select",
+          "config": {
+            "source": "static",
+            "options": [
+              "Hiệu lực",
+              "Dự thảo",
+              "Hết hiệu lực"
+            ]
+          },
+          "position": 8
+        },
+        {
+          "name": "Phòng ban áp dụng",
+          "type": "relation",
+          "config": {
+            "targetObject": "Phòng ban"
+          },
+          "position": 9
+        }
+      ]
+    }
+  ]
+}

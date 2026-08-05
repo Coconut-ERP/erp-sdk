@@ -23,32 +23,96 @@ field hợp lệ) — lỗi chính tả lộ ra ngay, không âm thầm ghi sai 
 Handle được cache theo cả tên lẫn id. Nếu schema bị đổi từ bên ngoài khi app
 đang chạy, gọi `app.invalidate()` hoặc `app.objects(true)` để nạp lại.
 
-## Tự tạo schema — `ensureObject` (idempotent)
+## Khai báo schema — `schema.json`
 
-Pattern chuẩn cho app có bảng riêng: khai schema ngay lúc boot, chạy bao
-nhiêu lần cũng được — có rồi thì thôi, thiếu field nào thêm field đó:
+Mini app **không tự tạo được bảng/field**. Service account của app là `member`
+(hoặc `viewer`), gọi `POST /objects` là ăn `403`. Thay vào đó app *khai báo*
+bảng nó cần trong file `schema.json` ở **gốc source** (gốc zip; nếu zip có một
+thư mục gốc duy nhất thì là gốc thư mục đó):
 
-```ts
-const leaves = await app.ensureObject("Đơn xin nghỉ", [
-  { name: "Người xin nghỉ", type: "single_select", config: { source: "workspace_users" } },
-  { name: "Lý do", type: "long_text" },
-  { name: "Từ ngày", type: "date" },
-  { name: "Đến ngày", type: "date" },
-  { name: "Trạng thái", type: "single_select",
-    config: { source: "static", options: ["pending", "approved", "rejected"] } },
-]);
+```json
+{
+  "objects": [
+    {
+      "name": "Đơn xin nghỉ",
+      "position": 0,
+      "fields": [
+        { "name": "Người xin nghỉ", "type": "single_select",
+          "config": { "source": "workspace_users" }, "position": 0 },
+        { "name": "Lý do",   "type": "long_text", "position": 1 },
+        { "name": "Từ ngày", "type": "date", "position": 2 },
+        { "name": "Trạng thái", "type": "single_select",
+          "config": { "source": "static", "options": ["pending", "approved", "rejected"] } }
+      ]
+    }
+  ]
+}
 ```
 
-Cần quyền `object` + `object:field` (read, create) — xem [06](06-phan-quyen.md).
-Quản lý schema chi tiết hơn:
+Payload **kế thừa nguyên từ object API**: một phần tử `objects` = body của
+`POST /objects` (`name`, `position`) cộng thêm `fields`; một phần tử `fields` =
+body của `POST /objects/:id/fields` (`name`, `type`, `config`, `position`).
+
+Lúc cài app (hoặc upload version mới), backend so khai báo với workspace. Khớp
+sẵn thì deploy chạy luôn; thiếu thứ gì thì app dừng ở `schemaStatus: "pending"`
+và **không có build nào được tạo** cho tới khi người deploy mở màn duyệt và bấm
+áp dụng — backend tạo phần thiếu **bằng quyền của chính người bấm**. Chi tiết
+luồng: [07 — Triển khai](07-trien-khai-van-hanh.md#duyệt-schemajson-khi-deploy).
+
+### Kiểm tra lúc boot — `assertSchema`
 
 ```ts
-const orders = await app.createObject("Đơn đặt hàng");
-await orders.addField("Số lượng", "number");
+import { readFileSync } from "node:fs";
+const schema = JSON.parse(readFileSync(new URL("./schema.json", import.meta.url), "utf8"));
+
+// Khớp: trả về handle theo đúng tên đã khai báo. Lệch: throw SchemaMismatchError
+// nêu rõ thiếu bảng/field nào, kèm hướng dẫn nhờ người deploy duyệt schema.
+const { "Đơn xin nghỉ": leaves } = await app.assertSchema(schema);
+```
+
+Sai một chỗ, hỏng một lần, ngay lúc boot — thay vì `UnknownFieldError` rơi rớt
+ở từng route. Muốn xem diff mà không throw: `app.schemaPlan(schema)` trả đúng
+cấu trúc mà màn duyệt dùng (`action`: `create` / `update` / `unchanged` /
+`conflict`).
+
+### Luật backend áp lúc upload zip
+
+- Không khai báo được `formula` / `lookup` / `rollup`: config của chúng trỏ tới
+  field khác bằng key nội bộ mà app không biết. Cần thì tạo tay trong workspace.
+- `relation` dùng `config.targetObject` = **tên bảng** (app không biết id);
+  target là bảng khai cùng file hoặc bảng đã có sẵn trong workspace.
+- Tên bảng/field không trùng nhau (không phân biệt hoa thường), ≤ 255 ký tự;
+  tối đa 50 bảng, 200 field/bảng; file ≤ 256KB; key lạ trong JSON bị từ chối.
+
+Sai bất kỳ điểm nào → `400` ngay lúc upload. Bắt trước bằng CLI:
+
+```bash
+erp schema check                 # cú pháp + diff với workspace hiện tại
+erp schema check --offline       # chỉ cú pháp, không cần credential
+erp schema init --object "Nhân viên"   # xuất bảng đang có ra schema.json
+```
+
+### Đổi schema
+
+Sửa `schema.json` → upload version mới (`PUT /mini-apps/:id/source`) → người
+deploy duyệt lại. Chỉ **thêm** được: đổi kiểu field đã có là `conflict`, phải
+sửa tay trong workspace (hoặc sửa khai báo) rồi duyệt lại; xoá bảng/field cũng
+là việc làm tay trong workspace.
+
+### Tự tạo schema bằng key admin (tooling, không phải app)
+
+`createObject` / `ensureObject` / `addField` vẫn còn trong SDK cho script chạy
+bằng key admin — ví dụ dựng sẵn workspace demo trước khi cài app:
+
+```ts
+const orders = await admin.ensureObject("Đơn đặt hàng", [{ name: "Số lượng", type: "number" }]);
 await orders.updateField("Số lượng", { name: "SL" });   // đổi tên/config/position/isArchived
 await orders.rename("Đơn hàng");
-await app.deleteObject("Đơn hàng");
+await admin.deleteObject("Đơn hàng");
 ```
+
+Gọi chúng từ mini app lúc boot chỉ nhận `403` — đó là lý do `assertSchema` tồn
+tại.
 
 ### 18 kiểu field
 

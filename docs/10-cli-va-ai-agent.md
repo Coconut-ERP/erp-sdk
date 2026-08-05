@@ -75,12 +75,14 @@ erp records query "Hóa đơn" --all --compact | jq '[.records[]["Tổng tiền"
 ```
 erp doctor | whoami | perms list | perms check <resource> <action>
 erp objects list [--fields] | show <object> | create <name> | delete <object> --yes
-erp objects ensure <name> [--field "Name:type[:config]"]…
+erp objects ensure <name> [--field "Name:type[:config]"]…      # cần key admin
 erp fields types | add <object> <name> <type> [--config json] | update <object> <field> …
 erp records query <object> [--where …] [--sort …] [--limit n] [--all] [--total] [--select "A,B"]
 erp records count | get | create | update | delete | restore
 erp links list | add | remove
 erp schema dump [--out file]
+erp schema check [file] [--offline]
+erp schema init [file] [--object name]… [--force]
 erp init [dir] [--name x] [--object x]
 erp skill install [--dir path] | skill path
 erp help [command] [--json]
@@ -97,6 +99,41 @@ Cú pháp giá trị:
 - Field spec: `"Lý do:long_text"`, `"Người:single_select:{\"source\":\"workspace_users\"}"`,
   hoặc viết tắt select `"Trạng thái:single_select:pending,approved,rejected"`.
 
+## Làm việc với `schema.json`
+
+Mini app khai bảng nó cần trong `schema.json` ở gốc source; người deploy duyệt
+rồi mới build ([03](03-du-lieu.md#khai-báo-schema--schemajson)). Hai lệnh đi kèm:
+
+```bash
+erp schema check                       # cú pháp (luật y hệt backend) + diff với workspace
+erp schema check app/schema.json --offline    # chỉ cú pháp, không cần credential
+erp schema init --object "Nhân viên" --object "Phòng ban"   # xuất bảng đang có ra schema.json
+```
+
+`schema check` trả đúng thứ màn duyệt sẽ hiện, nên biết trước app sẽ deploy
+thẳng hay phải chờ duyệt:
+
+```jsonc
+{
+  "ok": false,
+  "checked": "workspace",
+  "problems": ["Đơn nghỉ phép.Số ngày is text, the app declares number"],
+  "wouldBe": "pending",              // "applied" = không có gì để duyệt
+  "objects": [
+    { "name": "Đơn nghỉ phép", "action": "update", "fields": [
+      { "name": "Lý do", "type": "long_text", "action": "unchanged" },
+      { "name": "Số ngày", "type": "number", "action": "conflict", "currentType": "text" }
+    ]}
+  ]
+}
+```
+
+Exit code `1` khi có vấn đề → dùng thẳng trong CI trước khi đóng zip.
+
+`schema init` đi ngược lại: dựng bảng bằng tay trong UI cho nhanh, rồi xuất ra
+khai báo. Nó bỏ qua cột computed (`formula`/`lookup`/`rollup` — không khai báo
+được) và đổi `targetObjectId` của relation thành `targetObject` theo tên bảng.
+
 ## Dựng app mới trong một lệnh
 
 ```bash
@@ -105,9 +142,10 @@ cd don-xin-nghi && npm install
 ERP_BASE_URL=… ERP_API_KEY=erp_sk_… npm start
 ```
 
-Sinh ra `server.js` (Express + `createMiniApp` + `ensureObject` + verify
-initData), `public/index.html` (bridge initData, form, danh sách),
-`.env.example`, `README.md`. Chạy được ngay, sửa dần thành app thật.
+Sinh ra `schema.json` (bảng app khai báo), `server.js` (Express +
+`createMiniApp` + `assertSchema` + verify initData), `public/index.html` (bridge
+initData, form, danh sách), `.env.example`, `README.md`. Chạy được ngay, sửa dần
+thành app thật.
 
 Trong lúc `erp-sdk` chưa publish registry, trỏ dependency vào path local:
 
@@ -133,8 +171,10 @@ nhắc tới erp-sdk, mini app, object/record của ERP.
 
 - `erp help --json` trả **toàn bộ command surface** dạng máy đọc — agent không
   phải đoán tên lệnh hay flag.
-- `erp schema dump --out schema.json` nạp nguyên schema workspace làm context →
-  không bịa tên field.
+- `erp schema dump --out workspace.json` nạp nguyên schema workspace làm context
+  → không bịa tên field.
+- `erp schema check` cho agent một vòng lặp đóng: sửa `schema.json` → chạy →
+  đọc `problems` → sửa tiếp, không cần upload zip mới biết sai.
 - Lỗi có cấu trúc và kèm cách sửa, nên agent tự chữa được vòng lặp
   `sai tên field → đọc .known → gọi lại`.
 - Flag lạ bị chặn ngay với danh sách flag hợp lệ, thay vì im lặng bỏ qua.
@@ -143,9 +183,12 @@ nhắc tới erp-sdk, mini app, object/record của ERP.
 
 1. `erp doctor` — chắc chắn có kết nối và đủ quyền trước khi làm gì.
 2. `erp objects list` / `erp schema dump` — nắm dữ liệu thật đang có.
-3. `erp objects ensure …` — dựng bảng còn thiếu (idempotent, chạy lại vô hại).
-4. `erp init …` — sinh khung app, rồi sửa code.
+3. `erp init …` — sinh khung app, rồi sửa code.
+4. `erp schema check` — khai báo hợp lệ chưa, deploy có phải chờ duyệt không.
 5. `erp records query/create` — kiểm chứng luồng dữ liệu trước khi tin vào UI.
+
+Đừng để app tự gọi `objects create` / `objects ensure` lúc boot: service
+account của mini app không có quyền đó, chỉ nhận `403`.
 
 ### Ranh giới an toàn
 

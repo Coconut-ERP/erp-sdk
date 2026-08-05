@@ -1,11 +1,19 @@
 import {
   MissingPermissionsError,
+  type SchemaGap,
+  SchemaMismatchError,
   UnknownFieldError,
   UnknownObjectError,
 } from "./errors";
 import { FetchHttp, type Http } from "./http";
 import { ObjectHandle } from "./objects";
 import { isAllowed, missingPermissions } from "./permissions";
+import {
+  type MiniAppSchema,
+  planSchema,
+  type SchemaObjectPlan,
+  type WorkspaceObjectShape,
+} from "./schema";
 import type {
   EnsureFieldSpec,
   FieldDto,
@@ -121,6 +129,87 @@ export class ErpClient {
     return handle;
   }
 
+  /**
+   * Diffs `schema.json` against the workspace the way the deploy-time review
+   * screen does — same actions, same case-insensitive name/type comparison.
+   * Useful in a health endpoint or a dev script; the review itself is a
+   * backend concern (`GET /mini-apps/:appId/schema`).
+   */
+  async schemaPlan(
+    schema: MiniAppSchema,
+    options: { refresh?: boolean } = {},
+  ): Promise<SchemaObjectPlan[]> {
+    if (options.refresh) this.invalidate();
+    const objects = await this.objects();
+    const shapes: WorkspaceObjectShape[] = [];
+
+    for (const declared of schema.objects) {
+      const wanted = declared.name.trim().toLowerCase();
+      const meta = objects.find((o) => o.name.toLowerCase() === wanted);
+      if (!meta) continue;
+      const handle = await this.object(meta.id);
+      shapes.push({
+        name: meta.name,
+        fields: handle.fields.map((field) => ({
+          name: field.name,
+          type: field.type,
+        })),
+      });
+    }
+    return planSchema(schema, shapes);
+  }
+
+  /**
+   * Boot-time guard: fails fast unless the workspace already holds everything
+   * `schema.json` declares, and returns a handle per declared object.
+   *
+   * A mini app has no authority to create tables — the deployer reviews the
+   * declaration and applies it. So an app that starts against an unprepared
+   * workspace should stop here with one clear error, not scatter 403s and
+   * "unknown field" failures across its routes.
+   */
+  async assertSchema(
+    schema: MiniAppSchema,
+    options: { refresh?: boolean } = {},
+  ): Promise<Record<string, ObjectHandle>> {
+    const plans = await this.schemaPlan(schema, options);
+    const missing: SchemaGap[] = [];
+    const conflicts: SchemaGap[] = [];
+
+    for (const plan of plans) {
+      if (plan.action === "create") {
+        missing.push({ object: plan.name });
+        continue;
+      }
+      for (const field of plan.fields) {
+        if (field.action === "create") {
+          missing.push({ object: plan.name, field: field.name, type: field.type });
+        } else if (field.action === "conflict") {
+          conflicts.push({
+            object: plan.name,
+            field: field.name,
+            type: field.type,
+            currentType: field.currentType,
+          });
+        }
+      }
+    }
+    if (missing.length > 0 || conflicts.length > 0) {
+      throw new SchemaMismatchError(missing, conflicts);
+    }
+
+    const handles: Record<string, ObjectHandle> = {};
+    for (const declared of schema.objects) {
+      handles[declared.name] = await this.object(declared.name);
+    }
+    return handles;
+  }
+
+  /**
+   * Creates an object. Mini apps cannot do this any more (their service
+   * account is a `member`) — it is for tooling run with an admin key, such as
+   * preparing a workspace before installing an app.
+   */
   async createObject(
     name: string,
     options: { position?: number } = {},
@@ -180,6 +269,11 @@ export class ErpClient {
   /**
    * Idempotent provisioning: returns the object if it exists (creating it
    * otherwise) and adds any of the given fields that are missing.
+   *
+   * Not for mini apps at boot: they may not create tables, so this throws 403
+   * as soon as something is missing. Declare the tables in `schema.json` and
+   * check them with {@link assertSchema} instead. Still valid for admin-key
+   * tooling that prepares a workspace.
    */
   async ensureObject(
     name: string,

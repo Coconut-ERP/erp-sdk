@@ -2,6 +2,23 @@ import type { ErpClient } from "../client";
 import { ErpApiError } from "../errors";
 import type { ObjectHandle } from "../objects";
 import type { Row } from "../frame";
+import {
+  COMPUTED_FIELD_TYPES,
+  DECLARABLE_FIELD_TYPES,
+  FIELD_TYPES,
+  type MiniAppSchema,
+  MAX_SCHEMA_BYTES,
+  planSchema,
+  SCHEMA_FILE,
+  schemaConflicts,
+  schemaSettled,
+  schemaSize,
+  type SchemaFieldSpec,
+  type SchemaObjectSpec,
+  unresolvedRelations,
+  validateSchema,
+  type WorkspaceObjectShape,
+} from "../schema";
 import type { FieldDto, RecordDto } from "../types";
 import {
   flagBool,
@@ -131,6 +148,108 @@ function payload(ctx: CliContext, handle: ObjectHandle): Row {
 function renderRecord(ctx: CliContext, handle: ObjectHandle, record: RecordDto): Row | RecordDto {
   if (flagBool(ctx.args, "raw")) return record;
   return handle.rowFromRecord(record, rowNaming(ctx));
+}
+
+function hasCredentials(ctx: CliContext): boolean {
+  const baseUrl = flagString(ctx.args, "base-url") ?? ctx.env.ERP_BASE_URL;
+  const apiKey = flagString(ctx.args, "api-key") ?? ctx.env.ERP_API_KEY;
+  const token = flagString(ctx.args, "token") ?? ctx.env.ERP_ACCESS_TOKEN;
+  return Boolean(baseUrl && (apiKey || token));
+}
+
+async function readSchemaFile(
+  ctx: CliContext,
+  path?: string,
+): Promise<{ file: string; schema?: MiniAppSchema; problems: string[] }> {
+  const { readFile } = await import("node:fs/promises");
+  const { resolve } = await import("node:path");
+  const file = resolve(ctx.cwd, path ?? SCHEMA_FILE);
+
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch (error) {
+    throw new UsageError(
+      `Cannot read ${file}: ${(error as Error).message}. ` +
+        `A mini app declares the tables it needs in a ${SCHEMA_FILE} at the root of its source.`,
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return { file, problems: [`${SCHEMA_FILE} is not valid JSON: ${(error as Error).message}`] };
+  }
+
+  const problems = validateSchema(parsed);
+  const schema = parsed as MiniAppSchema;
+  if (problems.length === 0 && schemaSize(schema) > MAX_SCHEMA_BYTES) {
+    problems.push(`${SCHEMA_FILE} is larger than ${MAX_SCHEMA_BYTES} bytes`);
+  }
+  return { file, schema: problems.length === 0 ? schema : undefined, problems };
+}
+
+async function writeJson(ctx: CliContext, path: string, data: unknown): Promise<string> {
+  const { access, writeFile } = await import("node:fs/promises");
+  const { resolve } = await import("node:path");
+  const file = resolve(ctx.cwd, path);
+  if (!flagBool(ctx.args, "force")) {
+    const exists = await access(file).then(
+      () => true,
+      () => false,
+    );
+    if (exists) throw new UsageError(`${file} already exists — pass --force to overwrite`);
+  }
+  await writeFile(file, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  return file;
+}
+
+/** Only the declared objects matter for a diff — don't walk the whole workspace. */
+async function workspaceShape(
+  client: ErpClient,
+  schema: MiniAppSchema,
+): Promise<WorkspaceObjectShape[]> {
+  const objects = await client.objects();
+  const shapes: WorkspaceObjectShape[] = [];
+  for (const declared of schema.objects) {
+    const wanted = declared.name.trim().toLowerCase();
+    const meta = objects.find((o) => o.name.toLowerCase() === wanted);
+    if (!meta) continue;
+    const handle = await client.object(meta.id);
+    shapes.push({
+      name: meta.name,
+      fields: handle.fields.map((field) => ({ name: field.name, type: field.type })),
+    });
+  }
+  return shapes;
+}
+
+/**
+ * Turns a live field into something `schema.json` may declare, or explains why
+ * it cannot. Relations travel by target *name*, since an app knows no ids.
+ */
+function declarableField(
+  field: FieldDto,
+  objectNames: Map<string, string>,
+): SchemaFieldSpec | string {
+  if ((COMPUTED_FIELD_TYPES as readonly string[]).includes(field.type)) {
+    return `${field.type} fields are computed from other fields`;
+  }
+
+  const config = { ...(field.config ?? {}) };
+  if (field.type === "relation") {
+    const targetId = config.targetObjectId;
+    const target = typeof targetId === "string" ? objectNames.get(targetId) : undefined;
+    if (!target) return "relation target object is not visible to these credentials";
+    delete config.targetObjectId;
+    config.targetObject = target;
+  }
+
+  const spec: SchemaFieldSpec = { name: field.name, type: field.type };
+  if (Object.keys(config).length > 0) spec.config = config;
+  spec.position = field.position;
+  return spec;
 }
 
 function buildQuery(ctx: CliContext, handle: ObjectHandle) {
@@ -450,7 +569,11 @@ export const COMMANDS: CommandSpec[] = [
     summary: "List the field types the object engine supports",
     examples: ["erp fields types"],
     async run(ctx) {
-      ctx.out(FIELD_TYPES);
+      ctx.out({
+        types: FIELD_TYPES,
+        declarableInSchemaJson: DECLARABLE_FIELD_TYPES,
+        computed: COMPUTED_FIELD_TYPES,
+      });
     },
   },
   {
@@ -751,12 +874,131 @@ export const COMMANDS: CommandSpec[] = [
     },
   },
   {
+    name: "schema check",
+    summary: `Validate ${SCHEMA_FILE} and preview what deploying it would change`,
+    args: [
+      {
+        name: "file",
+        description: `Path to the declaration (default ./${SCHEMA_FILE})`,
+      },
+    ],
+    flags: [
+      {
+        name: "offline",
+        description: "Only check the file itself — skip the workspace diff",
+      },
+    ],
+    examples: [
+      "erp schema check",
+      `erp schema check app/${SCHEMA_FILE} --offline`,
+    ],
+    async run(ctx) {
+      const { file, schema, problems } = await readSchemaFile(ctx, ctx.rest[0]);
+
+      const offline = flagBool(ctx.args, "offline") || !hasCredentials(ctx);
+      if (problems.length > 0 || offline || !schema) {
+        if (offline && problems.length === 0) {
+          ctx.note("No credentials (or --offline): checked the file only, not the workspace");
+        }
+        ctx.out({ file, ok: problems.length === 0, checked: "file", problems });
+        if (problems.length > 0) throw new ExitCode(1);
+        return;
+      }
+
+      const client = await ctx.client();
+      const workspace = await workspaceShape(client, schema);
+      const plan = planSchema(schema, workspace);
+      const conflicts = schemaConflicts(plan);
+      const unresolved = unresolvedRelations(schema, workspace);
+      const ok = conflicts.length === 0 && unresolved.length === 0;
+
+      ctx.out({
+        file,
+        ok,
+        checked: "workspace",
+        problems: [...conflicts, ...unresolved],
+        wouldBe: schemaSettled(plan) ? "applied" : "pending",
+        objects: plan,
+      });
+      if (!ok) throw new ExitCode(1);
+    },
+  },
+  {
+    name: "schema init",
+    summary: `Write a ${SCHEMA_FILE} describing objects that already exist in the workspace`,
+    args: [
+      {
+        name: "file",
+        description: `Where to write it (default ./${SCHEMA_FILE})`,
+      },
+    ],
+    flags: [
+      {
+        name: "object",
+        value: "name",
+        repeatable: true,
+        description: "Object to declare (repeat; default: every object in the workspace)",
+      },
+      { name: "force", description: "Overwrite an existing file" },
+    ],
+    examples: [
+      'erp schema init --object "Đơn nghỉ phép" --object "Nhân viên"',
+      "erp schema init app/schema.json --force",
+    ],
+    async run(ctx) {
+      const client = await ctx.client();
+      const wanted = flagList(ctx.args, "object");
+      const objects = await client.objects();
+      const names = new Map(objects.map((o) => [o.id, o.name]));
+
+      const chosen = wanted.length > 0 ? wanted : objects.map((o) => o.name);
+      const skipped: { object: string; field: string; reason: string }[] = [];
+      const declared: SchemaObjectSpec[] = [];
+
+      for (const [index, name] of chosen.entries()) {
+        const handle = await client.object(name);
+        const fields: SchemaFieldSpec[] = [];
+        for (const field of handle.fields) {
+          if (field.isArchived) continue;
+          const spec = declarableField(field, names);
+          if (typeof spec === "string") {
+            skipped.push({ object: handle.name, field: field.name, reason: spec });
+            continue;
+          }
+          fields.push(spec);
+        }
+        declared.push({ name: handle.name, position: index, fields });
+      }
+
+      const schema: MiniAppSchema = { objects: declared };
+      const problems = validateSchema(schema);
+      const file = await writeJson(ctx, ctx.rest[0] ?? SCHEMA_FILE, schema);
+
+      if (skipped.length > 0) {
+        ctx.note(
+          `${skipped.length} field(s) left out — computed columns cannot be declared, create them by hand in the workspace`,
+        );
+      }
+      ctx.out({
+        written: file,
+        objects: declared.length,
+        fields: declared.reduce((total, o) => total + (o.fields?.length ?? 0), 0),
+        skipped,
+        problems,
+      });
+    },
+  },
+  {
     name: "init",
-    summary: "Scaffold a runnable mini app (Express + initData bridge + ensureObject)",
+    summary: `Scaffold a runnable mini app (Express + initData bridge + ${SCHEMA_FILE})`,
     args: [{ name: "dir", description: "Target directory (default: current directory)" }],
     flags: [
       { name: "name", value: "text", description: "App display name" },
-      { name: "object", value: "text", description: "Object the app provisions and reads/writes" },
+      {
+        name: "object",
+        value: "text",
+        description: `Object the app declares in ${SCHEMA_FILE} and reads/writes`,
+      },
       { name: "sdk", value: "spec", description: 'erp-sdk dependency spec (default "^0.1.0")' },
       { name: "force", description: "Overwrite existing files" },
     ],
@@ -771,6 +1013,7 @@ export const COMMANDS: CommandSpec[] = [
         force: flagBool(ctx.args, "force"),
       });
       ctx.note(`Scaffolded ${result.files.length} files in ${result.dir}`);
+      ctx.note(`Edit ${SCHEMA_FILE} to declare the tables this app needs, then \`erp schema check\``);
       ctx.note("Next: npm install && ERP_BASE_URL=… ERP_API_KEY=… npm start");
       ctx.out(result);
     },
@@ -812,27 +1055,6 @@ export class ExitCode extends Error {
     this.name = "ExitCode";
   }
 }
-
-export const FIELD_TYPES = [
-  "text",
-  "long_text",
-  "number",
-  "currency",
-  "percent",
-  "checkbox",
-  "date",
-  "datetime",
-  "single_select",
-  "multi_select",
-  "url",
-  "email",
-  "phone",
-  "relation",
-  "lookup",
-  "rollup",
-  "formula",
-  "attachment",
-];
 
 /** Longest command path first, so "records query" beats a hypothetical "records". */
 export function matchCommand(

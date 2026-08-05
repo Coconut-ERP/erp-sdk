@@ -24,9 +24,11 @@ cần truyền `workspaceId`.
 | `objects(refresh?)` | Danh sách object |
 | `object(nameOrId)` | `ObjectHandle` (tự nạp field, có cache) |
 | `hasObject(nameOrId)` | boolean |
-| `createObject(name, { position? })` | Tạo bảng rỗng |
-| `ensureObject(name, fields[])` | **Idempotent**: tạo bảng nếu chưa có + thêm field còn thiếu |
-| `deleteObject(nameOrId)` | Xóa bảng |
+| `assertSchema(schema, { refresh? })` | **Cách mini app kiểm tra bảng**: khớp `schema.json` → `Record<tên bảng, ObjectHandle>`; lệch → `SchemaMismatchError` |
+| `schemaPlan(schema, { refresh? })` | Diff như màn duyệt, không throw → `SchemaObjectPlan[]` |
+| `createObject(name, { position? })` | Tạo bảng rỗng — **cần key admin**, mini app không có quyền này |
+| `ensureObject(name, fields[])` | Idempotent tạo bảng + field (key admin, dùng cho tooling) |
+| `deleteObject(nameOrId)` | Xóa bảng (key admin) |
 | `issueInitData(serviceAccountId)` | Phía app chủ: phát chuỗi đã ký |
 | `session(initData)` | Phía mini app: `{ user, client, expiresIn }` đã xác minh |
 | `asUser(accessToken, workspaceId?)` | Client chạy theo quyền của user |
@@ -52,9 +54,33 @@ handle.deleteLink(recordId, field, targetId)
 handle.rowFromRecord(record, by?)     // RecordDto → row phẳng (cột = tên field)
 ```
 
+`addField` / `updateField` / `rename` cũng cần key admin — mini app chỉ đọc
+metadata và đọc/ghi record.
+
 Field types: `text`, `long_text`, `number`, `currency`, `percent`, `checkbox`,
 `date`, `datetime`, `single_select`, `multi_select`, `url`, `email`, `phone`,
-`relation`, `lookup`, `rollup`, `formula`, `attachment`.
+`relation`, `lookup`, `rollup`, `formula`, `attachment`. Ba kiểu computed
+(`formula`, `lookup`, `rollup`) **không khai báo được** trong `schema.json`.
+
+## schema.json helpers (thuần hàm, không gọi mạng)
+
+```ts
+interface MiniAppSchema { objects: { name: string; position?: number;
+  fields?: { name: string; type: string; config?: object; position?: number }[] }[] }
+
+type SchemaStatus = "none" | "pending" | "applied";
+type SchemaAction = "create" | "update" | "unchanged" | "conflict";
+```
+
+| Export | Ghi chú |
+| --- | --- |
+| `validateSchema(value)` | `string[]` mọi lỗi backend bắt lúc upload; rỗng = hợp lệ |
+| `planSchema(schema, workspace)` | Diff offline (`workspace`: `{ name, fields: [{ name, type }] }[]`) |
+| `schemaSettled(plans)` / `schemaConflicts(plans)` | Không còn gì để duyệt / danh sách xung đột type |
+| `unresolvedRelations(schema, workspace)` | Relation trỏ tới bảng không tồn tại |
+| `schemaSize(schema)` · `relationTarget(field)` · `defineSchema(schema)` | Tiện ích |
+| `SCHEMA_FILE` · `FIELD_TYPES` · `DECLARABLE_FIELD_TYPES` · `COMPUTED_FIELD_TYPES` | Hằng số |
+| `MAX_SCHEMA_BYTES` (256KB) · `MAX_SCHEMA_OBJECTS` (50) · `MAX_SCHEMA_FIELDS` (200) · `MAX_NAME_LENGTH` (255) | Giới hạn |
 
 ## RecordQuery (chainable)
 
@@ -101,6 +127,7 @@ INIT_DATA_URL_PARAM     // "erpInitData"
 | Class | Trường hữu ích |
 | --- | --- |
 | `MissingPermissionsError` | `.missing` |
+| `SchemaMismatchError` | `.missing`, `.conflicts` (`{ object, field?, type?, currentType? }`) |
 | `ErpApiError` | `.status`, `.trace`, `.details` |
 | `UnknownObjectError` | `.object` |
 | `UnknownFieldError` | `.field`, `.objectName`, `.known` |

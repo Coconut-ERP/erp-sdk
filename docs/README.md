@@ -24,11 +24,11 @@ thao tác.
 
 | Tài liệu | Nội dung |
 | --- | --- |
-| [03 — Làm việc với dữ liệu](03-du-lieu.md) | Object, field, record: CRUD, query (filter/sort/phân trang), link giữa các bảng, tự tạo schema (`ensureObject`) |
+| [03 — Làm việc với dữ liệu](03-du-lieu.md) | Object, field, record: CRUD, query (filter/sort/phân trang), link giữa các bảng, khai báo schema (`schema.json` + `assertSchema`) |
 | [04 — DataFrame](04-dataframe.md) | Phân tích dữ liệu kiểu pandas: `groupBy`, `agg`, `leftJoin`, `sum/avg`… |
 | [05 — Danh tính người dùng (initData)](05-danh-tinh-nguoi-dung.md) | Biết ai đang dùng app: luồng initData kiểu Telegram, `session()`, bridge với app chủ, 2 mô hình quyền |
 | [06 — Phân quyền](06-phan-quyen.md) | Service account, khai báo permission, `can()`/`assertPermissions()`, các tầng IAM |
-| [07 — Triển khai & vận hành](07-trien-khai-van-hanh.md) | Cài app (template/repo/zip), vòng đời deploy, ENV được inject, logs, logo, lỗi thường gặp |
+| [07 — Triển khai & vận hành](07-trien-khai-van-hanh.md) | Cài app (template/repo/zip), duyệt `schema.json` khi deploy, vòng đời deploy, ENV được inject, logs, logo, lỗi thường gặp |
 | [08 — API reference](08-api-reference.md) | Toàn bộ export của SDK: chữ ký hàm, kiểu dữ liệu, error |
 | [10 — CLI `erp` & AI agent](10-cli-va-ai-agent.md) | Khám phá workspace từ terminal (`doctor`, `objects show`, `records query`), sinh app bằng `erp init`, cài skill cho agent |
 
@@ -60,6 +60,8 @@ thao tác.
   giờ** đưa token của user cho mini app.
 - Dữ liệu của app nằm trong **object engine** của ERP (bảng + field + record
   trong workspace) — app không cần database riêng.
+- App **không tự tạo bảng**: nó khai báo trong `schema.json` ở gốc source,
+  người deploy duyệt bản so sánh rồi áp dụng bằng quyền của chính họ.
 
 ## Cài đặt SDK
 

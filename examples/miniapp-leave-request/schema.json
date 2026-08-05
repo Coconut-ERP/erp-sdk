@@ -1,0 +1,28 @@
+{
+    "objects": [
+        {
+            "name": "Đơn xin nghỉ - Test",
+            "position": 0,
+            "fields": [
+                {
+                    "name": "Người xin nghỉ",
+                    "type": "single_select",
+                    "config": { "source": "workspace_users" },
+                    "position": 0
+                },
+                { "name": "Lý do", "type": "long_text", "position": 1 },
+                { "name": "Từ ngày", "type": "date", "position": 2 },
+                { "name": "Đến ngày", "type": "date", "position": 3 },
+                {
+                    "name": "Trạng thái",
+                    "type": "single_select",
+                    "config": {
+                        "source": "static",
+                        "options": ["pending", "approved", "rejected"]
+                    },
+                    "position": 4
+                }
+            ]
+        }
+    ]
+}

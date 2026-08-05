@@ -31,51 +31,82 @@ mkdir public
 }
 ```
 
-## Bước 1 — Boot + khai quyền + provision bảng
+## Bước 1 — Khai bảng trong `schema.json`
+
+App không tạo được bảng. Nó khai báo, người deploy duyệt. `schema.json` nằm ở
+**gốc project**, cạnh `package.json`:
+
+```json
+{
+  "objects": [
+    {
+      "name": "Đơn xin nghỉ",
+      "position": 0,
+      "fields": [
+        { "name": "Người xin nghỉ", "type": "single_select",
+          "config": { "source": "workspace_users" }, "position": 0 },
+        { "name": "Lý do",      "type": "long_text", "position": 1 },
+        { "name": "Từ ngày",    "type": "date", "position": 2 },
+        { "name": "Đến ngày",   "type": "date", "position": 3 },
+        { "name": "Trạng thái", "type": "single_select",
+          "config": { "source": "static", "options": ["pending", "approved", "rejected"] },
+          "position": 4 }
+      ]
+    }
+  ]
+}
+```
+
+"Người xin nghỉ" kiểu `single_select` nguồn `workspace_users` — giá trị là user
+id, ERP UI hiển thị thành tên người.
+
+Soi trước khi ship (bắt lỗi type/tên ngay tại máy, thay vì ăn `400` lúc upload):
+
+```bash
+npx erp schema check
+```
+
+## Bước 2 — Boot + khai quyền + kiểm tra schema
 
 `server.js` — phần đầu:
 
 ```js
+import { readFileSync } from "node:fs";
 import express from "express";
 import { createMiniApp } from "erp-sdk";
 
 const OBJECT_NAME = "Đơn xin nghỉ";
 const PORT = Number(process.env.PORT ?? 3000);
 
+const schema = JSON.parse(readFileSync(new URL("./schema.json", import.meta.url), "utf8"));
+
 const app = await createMiniApp({
   baseUrl: process.env.ERP_BASE_URL,
   apiKey: process.env.ERP_API_KEY,
   permissions: [
     { resource: "object", action: "read" },
-    { resource: "object", action: "create" },
     { resource: "object:field", action: "read" },
-    { resource: "object:field", action: "create" },
     { resource: "object:record", action: "read" },
     { resource: "object:record", action: "create" },
   ],
 });
 
-const leaves = await app.ensureObject(OBJECT_NAME, [
-  { name: "Người xin nghỉ", type: "single_select", config: { source: "workspace_users" } },
-  { name: "Lý do", type: "long_text" },
-  { name: "Từ ngày", type: "date" },
-  { name: "Đến ngày", type: "date" },
-  { name: "Trạng thái", type: "single_select",
-    config: { source: "static", options: ["pending", "approved", "rejected"] } },
-]);
+const { [OBJECT_NAME]: leaves } = await app.assertSchema(schema);
 console.log(`[leave-request] object "${OBJECT_NAME}" ready`);
 ```
 
 Vì sao thế này:
 
 - `permissions` liệt kê đúng những gì app làm — key thiếu quyền thì app chết
-  ngay lúc deploy với danh sách cần cấp, thay vì 403 lúc user bấm nút.
-- `ensureObject` idempotent: lần deploy đầu tạo bảng, các lần sau thấy có
-  rồi thì thôi; sau này thêm field vào danh sách là field mới tự được thêm.
-- "Người xin nghỉ" kiểu `single_select` nguồn `workspace_users` — giá trị là
-  user id, ERP UI hiển thị thành tên người.
+  ngay lúc deploy với danh sách cần cấp, thay vì 403 lúc user bấm nút. **Đừng**
+  khai `object:create`/`object:field:create`: service account của mini app
+  không bao giờ có chúng.
+- `assertSchema` chỉ *đối chiếu*: khớp thì trả handle theo tên bảng, lệch thì
+  throw `SchemaMismatchError` nêu rõ thiếu gì — app hỏng một lần, ngay lúc boot.
+- Thêm field sau này: sửa `schema.json`, upload version mới, người deploy duyệt
+  lại. Chỉ thêm được; đổi kiểu field đã có phải xử lý tay trong workspace.
 
-## Bước 2 — Middleware danh tính (initData)
+## Bước 3 — Middleware danh tính (initData)
 
 ```js
 const sessions = new Map();
@@ -109,7 +140,7 @@ FE gửi initData trong header `X-Init-Data` với **mọi** request `/api/*`.
 Server đổi nó lấy user đã xác minh qua `app.session()` — cache theo chuỗi
 để không gọi ERP mỗi request, trừ hao 60s trước hạn.
 
-## Bước 3 — API của app
+## Bước 4 — API của app
 
 ```js
 server.get("/api/me", (req, res) => {
@@ -149,7 +180,7 @@ app) nên **user không cần bất kỳ quyền nào trên bảng** — nhưng 
 app phải tự `where` theo `user.id` khi đọc và tự đóng dấu `user.id` khi ghi.
 Không bao giờ lấy user id từ body/query của FE.
 
-## Bước 4 — Frontend
+## Bước 5 — Frontend
 
 `public/index.html` (rút gọn phần khung):
 
@@ -226,7 +257,7 @@ Hai quy tắc sống còn của FE:
   `/apps/<slug>-<id>/` sau Traefik.
 - **check `event.origin`** với danh sách origin app chủ cụ thể.
 
-## Bước 5 — Logo (tuỳ chọn)
+## Bước 6 — Logo (tuỳ chọn)
 
 Đặt `logo.webp` cạnh `package.json` và:
 
@@ -236,10 +267,12 @@ server.get("/logo.webp", (_req, res) => res.sendFile("logo.webp", { root: proces
 
 ERP sẽ tự expose `logoUrl` cho màn danh sách app.
 
-## Bước 6 — Chạy local
+## Bước 7 — Chạy local
 
 ```bash
-# Tạo SA + key dev (role admin cho nhanh):  POST /iam/service-accounts, POST /iam/service-accounts/:id/api-keys
+# Tạo SA + key dev:  POST /iam/service-accounts, POST /iam/service-accounts/:id/api-keys
+# Bảng phải có sẵn trong workspace trước khi chạy local — tạo tay trong ERP,
+# hoặc dùng key admin: erp objects ensure "Đơn xin nghỉ" --field "Lý do:long_text" …
 ERP_BASE_URL=http://localhost:8000 ERP_API_KEY=erp_sk_... PORT=4567 npm start
 
 # Giả lập user mở app: lấy initData bằng token user thật
@@ -249,18 +282,27 @@ curl -X POST "$ERP/api/v1/auth/miniapp/init-data" \
 # → mở http://localhost:4567/#erpInitData=<urlencode(initData)>
 ```
 
-## Bước 7 — Cài lên ERP
+## Bước 8 — Cài lên ERP
 
 ```bash
-zip -r leave-request.zip . -x "node_modules/*" -x ".git/*"
+zip -r leave-request.zip . -x "node_modules/*" -x ".git/*"   # schema.json phải nằm trong zip
 curl -X POST "$ERP/api/v1/mini-apps" \
   -H "Authorization: Bearer <admin token>" -H "X-Workspace-Id: <ws>" \
-  -F "name=Đơn xin nghỉ" -F "port=3000" -F "role=admin" \
+  -F "name=Đơn xin nghỉ" -F "port=3000" -F "role=member" \
   -F "file=@leave-request.zip;type=application/zip"
 ```
 
-`role=admin` vì app tự tạo bảng lúc boot ([cách siết chặt hơn](06-phan-quyen.md#chọn-role-lúc-cài-app--siết-quyền)).
-Poll `GET /mini-apps/:id` tới `running`, mở `url` từ trong ERP — xong.
+`role=member` là mặc định và đủ dùng — app chỉ đọc/ghi record ([06](06-phan-quyen.md#chọn-role-lúc-cài-app--siết-quyền)).
+
+Đọc `schemaStatus` trong response:
+
+- `"applied"` → build đã được xếp hàng, poll `GET /mini-apps/:id` tới `running`.
+- `"pending"` → workspace chưa có bảng, **chưa build gì cả**. Mở màn duyệt
+  schema (`GET /mini-apps/:id/schema` → `POST /mini-apps/:id/schema/apply`),
+  người bấm cần `object:create` + `object:field:create`. Áp dụng xong mới quay
+  lại vòng poll ([07](07-trien-khai-van-hanh.md#duyệt-schemajson-khi-deploy)).
+
+Mở `url` từ trong ERP — xong.
 
 Ship bản mới: `PUT /mini-apps/:id/source` với zip mới, hoặc push repo rồi
 `POST /mini-apps/:id/deploy`.

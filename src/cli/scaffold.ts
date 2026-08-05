@@ -77,12 +77,47 @@ interface TemplateVars {
 function templates(vars: TemplateVars): Record<string, string> {
   return {
     "package.json": packageJson(vars),
+    "schema.json": schemaJson(vars),
     "server.js": serverJs(vars),
     "public/index.html": indexHtml(vars),
     ".env.example": envExample(),
     ".gitignore": "node_modules/\n.env\n*.tgz\n",
     "README.md": readme(vars),
   };
+}
+
+/**
+ * The declaration the deployer reviews. It sits at the root of the zip; the
+ * app itself never creates tables.
+ */
+function schemaJson(vars: TemplateVars): string {
+  return `${JSON.stringify(
+    {
+      objects: [
+        {
+          name: vars.objectName,
+          position: 0,
+          fields: [
+            { name: "Nội dung", type: "long_text", position: 0 },
+            {
+              name: "Người tạo",
+              type: "single_select",
+              config: { source: "workspace_users" },
+              position: 1,
+            },
+            {
+              name: "Trạng thái",
+              type: "single_select",
+              config: { source: "static", options: ["new", "done"] },
+              position: 2,
+            },
+          ],
+        },
+      ],
+    },
+    null,
+    2,
+  )}\n`;
 }
 
 function packageJson(vars: TemplateVars): string {
@@ -102,11 +137,14 @@ function packageJson(vars: TemplateVars): string {
 }
 
 function serverJs(vars: TemplateVars): string {
-  return `import express from "express";
+  return `import { readFileSync } from "node:fs";
+import express from "express";
 import { createMiniApp } from "erp-sdk";
 
 const OBJECT_NAME = ${JSON.stringify(vars.objectName)};
 const PORT = Number(process.env.PORT ?? 3000);
+
+const schema = JSON.parse(readFileSync(new URL("./schema.json", import.meta.url), "utf8"));
 
 // The Mini App module injects ERP_BASE_URL / ERP_API_KEY / PORT at deploy time.
 // Declared permissions are verified against the key on boot: a misconfigured
@@ -116,25 +154,15 @@ const app = await createMiniApp({
   apiKey: process.env.ERP_API_KEY,
   permissions: [
     { resource: "object", action: "read" },
-    { resource: "object", action: "create" },
     { resource: "object:field", action: "read" },
-    { resource: "object:field", action: "create" },
     { resource: "object:record", action: "read" },
     { resource: "object:record", action: "create" },
   ],
 });
 
-// Idempotent: creates the table on first run, adds missing fields afterwards.
-const items = await app.ensureObject(OBJECT_NAME, [
-  { name: "Nội dung", type: "long_text" },
-  { name: "Người tạo", type: "single_select", config: { source: "workspace_users" } },
-  {
-    name: "Trạng thái",
-    type: "single_select",
-    config: { source: "static", options: ["new", "done"] },
-  },
-]);
-console.log(\`[\${OBJECT_NAME}] object ready\`);
+const objects = await app.assertSchema(schema);
+const items = objects[OBJECT_NAME];
+console.log(\`[\${OBJECT_NAME}] schema ready\`);
 
 // App-authority model: initData proves WHO is acting; every data operation
 // still runs under the app's own service account (Telegram-bot style).
@@ -331,6 +359,21 @@ function readme(vars: TemplateVars): string {
 Mini app trên nền ERP (\`erp-sdk\`). Dữ liệu nằm trong object **${vars.objectName}**
 của workspace — app không cần database riêng.
 
+## Bảng app cần: \`schema.json\`
+
+App **không tự tạo được bảng/field**. Nó khai báo trong \`schema.json\` ở gốc
+source; người deploy xem bảng so sánh (khai báo ⟷ workspace) rồi bấm áp dụng,
+backend tạo phần còn thiếu bằng quyền của chính người đó. \`assertSchema\` trong
+\`server.js\` chỉ kiểm tra lúc boot và báo lỗi rõ ràng nếu workspace chưa khớp.
+
+\`\`\`bash
+npx erp schema check          # soi lỗi cú pháp + diff với workspace trước khi zip
+\`\`\`
+
+Muốn đổi cấu trúc: sửa \`schema.json\`, upload version mới, người deploy duyệt
+lại. Field kiểu \`formula\` / \`lookup\` / \`rollup\` không khai báo được — tạo tay
+trong workspace.
+
 ## Chạy local
 
 \`\`\`bash
@@ -352,12 +395,15 @@ npx erp objects show "${vars.objectName}"
 
 ## Triển khai
 
-Zip thư mục (bỏ \`node_modules\`) rồi upload qua module Mini App của ERP; nền
-tảng build bằng nixpacks và inject \`ERP_BASE_URL\`, \`ERP_API_KEY\` (xoay vòng
-mỗi lần deploy), \`ERP_WORKSPACE_ID\`, \`PORT\`.
+Zip thư mục (bỏ \`node_modules\`, **giữ \`schema.json\`**) rồi upload qua module
+Mini App của ERP; nền tảng build bằng nixpacks và inject \`ERP_BASE_URL\`,
+\`ERP_API_KEY\` (xoay vòng mỗi lần deploy), \`ERP_WORKSPACE_ID\`, \`PORT\`.
 
 \`\`\`bash
 zip -r ${vars.packageName}.zip . -x "node_modules/*" -x ".git/*"
 \`\`\`
+
+Cài với \`role=member\` (mặc định) — \`admin\` đã bị bỏ. App chỉ đọc/ghi record;
+việc tạo bảng thuộc về bước duyệt \`schema.json\`.
 `;
 }

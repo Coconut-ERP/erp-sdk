@@ -37,9 +37,11 @@ validate.)
 | `objects(refresh?)` | `ObjectDto[]` mọi object trong workspace. Cache |
 | `object(nameOrId)` | `ObjectHandle` — resolve theo id, tên, tên không phân biệt hoa thường. Không thấy → `UnknownObjectError`. Cache |
 | `hasObject(nameOrId)` | `boolean` |
-| `createObject(name, { position? })` | Tạo object mới → handle |
-| `ensureObject(name, fields?)` | Idempotent: lấy hoặc tạo object, thêm field còn thiếu (`EnsureFieldSpec[]`) |
-| `deleteObject(nameOrId)` | Xoá object |
+| `assertSchema(schema, { refresh? })` | Đối chiếu `schema.json` với workspace; khớp → `Record<tên bảng, ObjectHandle>`, lệch → `SchemaMismatchError`. **Cách kiểm tra schema dành cho mini app** |
+| `schemaPlan(schema, { refresh? })` | `SchemaObjectPlan[]` — diff y như màn duyệt, không throw |
+| `createObject(name, { position? })` | Tạo object mới → handle. **Cần key admin** — mini app không có `object:create` |
+| `ensureObject(name, fields?)` | Idempotent: lấy hoặc tạo object, thêm field còn thiếu (`EnsureFieldSpec[]`). Cùng giới hạn quyền như trên |
+| `deleteObject(nameOrId)` | Xoá object (key admin) |
 | `myPermissions(refresh?)` | `PermissionDto[]` hiệu lực. Cache |
 | `can(resource, action)` | `boolean` — deny thắng allow, `*` wildcard |
 | `assertPermissions(extra?)` | Verify quyền khai lúc tạo + `extra`; thiếu → `MissingPermissionsError` |
@@ -56,9 +58,9 @@ Thuộc tính: `id`, `name`, `meta: ObjectDto`, `fields: FieldDto[]`.
 | --- | --- |
 | `field(nameOrKey)` | `FieldDto` — không thấy → `UnknownFieldError` (`.known` = danh sách field) |
 | `fieldKey(nameOrKey)` | key nội bộ của field |
-| `addField(name, type, { config?, position? })` | Thêm field |
-| `updateField(nameOrKey, { name?, config?, position?, isArchived? })` | Sửa field |
-| `rename(name)` | Đổi tên object |
+| `addField(name, type, { config?, position? })` | Thêm field (key admin) |
+| `updateField(nameOrKey, { name?, config?, position?, isArchived? })` | Sửa field (key admin) |
+| `rename(name)` | Đổi tên object (key admin) |
 
 **Record:** (mọi key data nhận tên hiển thị hoặc key)
 
@@ -79,6 +81,33 @@ Thuộc tính: `id`, `name`, `meta: ObjectDto`, `fields: FieldDto[]`.
 | `createLink(recordId, field, targetRecordId, position = 0)` | Nối record |
 | `listLinks(recordId, field, direction = "outgoing")` | Liệt kê (`"outgoing"` \| `"incoming"`) |
 | `deleteLink(recordId, field, targetRecordId)` | Gỡ nối |
+
+## schema.json helpers
+
+Thuần hàm, không gọi mạng — dùng được cả trong script build.
+
+```ts
+interface MiniAppSchema { objects: SchemaObjectSpec[] }
+interface SchemaObjectSpec { name: string; position?: number; fields?: SchemaFieldSpec[] }
+interface SchemaFieldSpec { name: string; type: string; config?: Record<string, unknown>; position?: number }
+
+type SchemaStatus = "none" | "pending" | "applied";
+type SchemaAction = "create" | "update" | "unchanged" | "conflict";
+```
+
+| Export | Mô tả |
+| --- | --- |
+| `validateSchema(value)` | `string[]` — mọi lỗi backend sẽ bắt lúc upload (type lạ, computed field, trùng tên, key lạ, quá giới hạn). Rỗng = hợp lệ |
+| `planSchema(schema, workspace)` | Diff offline → `SchemaObjectPlan[]` (`workspace` = `{ name, fields: [{ name, type }] }[]`) |
+| `schemaSettled(plans)` | `true` khi không có gì để tạo → backend deploy thẳng |
+| `schemaConflicts(plans)` | `string[]` mô tả field trùng tên khác type |
+| `unresolvedRelations(schema, workspace)` | Relation trỏ tới bảng không khai báo và cũng không có sẵn |
+| `schemaSize(schema)` | Số byte khi serialize (giới hạn `MAX_SCHEMA_BYTES`) |
+| `relationTarget(field)` | `config.targetObject` đã trim |
+| `defineSchema(schema)` | Identity, chỉ để có type khi khai schema bằng TS |
+| `SCHEMA_FILE` | `"schema.json"` |
+| `FIELD_TYPES` / `DECLARABLE_FIELD_TYPES` / `COMPUTED_FIELD_TYPES` | 18 kiểu field / khai báo được / computed (`formula`, `lookup`, `rollup`) |
+| `MAX_SCHEMA_BYTES` · `MAX_SCHEMA_OBJECTS` · `MAX_SCHEMA_FIELDS` · `MAX_NAME_LENGTH` | 256KB · 50 · 200 · 255 |
 
 ## RecordQuery
 
@@ -151,6 +180,7 @@ dùng độc lập được.
 | --- | --- | --- |
 | `ErpApiError` | Mọi response non-2xx | `status`, `trace?`, `details?` |
 | `MissingPermissionsError` | Key thiếu quyền đã khai | `missing: RequiredPermission[]` |
+| `SchemaMismatchError` | `assertSchema` thấy workspace chưa khớp `schema.json` | `missing: SchemaGap[]`, `conflicts: SchemaGap[]` |
 | `UnknownObjectError` | `object(name)` không khớp | `object` |
 | `UnknownFieldError` | Tên field không khớp | `field`, `objectName`, `known: string[]` |
 
@@ -180,7 +210,11 @@ string tuỳ ý) · `Action` (`"create" | "read" | "update" | "delete" | "manage
 | "*"` + tuỳ ý) · `RequiredPermission` · `PermissionDto` · `ObjectDto` ·
 `FieldDto` · `RecordDto` · `RecordPage` · `RecordFilter` · `RecordSort` ·
 `QueryRecordsRequest` · `LinkDirection` · `UserDto` · `MiniAppInitData` ·
-`MiniAppSessionDto` · `EnsureFieldSpec` · `Row` · `AggSpec`.
+`MiniAppSessionDto` · `EnsureFieldSpec` · `Row` · `AggSpec` · `MiniAppSchema` ·
+`SchemaObjectSpec` · `SchemaFieldSpec` · `SchemaStatus` · `SchemaAction` ·
+`SchemaObjectPlan` · `SchemaFieldPlan` · `MiniAppSchemaPlan` (body của
+`GET /mini-apps/:id/schema`) · `WorkspaceObjectShape` · `SchemaGap` ·
+`FieldType` · `DeclarableFieldType`.
 
 Chi tiết từng field: xem `src/types.ts` (được ship kèm `.d.ts`).
 

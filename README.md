@@ -30,7 +30,8 @@ npx erp doctor --require object:record:create   # env, connectivity, permissions
 npx erp objects show "Đơn xin nghỉ"             # fields, types, config
 npx erp records query "Hóa đơn" --where "Trạng thái=approved" --sort "Tổng tiền:desc" --limit 20
 npx erp records create "Hóa đơn" --set "Trạng thái=draft" --set "Tổng tiền=500000"
-npx erp schema dump --out schema.json           # whole workspace as JSON
+npx erp schema dump --out workspace.json        # whole workspace as JSON
+npx erp schema check                            # validate schema.json + diff it against the workspace
 npx erp init my-app --name "Đơn xin nghỉ"       # runnable Express mini app
 ```
 
@@ -126,20 +127,66 @@ await invoices.listLinks(recordId, "Khách hàng");
 await invoices.deleteLink(recordId, "Khách hàng", customerRecordId);
 ```
 
-### Schema management
+### Declaring the tables an app needs: `schema.json`
 
-Mini apps can also provision their own schema (requires `object` /
-`object:field` create/update/delete permissions):
+A mini app **cannot create objects or fields** — its service account is a
+`member`. It declares what it needs in a `schema.json` at the root of its
+source; whoever deploys the app reviews the declaration against the workspace
+and applies it under *their* permissions, before the first build runs.
+
+```json
+{
+  "objects": [
+    {
+      "name": "Đơn nghỉ phép",
+      "fields": [
+        { "name": "Lý do", "type": "long_text" },
+        { "name": "Số ngày", "type": "number", "config": { "precision": 1 } },
+        { "name": "Nhân viên", "type": "relation", "config": { "targetObject": "Nhân viên" } }
+      ]
+    }
+  ]
+}
+```
+
+Each entry is the body of `POST /objects` / `POST /objects/:id/fields`, plus
+`fields`. Relations name their target by **display name** — an app never sees
+object ids. `formula`, `lookup` and `rollup` cannot be declared (their config
+addresses other fields by internal key); create those by hand.
+
+At boot the app only checks:
 
 ```ts
-const orders = await app.createObject("Đơn đặt hàng");
-await orders.addField("Số lượng", "number");
-await orders.addField("Khách hàng", "text");
-await orders.create({ "Số lượng": 3, "Khách hàng": "An" }); // new fields usable immediately
+const schema = JSON.parse(readFileSync(new URL("./schema.json", import.meta.url), "utf8"));
 
+// Matches → a handle per declared object. Doesn't → SchemaMismatchError naming
+// what is missing, and pointing at the deploy-time review.
+const { "Đơn nghỉ phép": leaves } = await app.assertSchema(schema);
+```
+
+Catch a bad declaration before uploading the zip — same rules the backend
+applies, plus the diff the review screen shows:
+
+```bash
+npx erp schema check              # exit 1 on problems: CI-friendly
+npx erp schema check --offline    # format only, no credentials needed
+npx erp schema init --object "Nhân viên"   # export existing tables into schema.json
+```
+
+`validateSchema`, `planSchema`, `schemaConflicts` and friends are exported for
+build scripts that generate the file from TypeScript definitions.
+
+### Shaping a workspace with an admin key
+
+`createObject` / `ensureObject` / `addField` still exist for tooling run with an
+admin key — preparing a demo workspace, for instance. Called from a mini app at
+boot they only return 403, which is what `assertSchema` exists to prevent.
+
+```ts
+const orders = await admin.ensureObject("Đơn đặt hàng", [{ name: "Số lượng", type: "number" }]);
 await orders.updateField("Số lượng", { name: "SL" });
 await orders.rename("Đơn hàng");
-await app.deleteObject("Đơn hàng");
+await admin.deleteObject("Đơn hàng");
 ```
 
 A complete runnable app built on this flow lives in
@@ -147,10 +194,11 @@ A complete runnable app built on this flow lives in
 
 ## Worked example: leave-request mini app
 
-The full lifecycle of an embedded mini app — declare permissions, provision its
-table on first run, and create records on behalf of the interacting user:
+The full lifecycle of an embedded mini app — declare permissions, check the
+tables it declared, and create records on behalf of the interacting user:
 
 ```ts
+import { readFileSync } from "node:fs";
 import {
   createMiniApp,
   parseInitData,
@@ -165,24 +213,16 @@ const app = await createMiniApp({
   apiKey: process.env.ERP_API_KEY!,
   permissions: [
     { resource: "object", action: "read" },
-    { resource: "object", action: "create" },
     { resource: "object:field", action: "read" },
-    { resource: "object:field", action: "create" },
     { resource: "object:record", action: "create" },
     { resource: "object:record", action: "read" },
   ],
 });
 
-// 2. First run: create the table if it doesn't exist yet (idempotent)
-const leaves = await app.ensureObject("Đơn xin nghỉ", [
-  { name: "Người xin nghỉ", type: "single_select", config: { source: "workspace_users" } },
-  { name: "Lý do", type: "long_text" },
-  { name: "Từ ngày", type: "date" },
-  { name: "Đến ngày", type: "date" },
-  { name: "Trạng thái", type: "single_select", config: {
-    source: "static", options: ["pending", "approved", "rejected"],
-  } },
-]);
+// 2. Check the tables declared in schema.json — the deployer already reviewed
+//    and applied them, so a mismatch here means the workspace drifted.
+const schema = JSON.parse(readFileSync(new URL("./schema.json", import.meta.url), "utf8"));
+const { "Đơn xin nghỉ": leaves } = await app.assertSchema(schema);
 
 // 3. Per launch: know who is interacting — Telegram-style initData.
 //    The host never shares its own token with the mini app.
@@ -306,6 +346,7 @@ source of truth; the SDK check is a fast preflight.
 | --- | --- |
 | `MissingPermissionsError` | declared permissions not granted to the key (`.missing` lists them) |
 | `ErpApiError` | any non-2xx response (`.status`, `.trace`, `.details`) |
+| `SchemaMismatchError` | `assertSchema` found the workspace missing (or retyping) something `schema.json` declares (`.missing`, `.conflicts`) |
 | `UnknownObjectError` | `app.object(name)` doesn't match any object in the workspace |
 | `UnknownFieldError` | a filter/sort/data key doesn't match any field (`.known` lists fields) |
 
@@ -315,6 +356,10 @@ In the ERP, create a service account and key (`POST
 /iam/service-accounts/:id/api-keys`), then attach IAM rules granting exactly
 the permissions the app declares. The key's workspace membership defines its
 tenant; row scopes on `object:record` further narrow what it can read.
+
+Installing through the Mini App module does this for you: the app's service
+account joins the workspace as `member` (or `viewer`) — never `admin`, since
+schema changes go through the `schema.json` review instead.
 
 ## Development
 

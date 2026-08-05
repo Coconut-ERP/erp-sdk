@@ -45,7 +45,62 @@ Zip tối đa **25MB**, nén từ thư mục gốc project, loại `node_modules
 zip -r app.zip . -x "node_modules/*" -x ".git/*"
 ```
 
-Cài xong ERP **tự deploy lần đầu** — không cần gọi `/deploy` thêm.
+Cài xong ERP **tự deploy lần đầu** — không cần gọi `/deploy` thêm, **trừ khi**
+source có `schema.json` mà workspace chưa đáp ứng: khi đó app dừng ở
+`schemaStatus: "pending"` và chờ duyệt (mục kế tiếp).
+
+## Duyệt `schema.json` khi deploy
+
+Mini app không tạo được bảng. Nó khai báo trong `schema.json` ở gốc source
+([format ở 03](03-du-lieu.md#khai-báo-schema--schemajson)); backend so khai báo
+với workspace ở **mỗi lần cài và mỗi lần upload source**:
+
+```
+khai báo khớp sẵn      → schemaStatus "applied", build chạy như thường
+khai báo thiếu thứ gì  → schemaStatus "pending", statusMessage
+                         "Waiting for a review of schema.json",
+                         KHÔNG có build nào được tạo
+không có schema.json   → schemaStatus "none", y hệt trước đây
+```
+
+`POST /:id/deploy` trong lúc `pending` trả **409**:
+`"This mini app declares objects the workspace does not have yet — review its
+schema first"`. Poll build cũng vô nghĩa — chưa có build nào.
+
+Hai endpoint của màn duyệt (cần RBAC `miniapp:manage` + item-ACL manage; app
+`sourceType: "external"` gọi vào trả 409):
+
+```
+GET  /mini-apps/:id/schema        → { miniAppId, status, objects: [...] }
+POST /mini-apps/:id/schema/apply  → MiniApp (schemaStatus "applied", đã xếp hàng build)
+```
+
+`GET /schema` **tính lại diff mỗi lần gọi** (workspace có thể vừa bị người khác
+sửa) — mở màn duyệt là fetch lại, đừng cache. Mỗi bảng/field có `action`:
+
+| action | Nghĩa |
+| --- | --- |
+| `create` | chưa có, sẽ được tạo |
+| `update` | (cấp bảng) bảng đã có nhưng thiếu field |
+| `unchanged` | đã có sẵn, không đụng tới |
+| `conflict` | (cấp field) trùng tên nhưng khác type — kèm `currentType` |
+
+`POST /schema/apply`:
+
+- chỉ chạy khi `schemaStatus === "pending"`, ngược lại 409;
+- chỉ **thêm** — không sửa, không xoá, không đổi type; bấm nhầm hai lần vô hại;
+- tạo bằng quyền **người bấm** → cần `object:create` và/hoặc
+  `object:field:create`, thiếu là 403 ([06](06-phan-quyen.md));
+- còn `conflict` nào thì 409 trước khi tạo bất cứ thứ gì:
+  `"The workspace already holds these fields with another type: Đơn nghỉ
+  phép.Số ngày is text, the app declares number"`;
+- thành công → build được xếp hàng, quay lại vòng poll bình thường.
+
+Người viết app soi trước bằng CLI, không cần đợi tới lúc upload:
+
+```bash
+erp schema check          # cú pháp + diff (create/update/unchanged/conflict)
+```
 
 ## Vòng đời trạng thái
 
@@ -72,8 +127,10 @@ POST /mini-apps/:id/start         chạy lại container đã stop
 POST /mini-apps/:id/stop          dừng (không xoá)
 PUT  /mini-apps/:id               sửa name/description/port/env/repoBranch (áp dụng lần deploy sau)
 GET  /mini-apps/:id/logs?tail=200 log container (worker lấy hộ; 504 nếu worker im 10s)
+GET  /mini-apps/:id/schema        diff giữa schema.json và workspace
+POST /mini-apps/:id/schema/apply  tạo phần còn thiếu (quyền của người bấm) + build
 DELETE /mini-apps/:id             gỡ app: xoá container + service account
-                                  (bảng dữ liệu app đã tạo KHÔNG bị xoá theo)
+                                  (bảng dữ liệu app khai báo KHÔNG bị xoá theo)
 ```
 
 ## Logo
@@ -105,7 +162,11 @@ Giả lập user mở app: lấy initData bằng token user thật
 
 | Triệu chứng | Nguyên nhân → cách xử |
 | --- | --- |
-| `failed` ngay sau cài, log có `MissingPermissionsError` | Key thiếu quyền app khai. Cài lại `role: "admin"` hoặc gắn IAM rule cấp đúng phần `.missing`, rồi `POST /:id/deploy` |
+| `failed` ngay sau cài, log có `MissingPermissionsError` | Key thiếu quyền app khai. Gắn IAM rule cấp đúng phần `.missing` cho service account rồi `POST /:id/deploy`. Nếu app khai `object:create`/`object:field:create` thì bỏ đi — mini app không bao giờ có quyền đó |
+| Cài xong app đứng yên, không có build nào | `schemaStatus: "pending"` — đang chờ duyệt `schema.json`, xem mục "Duyệt schema.json" |
+| `failed`, log có `SchemaMismatchError` | Workspace bị sửa sau khi duyệt (đổi tên/kiểu field). `erp schema check` để xem lệch chỗ nào, sửa workspace hoặc ship `schema.json` mới |
+| 400 ngay lúc upload zip, message nói về field/type | `schema.json` sai luật (type lạ, `formula`/`lookup`/`rollup`, trùng tên, thiếu `config.targetObject`). Hiện thẳng message đó — nó chỉ đúng chỗ sai |
+| 403 khi bấm áp dụng schema | Người bấm thiếu `object:create` / `object:field:create` — nhờ admin cấp IAM rule hoặc nhờ admin bấm hộ |
 | `failed`, statusMessage là output nixpacks | Build hỏng: thiếu script `start`, lockfile lệch, stack không nhận diện. Sửa source, ship lại |
 | Build ok nhưng app không lên `running` | App không nghe đúng `PORT` hoặc bind `localhost` thay vì `0.0.0.0` |
 | App lên nhưng FE gọi `api/...` ra 404 | Mở app thiếu `/` trước `#` → fetch tương đối resolve sai path Traefik. App chủ phải ghép `${url}/#erpInitData=...` |

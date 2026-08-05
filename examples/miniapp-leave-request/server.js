@@ -1,33 +1,24 @@
+import { readFileSync } from "node:fs";
 import express from "express";
 import { createMiniApp } from "erp-sdk";
 
 const OBJECT_NAME = "Đơn xin nghỉ";
 const PORT = Number(process.env.PORT ?? 3000);
 
+const schema = JSON.parse(readFileSync(new URL("./schema.json", import.meta.url), "utf8"));
+
 const app = await createMiniApp({
   baseUrl: process.env.ERP_BASE_URL,
   apiKey: process.env.ERP_API_KEY,
   permissions: [
     { resource: "object", action: "read" },
-    { resource: "object", action: "create" },
     { resource: "object:field", action: "read" },
-    { resource: "object:field", action: "create" },
     { resource: "object:record", action: "read" },
     { resource: "object:record", action: "create" },
   ],
 });
 
-const leaves = await app.ensureObject(OBJECT_NAME, [
-  { name: "Người xin nghỉ", type: "single_select", config: { source: "workspace_users" } },
-  { name: "Lý do", type: "long_text" },
-  { name: "Từ ngày", type: "date" },
-  { name: "Đến ngày", type: "date" },
-  {
-    name: "Trạng thái",
-    type: "single_select",
-    config: { source: "static", options: ["pending", "approved", "rejected"] },
-  },
-]);
+const { [OBJECT_NAME]: leaves } = await app.assertSchema(schema);
 console.log(`[leave-request] object "${OBJECT_NAME}" ready`);
 
 // App-authority model: initData only proves WHO the user is; every data

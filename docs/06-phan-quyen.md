@@ -6,12 +6,16 @@
 
 Khi cài mini app, ERP tạo một service account riêng: một user không đăng
 nhập được bằng mật khẩu, là member của đúng một workspace với role do người
-cài chọn (`admin`/`member`/`viewer`), xác thực bằng API key `erp_sk_…`
+cài chọn (`member` mặc định, hoặc `viewer`), xác thực bằng API key `erp_sk_…`
 (header `X-API-Key`; SDK tự gắn). Key **xoay vòng mỗi lần deploy** — luôn
 đọc từ `process.env.ERP_API_KEY`.
 
 Quyền của app = quyền role của service account + các IAM rule gắn thêm cho
 riêng nó. Record app tạo mang `createdBy` = service account id.
+
+Role `admin` **không còn**: app không được quyền định hình workspace. Bảng app
+cần thì khai trong `schema.json`, người deploy duyệt và tạo bằng quyền của
+chính họ ([03](03-du-lieu.md#khai-báo-schema--schemajson)).
 
 ## Khai báo quyền lúc boot — fail fast
 
@@ -24,9 +28,7 @@ const app = await createMiniApp({
   apiKey: process.env.ERP_API_KEY,
   permissions: [
     { resource: "object", action: "read" },
-    { resource: "object", action: "create" },
     { resource: "object:field", action: "read" },
-    { resource: "object:field", action: "create" },
     { resource: "object:record", action: "read" },
     { resource: "object:record", action: "create" },
   ],
@@ -42,10 +44,9 @@ Tra cứu nhanh — thao tác nào cần quyền gì:
 
 | Thao tác SDK | Permission |
 | --- | --- |
-| `app.objects()`, `app.object(name)` | `object: read` (+ `object:field: read` để load field) |
-| `createObject`, `ensureObject` (tạo mới) | `object: create` |
-| `rename`, `deleteObject` | `object: update` / `delete` |
-| `addField`, `updateField` | `object:field: create` / `update` |
+| `app.objects()`, `app.object(name)`, `app.assertSchema()` | `object: read` (+ `object:field: read` để load field) |
+| `createObject`, `ensureObject`, `addField` (**tooling key admin**, không phải app) | `object: create`, `object:field: create` |
+| `rename`, `deleteObject`, `updateField` | `object: update` / `delete`, `object:field: update` |
 | `records().fetch/…`, `get` | `object:record: read` |
 | `create` / `update` / `delete` / `restore` record | `object:record: create` / `update` / `delete` |
 | links | `object:record: read`/`update` trên bảng nguồn |
@@ -79,13 +80,28 @@ server**: qua được RBAC vẫn còn row scope và item ACL phía sau.
 
 ## Chọn role lúc cài app & siết quyền
 
-- App **tự provision schema** (`ensureObject`) → role `admin`, hoặc chuẩn
-  hơn: `member` + IAM rule cấp `object`/`object:field` create riêng cho
-  service account của app.
-- App **chỉ đọc/ghi bảng có sẵn** → `member` là đủ (role member có CRUD
-  object/record mặc định).
+- `member` (mặc định) — đọc/ghi record, đọc metadata bảng. Đủ cho hầu hết app.
+- `viewer` — chỉ đọc, hợp với app dashboard/báo cáo.
 - Nguyên tắc: cấp tối thiểu. README của app nên liệt kê đúng danh sách
   `permissions` nó khai — người cài đọc được và quyết định.
+
+Đừng khai `object: create` / `object:field: create` trong `permissions` của mini
+app: service account không có chúng, `createMiniApp` sẽ throw
+`MissingPermissionsError` và app chết ngay lúc boot.
+
+## Quyền cần để **duyệt** schema.json
+
+`POST /mini-apps/:id/schema/apply` chạy dưới danh tính **người bấm**, nên người
+đó cần:
+
+| Bước | Permission |
+| --- | --- |
+| Mở màn duyệt, bấm áp dụng | RBAC `miniapp:manage` + item-ACL manage của app |
+| Khai báo có bảng mới | `object: create` |
+| Khai báo có field mới | `object:field: create` |
+
+Owner/admin có sẵn; member mặc định **không** có `object:create` — muốn member
+tự deploy được app thì admin phải cấp thêm IAM rule. Thiếu quyền: `403`.
 
 Admin cấp thêm/thu hẹp quyền cho app qua IAM rules của ERP
 (`POST /iam/rules` gắn subject = service account) — không cần redeploy;

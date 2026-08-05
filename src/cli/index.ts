@@ -2,6 +2,7 @@ import { createMiniApp, type ErpClient } from "../client";
 import {
   ErpApiError,
   MissingPermissionsError,
+  SchemaMismatchError,
   UnknownFieldError,
   UnknownObjectError,
 } from "../errors";
@@ -39,6 +40,15 @@ function serializeError(error: unknown): Record<string, unknown> {
       message: error.message,
       object: error.object,
       hint: "Run `erp objects list` to see what exists",
+    };
+  }
+  if (error instanceof SchemaMismatchError) {
+    return {
+      type: "SchemaMismatchError",
+      message: error.message,
+      missing: error.missing,
+      conflicts: error.conflicts,
+      hint: "Run `erp schema check` to see the diff; applying it is the deployer's step",
     };
   }
   if (error instanceof UnknownFieldError) {

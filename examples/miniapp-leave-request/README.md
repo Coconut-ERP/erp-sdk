@@ -9,7 +9,9 @@ It exercises the full mini app contract:
 - boots with `ERP_BASE_URL` + `ERP_API_KEY` (+ `PORT`) injected by the Mini App
   module, and declares the permissions it needs (`createMiniApp` fails fast
   with the missing list otherwise)
-- provisions its own table idempotently on startup (`ensureObject`)
+- declares the table it needs in `schema.json` and checks it at boot
+  (`assertSchema`) — creating tables is the deployer's reviewed step, not the
+  app's
 - identifies the interacting user with Telegram-style initData: the frontend
   receives initData from the host (URL fragment or postMessage), sends it as
   `X-Init-Data`, and the server verifies it via `app.session(initData)`
@@ -27,32 +29,55 @@ step detects the file and the mini app API exposes
 running container, no object storage involved. The main app's UI should
 fall back to a default icon on fetch error (app stopped ⇒ no logo).
 
+## The table it needs: `schema.json`
+
+`schema.json` at the root of the source is the app's request to the workspace.
+Check it before shipping:
+
+```bash
+npx erp schema check          # format + diff against the live workspace
+```
+
+On install (or on a new version) the backend compares the declaration with the
+workspace. If anything is missing, the app stays at `schemaStatus: "pending"`
+with **no build queued** until someone with `miniapp:manage` reviews it:
+
+```
+GET  /api/v1/mini-apps/:id/schema        → the diff, per object and field
+POST /api/v1/mini-apps/:id/schema/apply  → creates what is missing, then builds
+```
+
+Applying runs under the reviewer's own IAM permissions (`object:create`,
+`object:field:create`), never the app's. It only ever adds — nothing is
+renamed, retyped or deleted, so pressing it twice is harmless.
+
 ## Deploy through the Mini App module
 
-Zip the folder and upload it — no git host needed:
+Zip the folder — keep `schema.json` in it — and upload; no git host needed:
 
 ```bash
 zip -r leave-request.zip . -x "node_modules/*" -x ".git/*"
 curl -X POST "$ERP/api/v1/mini-apps" \
   -H "Authorization: Bearer <token>" -H "X-Workspace-Id: <ws>" \
-  -F "name=Đơn xin nghỉ" -F "port=3000" -F "role=admin" \
+  -F "name=Đơn xin nghỉ" -F "port=3000" -F "role=member" \
   -F "file=@leave-request.zip;type=application/zip"
 ```
 
 Ship a new version with `PUT /api/v1/mini-apps/:id/source` (same `file`
-field) — it stores the zip and queues a redeploy.
+field) — it stores the zip and queues a redeploy, or another schema review if
+the declaration grew.
 
 Or push this folder to its own git repo and install from the link:
 
 ```
 POST /api/v1/mini-apps
-{ "name": "Đơn xin nghỉ", "source": "repo", "repoUrl": "<git url>", "port": 3000, "role": "admin" }
+{ "name": "Đơn xin nghỉ", "source": "repo", "repoUrl": "<git url>", "port": 3000, "role": "member" }
 ```
 
 nixpacks detects node, runs `npm i` and `npm start`. The app appears at the
-`url` returned by the API (Traefik). `role: "admin"` is the quick path because
-the app creates objects/fields on first run; tighten it by using `member` plus
-an IAM rule granting `object`/`object:field` create to the service account.
+`url` returned by the API (Traefik). `role` is `member` (read/write records) or
+`viewer` (read only) — `admin` no longer exists, because an app never shapes
+the workspace itself.
 
 The SDK is vendored as `vendor/erp-sdk-0.1.0.tgz` so the repo is
 self-contained; swap to the registry version once the SDK is published.

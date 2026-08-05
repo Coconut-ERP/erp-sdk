@@ -28,7 +28,7 @@ erp perms list | perms check <resource> <action>
 erp objects list [--fields]
 erp objects show <object>
 erp objects create <name> [--position n]
-erp objects ensure <name> [--field "Name:type[:config]"]…
+erp objects ensure <name> [--field "Name:type[:config]"]…   # cần key admin
 erp objects delete <object> --yes
 
 erp fields types
@@ -48,7 +48,9 @@ erp links list <object> <id> <field> [--direction outgoing|incoming]
 erp links add <object> <id> <field> <target-id> [--position n]
 erp links remove <object> <id> <field> <target-id>
 
-erp schema dump [--out file]
+erp schema dump [--out file]                    dump workspace (object + field)
+erp schema check [file] [--offline]             kiểm schema.json: cú pháp + diff (exit 1 nếu lỗi)
+erp schema init [file] [--object name]… [--force]   xuất bảng đang có ra schema.json
 erp init [dir] [--name x] [--object x] [--sdk spec] [--force]
 erp skill install [--dir path] [--force] | erp skill path
 erp help [command] [--json]
@@ -77,9 +79,14 @@ hoặc viết tắt cho select: `"Trạng thái:single_select:pending,approved,r
 ```bash
 # Khám phá trước khi code
 erp doctor --require object:record:create
-erp schema dump --out schema.json
+erp schema dump --out workspace.json
 
-# Dựng bảng idempotent
+# Khai báo bảng cho mini app (app KHÔNG tự tạo được)
+erp schema check                       # cú pháp + diff với workspace
+erp schema check --offline             # chỉ cú pháp, không cần credential
+erp schema init --object "Đơn xin nghỉ"   # xuất bảng có sẵn ra schema.json
+
+# Dựng bảng bằng key admin (tooling, không phải mini app)
 erp objects ensure "Đơn xin nghỉ" \
   --field "Người xin nghỉ:single_select:{\"source\":\"workspace_users\"}" \
   --field "Lý do:long_text" \
@@ -107,6 +114,7 @@ Lỗi in ra stderr dạng `{"error":{…}}` kèm `type` và gợi ý:
 | --- | --- |
 | `UsageError` | Sai cú pháp/thiếu tham số (exit 2) |
 | `MissingPermissionsError` | Key thiếu quyền — `.missing` liệt kê cặp resource:action |
+| `SchemaMismatchError` | Workspace chưa khớp `schema.json` — `.missing`, `.conflicts`; chạy `erp schema check` |
 | `UnknownObjectError` | Không có object đó — chạy `erp objects list` |
 | `UnknownFieldError` | Không có field đó — `.known` liệt kê field hợp lệ |
 | `ErpApiError` | Backend trả non-2xx — có `.status`, `.trace`, `.details` |
