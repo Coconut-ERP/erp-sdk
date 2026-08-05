@@ -1,64 +1,112 @@
-# Working in this repo (for coding agents)
+# AGENTS.md
 
-`erp-sdk` is the TypeScript SDK for the 1kk ERP backend. Mini apps use the ERP
-as their engine: data lives in the workspace's object engine (objects → fields →
-records), apps authenticate with a service-account API key (`erp_sk_…`), and
-they learn *who* is using them through Telegram-style signed `initData`.
+This file provides guidance to coding agents (Claude Code and others) when working with
+code in this repository.
 
-## Before writing code against a workspace
+## What this is
 
-Object and field **display names are the addresses** of data — guessing them
-fails at runtime. Read the real schema first:
+`erp-sdk` is the TypeScript SDK **and** the `erp` CLI for the 1kk ERP backend. It has no
+runtime dependency other than lodash and uses global `fetch` (Node 18+).
+
+Its audience is **mini apps**: ordinary web apps (Express, Next.js, …) that use the ERP
+as their engine instead of a database. Data lives in the workspace's object engine
+(objects → fields → records), the app authenticates with a service-account API key
+(`erp_sk_…`), and it learns *who* is using it through Telegram-style signed `initData`.
+
+Documentation is Vietnamese and lives in `docs/` (`docs/README.md` is the index); the
+English README covers the same surface. Keep both in sync when public API changes.
+
+## Commands
 
 ```bash
-npm run build            # the CLI lives at dist/cli.js
-./dist/cli.js doctor     # env + connectivity + permissions → {ok, checks[]}
+npm test                          # vitest run
+npx vitest run test/cli.test.ts   # one file
+npx vitest run -t "schema check"  # one test by name
+npx vitest                        # watch mode
+npm run typecheck                 # tsc --noEmit (strict, noUncheckedIndexedAccess)
+npm run build                     # tsup → dist/ (ESM + CJS + d.ts, plus dist/cli.js)
+```
+
+There is no linter configured at the repo root. The CLI must be built before it can be
+exercised end to end: `npm run build && ./dist/cli.js doctor`.
+
+## Talking to a real workspace
+
+Object and field **display names are the addresses** of data — guessing them fails at
+runtime with `UnknownFieldError`. Read the real schema before writing code against a
+workspace:
+
+```bash
+./dist/cli.js doctor                    # env + connectivity + permissions → {ok, checks[]}
 ./dist/cli.js objects list
 ./dist/cli.js objects show "<Object>"
 ./dist/cli.js schema dump --out workspace.json
-./dist/cli.js schema check           # an app's schema.json: format + diff
+./dist/cli.js schema check              # an app's schema.json: format + diff vs workspace
+./dist/cli.js schema check --offline    # format only, no credentials needed
 ```
 
-Needs `ERP_BASE_URL` and `ERP_API_KEY` (or `--env-file .env`). Without
-credentials, don't invent a schema — ask, or write the app's `schema.json` and
-check its format with `schema check --offline`.
+Needs `ERP_BASE_URL` and `ERP_API_KEY` in the environment, or `--env-file .env`
+(real env wins over the file). Without credentials, do not invent a schema — ask, or
+write the app's `schema.json` and validate its format with `--offline`.
 
-A mini app cannot create objects or fields (its service account is a `member`).
-It declares them in a `schema.json` at the root of its source, the deployer
-reviews and applies that, and the app only calls `assertSchema` at boot.
-`createObject`/`ensureObject`/`addField` remain for admin-key tooling.
-
-## Layout
+## Architecture
 
 | Path | What it holds |
 | --- | --- |
-| `src/client.ts` | `createMiniApp`, `ErpClient` — permissions, objects, `assertSchema`, initData sessions |
-| `src/schema.ts` | `schema.json` model + the backend's validation and diff rules, as pure functions |
-| `src/objects.ts` | `ObjectHandle` (CRUD, schema, links), `RecordQuery` (filter/sort/paginate) |
-| `src/frame.ts` | `DataFrame` — pandas-style analysis over fetched records |
-| `src/webapp.ts` | Browser side of the initData bridge |
-| `src/cli/` | The `erp` CLI: `args`/`values` (parsing), `commands` (registry), `index` (`runCli`), `main` (bin entry) |
-| `skills/erp-miniapp/` | Skill shipped to agents — `erp skill install` copies it |
-| `docs/` | Full Vietnamese guide, `docs/README.md` is the index |
-| `examples/miniapp-leave-request/` | A complete, runnable mini app (Express + static HTML) |
-| `examples/miniapp-hr/` | A larger mini app (Next.js + Tailwind + shadcn): 10 linked tables, `relation`/`lookup` columns, per-employee data scoping |
+| `src/http.ts` | `FetchHttp` — appends `/api/v1`, sets `X-API-Key` or `Bearer`, unwraps the `{success, data, message, trace}` envelope, throws `ErpApiError` on non-2xx |
+| `src/client.ts` | `createMiniApp`, `ErpClient` — permission preflight, object resolution + caching, `assertSchema`, `issueInitData`/`session`, admin-only `createObject`/`ensureObject` |
+| `src/objects.ts` | `ObjectHandle` (CRUD, fields, links) and `RecordQuery` (chainable filter/sort/paginate over `POST /records/query`) |
+| `src/schema.ts` | The `schema.json` model plus the backend's validation and diff rules as **pure functions** (`validateSchema`, `planSchema`, `schemaConflicts`, `unresolvedRelations`) — no I/O, so the CLI, the SDK and build scripts all share one source of truth |
+| `src/frame.ts` | `DataFrame`/`GroupedFrame` — immutable pandas-style analysis over fetched records; every method returns a new frame |
+| `src/permissions.ts` | `isAllowed`/`missingPermissions`, mirroring the backend enforcer (deny beats allow, `*` wildcards, `manage` implies nothing) |
+| `src/webapp.ts` | Browser side of the initData bridge: URL param, `postMessage`, and `parseInitData` (unverified, display only) |
+| `src/errors.ts` | Error classes that carry the fix, not just a message |
+| `src/cli/` | `args`/`values` (parsing), `commands` (the registry), `index` (`runCli`), `main` (bin entry), `scaffold` (`erp init`), `skill` (`erp skill install`) |
+| `skills/erp-miniapp/` | Skill shipped inside the package; `erp skill install` copies it into `.claude/skills/` |
+| `examples/miniapp-leave-request/` | Complete runnable mini app (Express + static HTML) |
+| `examples/miniapp-hr/` | Larger mini app (Next.js + Tailwind + shadcn): 10 linked tables, `relation`/`lookup` columns, per-employee data scoping |
+
+Two cross-cutting ideas explain most of the code:
+
+**Names, not ids.** `ErpClient.object()` resolves an object by id, exact name, then
+case-insensitive name, and caches the handle under both keys. `ObjectHandle` does the
+same for fields and translates display names ↔ field keys on every read and write, so
+callers never see internal keys (`toFrame({ by: "key" })` opts out). Mutations must call
+`invalidate()`/`objects(true)` or the caches go stale.
+
+**A mini app has no schema authority.** Its service account joins the workspace as
+`member`, so it cannot create objects or fields. It declares what it needs in a
+`schema.json` at the root of its source; the deployer reviews and applies that under
+*their* permissions before the first build; the app only calls `assertSchema(schema)` at
+boot, which diffs and throws `SchemaMismatchError` naming exactly what is missing or
+retyped. `createObject`/`ensureObject`/`addField` still exist but are for admin-key
+tooling only — called from an app they just produce 403s. Computed types (`formula`,
+`lookup`, `rollup`) cannot be declared at all: their config addresses other fields by
+internal key.
+
+**Two authority modes** in a mini app, worth keeping straight when touching
+`client.ts` or the docs:
+- *App authority* (default, Telegram-bot style): data calls run on the service-account
+  client; `session(initData)` is used only to know verifiably who is acting, and the
+  user id gets written into a field. Per-user data boundaries are the app's job.
+- *User authority* (opt-in): `session(initData).client` / `asUser(token)` — every call
+  is limited by that user's own IAM permissions and row scopes.
 
 ## Conventions
 
-- Commands are declared in `COMMANDS` (`src/cli/commands.ts`); the same spec
-  renders `erp help` and `erp help --json`. Adding a command means adding one
-  entry there — summary, args, flags and examples included.
-- CLI results go to stdout as JSON; notes and errors to stderr as
-  `{"error":{…}}`. Exit codes: 0 ok, 1 runtime/API error, 2 usage error.
-- Errors should carry the fix (`.known` fields, `.missing` permissions) rather
-  than only a message.
-- API keys are server-side only — never log them, never ship them to a browser,
-  never write them into examples or tests.
-
-## Checks
-
-```bash
-npm test          # vitest
-npm run typecheck # tsc --noEmit
-npm run build     # tsup → dist/ (ESM + CJS + d.ts + cli.js)
-```
+- **Adding a CLI command means adding one entry to `COMMANDS` in `src/cli/commands.ts`** —
+  summary, args, flags and examples included. The same spec renders `erp help` and
+  `erp help --json`; there is no separate help text to update. Unknown flags are rejected
+  against that spec.
+- CLI results go to **stdout as JSON**; notes and errors to **stderr** as `{"error":{…}}`.
+  Exit codes: 0 ok, 1 runtime/API error, 2 usage error. Never print progress to stdout.
+- Errors carry what you need to fix them — `UnknownFieldError.known` lists valid fields,
+  `MissingPermissionsError.missing` lists the exact `resource:action` pairs to grant,
+  `SchemaMismatchError.missing`/`.conflicts` name the gap. New errors should follow this,
+  and be serialized with a `hint` in `serializeError` (`src/cli/index.ts`).
+- Anything new that is part of the public surface must be re-exported from `src/index.ts`.
+- Tests are unit tests with no network: SDK tests inject a fake `Http`, CLI tests inject a
+  fake `fetch` plus captured stdout/stderr into `runCli` (`harness()` in `test/cli.test.ts`).
+  Keep it that way — no live workspace in the suite.
+- API keys are server-side only: never log them, never ship them to a browser, never write
+  them into examples, tests or docs. `.env` at the repo root is gitignored and real.
