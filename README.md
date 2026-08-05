@@ -13,9 +13,32 @@ belong on a server — don't ship `erp_sk_*` keys to browsers.
 
 ## Install
 
+This package is **not published to npm**. Install it straight from GitHub — npm
+clones the repo, builds `dist/` via the `prepare` script and installs the result,
+so nothing extra is needed on your side.
+
 ```bash
-npm install erp-sdk        # or: npm install ../erp-sdk (local path while unpublished)
+npm install github:Coconut-ERP/erp-sdk              # latest main
+npm install github:Coconut-ERP/erp-sdk#v0.1.0       # pin a tag or commit sha
 ```
+
+In a `package.json` dependency list that reads:
+
+```json
+{ "dependencies": { "erp-sdk": "github:Coconut-ERP/erp-sdk#v0.1.0" } }
+```
+
+Pin a tag or commit for anything you deploy — `main` moves. Other options:
+
+```bash
+npm install -g github:Coconut-ERP/erp-sdk           # global, for the `erp` CLI
+npx github:Coconut-ERP/erp-sdk doctor               # one-off CLI run, no install
+npm install ../erp-sdk                              # local path while developing
+```
+
+Requires Node 18+ and `git` on the machine running `npm install` (CI images
+usually have it; slim Docker images often don't). Private forks work the same
+way over SSH: `npm install git+ssh://git@github.com/<owner>/erp-sdk.git`.
 
 ## CLI
 

@@ -30,6 +30,20 @@ npm run build                     # tsup → dist/ (ESM + CJS + d.ts, plus dist/
 There is no linter configured at the repo root. The CLI must be built before it can be
 exercised end to end: `npm run build && ./dist/cli.js doctor`.
 
+## Distribution
+
+The package is **never published to npm**. Consumers install it from the GitHub repo
+(`npm install github:Coconut-ERP/erp-sdk#<tag>`); npm clones, installs devDependencies,
+runs the `prepare` script (`tsup`) and packs `dist` + `skills` per the `files` field, so
+`dist/` stays gitignored. Two consequences worth keeping in mind:
+
+- **`prepare` is a consumer-facing build.** Anything that would break `tsup` on a clean
+  clone — a missing devDependency, a type error with `dts: true` — breaks installation,
+  not just CI. `npm run build` from a fresh `npm ci` is the check.
+- **Cutting a release = tagging.** `npm version <patch|minor|major> && git push --follow-tags`;
+  then point docs and `erp init --sdk` at the new tag. `prepublishOnly` deliberately fails
+  so `npm publish` can't happen by accident.
+
 ## Talking to a real workspace
 
 Object and field **display names are the addresses** of data — guessing them fails at

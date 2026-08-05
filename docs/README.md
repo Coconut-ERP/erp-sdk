@@ -65,10 +65,24 @@ thao tác.
 
 ## Cài đặt SDK
 
+SDK **không publish lên npm** — cài thẳng từ GitHub. npm sẽ clone repo, chạy
+script `prepare` để build `dist/` rồi cài kết quả, không cần thao tác thêm.
+
 ```bash
-npm install erp-sdk          # khi đã publish registry
-npm install ../erp-sdk       # hoặc path local trong lúc phát triển
+npm install github:Coconut-ERP/erp-sdk          # bản mới nhất trên main
+npm install github:Coconut-ERP/erp-sdk#v0.1.0   # ghim theo tag hoặc commit sha
+npm install ../erp-sdk                          # hoặc path local khi đang phát triển
 ```
+
+Trong `package.json` của mini app:
+
+```json
+{ "dependencies": { "erp-sdk": "github:Coconut-ERP/erp-sdk#v0.1.0" } }
+```
+
+Cái gì đem deploy thì **ghim tag/commit** — `main` còn chạy tiếp. Máy chạy
+`npm install` phải có `git` (image Docker slim thường thiếu). Repo private thì
+dùng SSH: `git+ssh://git@github.com/<owner>/erp-sdk.git`.
 
 Yêu cầu Node 18+ (dùng `fetch` toàn cục). Chạy được cả trong browser, nhưng
 API key `erp_sk_…` **chỉ được nằm ở server** — không bao giờ ship xuống

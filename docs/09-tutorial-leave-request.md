@@ -15,7 +15,7 @@ ERP backend.
 ```bash
 mkdir miniapp-leave-request && cd miniapp-leave-request
 npm init -y
-npm install erp-sdk express
+npm install github:Coconut-ERP/erp-sdk express
 mkdir public
 ```
 
@@ -27,7 +27,10 @@ mkdir public
   "type": "module",
   "engines": { "node": ">=18" },
   "scripts": { "start": "node server.js" },
-  "dependencies": { "erp-sdk": "^0.1.0", "express": "^4.19.2" }
+  "dependencies": {
+    "erp-sdk": "github:Coconut-ERP/erp-sdk#v0.1.0",
+    "express": "^4.19.2"
+  }
 }
 ```
 

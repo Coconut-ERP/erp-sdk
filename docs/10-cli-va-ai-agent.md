@@ -14,9 +14,11 @@ tên bảng, tên field rồi chết lúc runtime.
 CLI có sẵn khi cài `erp-sdk`:
 
 ```bash
-npm install erp-sdk
-npx erp help                 # trong project
-npm install -g erp-sdk       # hoặc cài global để gọi thẳng `erp`
+npm install github:Coconut-ERP/erp-sdk
+npx erp help                                    # trong project
+
+npm install -g github:Coconut-ERP/erp-sdk       # hoặc cài global để gọi thẳng `erp`
+npx github:Coconut-ERP/erp-sdk doctor           # chạy một phát, không cài
 ```
 
 Cấu hình bằng env (hoặc flag tương ứng):
