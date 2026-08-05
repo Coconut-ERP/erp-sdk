@@ -65,24 +65,40 @@ thao tác.
 
 ## Cài đặt SDK
 
-SDK **không publish lên npm** — cài thẳng từ GitHub. npm sẽ clone repo, chạy
-script `prepare` để build `dist/` rồi cài kết quả, không cần thao tác thêm.
+SDK **không publish lên npm**. Mỗi bản phát hành là một tarball đã build sẵn,
+đính kèm trong [GitHub Release](https://github.com/Coconut-ERP/erp-sdk/releases)
+— cài bằng URL, package manager nào cũng được:
 
 ```bash
-npm install github:Coconut-ERP/erp-sdk          # bản mới nhất trên main
-npm install github:Coconut-ERP/erp-sdk#v0.1.0   # ghim theo tag hoặc commit sha
-npm install ../erp-sdk                          # hoặc path local khi đang phát triển
+npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
+bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
+pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
 ```
 
 Trong `package.json` của mini app:
 
 ```json
-{ "dependencies": { "erp-sdk": "github:Coconut-ERP/erp-sdk#v0.1.0" } }
+{
+  "dependencies": {
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz"
+  }
+}
 ```
 
-Cái gì đem deploy thì **ghim tag/commit** — `main` còn chạy tiếp. Máy chạy
-`npm install` phải có `git` (image Docker slim thường thiếu). Repo private thì
-dùng SSH: `git+ssh://git@github.com/<owner>/erp-sdk.git`.
+Tarball về là đã build sẵn — không cần `git`, không build lúc install, và URL
+tự nó đã ghim đúng version.
+
+Cài thẳng từ repo cũng được, **nhưng chỉ với npm, pnpm hoặc yarn**:
+
+```bash
+npm install github:Coconut-ERP/erp-sdk   # bám theo main, build lúc install
+npm install ../erp-sdk                   # hoặc path local khi đang phát triển
+```
+
+Ba cái đó cài devDependencies của repo rồi chạy script `prepare` để build
+`dist/`. **Bun thì không cài kiểu này được** — nó chặn lifecycle script, mà kể
+cả khi đã cho phép thì bun vẫn không cài devDependencies của git dependency nên
+build chết với `tsup: command not found`. Dùng bun thì phải lấy tarball.
 
 Yêu cầu Node 18+ (dùng `fetch` toàn cục). Chạy được cả trong browser, nhưng
 API key `erp_sk_…` **chỉ được nằm ở server** — không bao giờ ship xuống

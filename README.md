@@ -13,32 +13,41 @@ belong on a server — don't ship `erp_sk_*` keys to browsers.
 
 ## Install
 
-This package is **not published to npm**. Install it straight from GitHub — npm
-clones the repo, builds `dist/` via the `prepare` script and installs the result,
-so nothing extra is needed on your side.
+This package is **not published to npm**. Every release is a prebuilt tarball
+attached to a [GitHub Release](https://github.com/Coconut-ERP/erp-sdk/releases) —
+install it by URL with any package manager:
 
 ```bash
-npm install github:Coconut-ERP/erp-sdk              # latest main
-npm install github:Coconut-ERP/erp-sdk#v0.1.0       # pin a tag or commit sha
+npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
+bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
+pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
+yarn add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
 ```
 
 In a `package.json` dependency list that reads:
 
 ```json
-{ "dependencies": { "erp-sdk": "github:Coconut-ERP/erp-sdk#v0.1.0" } }
+{
+  "dependencies": {
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz"
+  }
+}
 ```
 
-Pin a tag or commit for anything you deploy — `main` moves. Other options:
+The tarball arrives prebuilt — no compiler, no `git`, no build step on your side.
+Requires Node 18+.
+
+Installing straight from the repo also works, **but only with npm, pnpm or yarn**:
 
 ```bash
-npm install -g github:Coconut-ERP/erp-sdk           # global, for the `erp` CLI
-npx github:Coconut-ERP/erp-sdk doctor               # one-off CLI run, no install
+npm install github:Coconut-ERP/erp-sdk              # tracks main; builds on install
 npm install ../erp-sdk                              # local path while developing
 ```
 
-Requires Node 18+ and `git` on the machine running `npm install` (CI images
-usually have it; slim Docker images often don't). Private forks work the same
-way over SSH: `npm install git+ssh://git@github.com/<owner>/erp-sdk.git`.
+Those three install the repo's devDependencies and run its `prepare` script to
+build `dist/`. **Bun cannot install from the repo** — it blocks lifecycle scripts,
+and even when trusted it does not install a git dependency's devDependencies, so
+the build fails with `tsup: command not found`. Bun users need the release tarball.
 
 ## CLI
 

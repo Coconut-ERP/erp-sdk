@@ -32,17 +32,39 @@ exercised end to end: `npm run build && ./dist/cli.js doctor`.
 
 ## Distribution
 
-The package is **never published to npm**. Consumers install it from the GitHub repo
-(`npm install github:Coconut-ERP/erp-sdk#<tag>`); npm clones, installs devDependencies,
-runs the `prepare` script (`tsup`) and packs `dist` + `skills` per the `files` field, so
-`dist/` stays gitignored. Two consequences worth keeping in mind:
+The package is **never published to npm** — `prepublishOnly` deliberately fails so it
+cannot happen by accident. A release is a **prebuilt tarball attached to a GitHub
+Release**, installed by URL:
 
-- **`prepare` is a consumer-facing build.** Anything that would break `tsup` on a clean
-  clone — a missing devDependency, a type error with `dts: true` — breaks installation,
-  not just CI. `npm run build` from a fresh `npm ci` is the check.
-- **Cutting a release = tagging.** `npm version <patch|minor|major> && git push --follow-tags`;
-  then point docs and `erp init --sdk` at the new tag. `prepublishOnly` deliberately fails
-  so `npm publish` can't happen by accident.
+```
+https://github.com/Coconut-ERP/erp-sdk/releases/download/v<version>/erp-sdk-<version>.tgz
+```
+
+**Cutting a release** is `npm version <patch|minor|major> && git push --follow-tags`.
+`.github/workflows/release.yml` fires on the `v*` tag: `npm ci` (which runs `prepare`,
+building `dist/`), typecheck, test, build, `npm pack`, smoke-test the tarball under both
+npm and bun, then `gh release create`. Running the workflow manually from the Actions tab
+does everything except publish, leaving the tarball as an artifact — use that to test
+pipeline changes. Afterwards, bump the pinned URL in `examples/*/package.json`, `README.md`
+and `docs/`.
+
+Why a tarball and not just `github:Coconut-ERP/erp-sdk`:
+
+- **npm, pnpm and yarn** can install from the repo — they install its devDependencies and
+  run `prepare` (`tsup`) to build `dist/`, which is gitignored. This still works and is
+  fine for tracking `main`.
+- **Bun cannot.** It blocks lifecycle scripts by default, and even listed in
+  `trustedDependencies` it does not install a git dependency's devDependencies, so
+  `prepare` dies on `tsup: command not found`. Bun also ignores the `files` field for git
+  deps and checks out the whole repo. `examples/miniapp-hr` is a bun project, so the
+  tarball is the only spec that works everywhere.
+- The tarball is also what `files` filters down to (~68 kB: `dist` + `skills`), needs no
+  `git` on the installing machine, and pins the version in the URL itself.
+
+`prepare` is therefore a consumer-facing build for the npm/pnpm/yarn path *and* the build
+step CI relies on: anything that breaks `tsup` on a clean clone — a missing devDependency,
+a type error under `dts: true` — breaks both. `npm ci && npm run build` from a fresh clone
+is the check.
 
 ## Talking to a real workspace
 

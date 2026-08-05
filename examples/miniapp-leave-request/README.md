@@ -79,8 +79,8 @@ nixpacks detects node, runs `npm i` and `npm start`. The app appears at the
 `viewer` (read only) — `admin` no longer exists, because an app never shapes
 the workspace itself.
 
-The SDK is vendored as `vendor/erp-sdk-0.1.0.tgz` so the repo is
-self-contained; swap to the registry version once the SDK is published.
+The SDK is pulled from its GitHub Release tarball, so `npm i` works on any
+machine with network access — no vendored file, no build step, no `git`.
 
 ## Run locally
 

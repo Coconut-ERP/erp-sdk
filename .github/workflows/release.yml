@@ -1,0 +1,124 @@
+name: Release
+
+# erp-sdk is never published to npm. A release is a tarball attached to a GitHub
+# Release, which every package manager can install from a URL — including bun,
+# which refuses to build a git dependency (it blocks lifecycle scripts, and does
+# not install a git dep's devDependencies, so `prepare: tsup` cannot run).
+#
+#   git tag v0.2.0 && git push --follow-tags   → builds, verifies, publishes
+#   Actions ▸ Release ▸ Run workflow           → dry run, tarball as an artifact
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm ci` runs the `prepare` script, so this also builds dist/.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $pkg"
+            echo "::error::run \`npm version $tag --no-git-tag-version\`, commit, then re-tag"
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack
+        id: pack
+        run: |
+          rm -f ./*.tgz
+          npm pack
+          tgz="$(ls erp-sdk-*.tgz)"
+          echo "tgz=$tgz" >> "$GITHUB_OUTPUT"
+          echo "packed $tgz ($(du -h "$tgz" | cut -f1))"
+          tar -tzf "$tgz" | head -20
+
+      # The tarball is what consumers actually install, so smoke test *it* —
+      # not the working tree. dist/ must be present and both module formats
+      # must resolve, with no build step on the consumer's side.
+      - name: Smoke test with npm
+        run: |
+          tgz="$PWD/${{ steps.pack.outputs.tgz }}"
+          dir="$(mktemp -d)"
+          cd "$dir"
+          npm init -y > /dev/null
+          npm install "$tgz"
+          node -e "import('erp-sdk').then(m => { if (typeof m.createMiniApp !== 'function') throw new Error('missing ESM export'); console.log('npm esm ok') })"
+          node -e "if (typeof require('erp-sdk').createMiniApp !== 'function') throw new Error('missing CJS export'); console.log('npm cjs ok')"
+          test -f node_modules/erp-sdk/dist/index.d.ts || { echo "missing types"; exit 1; }
+          ./node_modules/.bin/erp help --json > /dev/null && echo "npm cli ok"
+
+      - name: Smoke test with bun
+        run: |
+          curl -fsSL https://bun.sh/install | bash
+          export PATH="$HOME/.bun/bin:$PATH"
+          tgz="$PWD/${{ steps.pack.outputs.tgz }}"
+          dir="$(mktemp -d)"
+          cd "$dir"
+          echo '{"name":"smoke","type":"module"}' > package.json
+          bun add "file:$tgz"
+          bun -e "import { createMiniApp } from 'erp-sdk'; if (typeof createMiniApp !== 'function') throw new Error('missing ESM export'); console.log('bun esm ok')"
+          ./node_modules/.bin/erp help --json > /dev/null && echo "bun cli ok"
+
+      - name: Upload the tarball as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pack.outputs.tgz }}
+          path: ${{ steps.pack.outputs.tgz }}
+          if-no-files-found: error
+
+      - name: Publish the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tgz="${{ steps.pack.outputs.tgz }}"
+          url="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/${tgz}"
+          cat > notes.md <<EOF
+          Not published to npm — install the tarball below with any package manager.
+
+          \`\`\`bash
+          npm install $url
+          bun add $url
+          pnpm add $url
+          yarn add $url
+          \`\`\`
+
+          In \`package.json\`:
+
+          \`\`\`json
+          { "dependencies": { "erp-sdk": "$url" } }
+          \`\`\`
+          EOF
+          gh release create "$GITHUB_REF_NAME" "$tgz" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md
+          echo "published $url"
