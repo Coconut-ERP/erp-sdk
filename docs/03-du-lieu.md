@@ -200,8 +200,57 @@ const n   = await invoices.records().where("Trạng thái", "equals", "pending")
 ```
 
 **Toán tử:** `equals`, `not_equals`, `contains` (chuỗi, không phân biệt hoa
-thường), `greater_than`, `greater_than_or_equal`, `less_than`,
+thường), `in`, `not_in`, `greater_than`, `greater_than_or_equal`, `less_than`,
 `less_than_or_equal`, `is_empty`, `is_not_empty`.
+
+### `in` / `not_in` — khớp một tập giá trị
+
+Nhận mảng, tối đa **200 giá trị**; đây là dạng tổng quát của filter trước kia
+phải gọi một request cho mỗi giá trị:
+
+```ts
+await invoices.records().whereIn("Trạng thái", ["approved", "paid"]).fetchAll();
+await invoices.records().whereNotIn("Trạng thái", ["draft"]).fetchAll();
+
+// dạng đầy đủ, giống hệt:
+await invoices.records().where("Trạng thái", "in", ["approved", "paid"]).fetch();
+```
+
+Mảng rỗng, không phải mảng, hoặc quá 200 phần tử → SDK ném `FilterValueError`
+ngay tại chỗ, không tốn round trip. `not_in` giữ lại cả dòng chưa từng có giá
+trị ở field đó (NULL không nằm trong tập bị loại). Multi-select không dùng
+`in` — dùng `contains`.
+
+### Lọc theo `id` của record
+
+`"id"` là filter target duy nhất không phải field, nên chỉ nhận `equals`,
+`not_equals`, `in`, `not_in`:
+
+```ts
+await invoices.records().whereIds([id1, id2, id3]).fetch();      // tối đa 200 id
+await invoices.records().where("id", "not_equals", id1).fetch();
+```
+
+Nó ăn khớp với relation: field relation của chính object được trả sẵn trong
+`data` dưới dạng **mảng id record liên quan** (không cần `preload`), nên màn
+danh sách đọc id rồi lấy bản ghi bằng **một** request thay vì mỗi dòng một
+request:
+
+```ts
+const lines = await invoiceLines.records().fetchAll();
+const customerIds = lines.flatMap((l) => (l.data.customer as string[]) ?? []);
+
+const customers = await customersTable.getMany(customerIds);
+```
+
+`getMany` khử trùng lặp, tự chia lô 200 id, và trả về **đúng thứ tự đã hỏi**.
+Id mà row scope của actor không cho đọc (hoặc đã xoá mềm) thì vắng mặt — kết
+quả ngắn hơn đầu vào là chuyện bình thường, không phải lỗi. Query có filter id
+cũng **bỏ COUNT** trừ khi gọi `withTotal()`: đếm lại đúng những dòng đang đọc,
+cho một con số chính người gọi vừa gửi lên, là quét thừa một lần.
+
+Nếu một object lỡ có field tên là "id", field đó thắng — đúng thứ tự phân giải
+của backend; muốn chắc chắn nói về id record thì dùng `whereIds()`.
 
 **Giới hạn server:** tối đa 20 filter, 3 sort, 100 record/trang. Cần lọc
 phức tạp hơn (OR, lồng nhau) → kéo về rồi lọc bằng [DataFrame](04-dataframe.md).
@@ -209,6 +258,45 @@ phức tạp hơn (OR, lồng nhau) → kéo về rồi lọc bằng [DataFrame]
 Lưu ý quyền: kết quả đọc luôn bị thu hẹp thêm bởi row scope của actor
 (service account hoặc user, tuỳ client nào đang gọi) — hai actor cùng câu
 query có thể thấy hai tập dòng khác nhau.
+
+## Ghi hàng loạt — `createMany` và `.update()`
+
+Ba API dưới đây tồn tại để một app đụng tới hàng nghìn dòng không biến mỗi
+dòng thành một request HTTP và một transaction riêng. Toàn bộ batch đi trong
+**một** transaction, giữ **một** lock trên bảng, nạp field **một** lần.
+
+```ts
+// Bulk insert — 1 request, 1 transaction, all-or-nothing.
+const { created, records } = await invoices.createMany([
+  { "Số hóa đơn": "INV-001", "Tổng tiền": 500_000 },
+  { "Số hóa đơn": "INV-002", "Tổng tiền": 750_000 },
+]);
+
+// Bulk update theo query — 1 câu UPDATE cho mọi dòng khớp filter.
+const result = await invoices
+  .records()
+  .where("Trạng thái", "equals", "draft")
+  .where("Hạn thanh toán", "less_than", "2026-01-01")
+  .update({ "Trạng thái": "overdue", "Ghi chú": null });   // null = xoá field
+// { matched, updated, hasMore }
+```
+
+Những điều cần nhớ:
+
+- **All-or-nothing.** Một dòng sai validation là cả batch bị từ chối, lỗi nêu
+  rõ chỉ số dòng (`Record 7: ...`) — không bao giờ có bảng nhập dở.
+- **Trần.** Insert tối đa 500 record/lần (SDK tự chia batch lớn hơn); update
+  tối đa 5 000 dòng/lần. Khớp nhiều hơn thì `hasMore = true` — gọi lại đúng
+  câu đó đến khi `false`.
+- **Field `unique` không set được bằng bulk update** (một giá trị cho nhiều
+  dòng thì tự đụng nhau) — 409. Xoá (`null`) thì được, vì giá trị rỗng không
+  nằm trong unique index. Muốn set thì ghi từng record.
+- **Field computed** (`formula`/`lookup`/`rollup`) được đánh dấu *stale* để
+  worker tính lại, thay vì tính ngay trong lệnh ghi. Đọc lại ngay sau khi ghi
+  có thể thấy `computeStatus: "stale"` — chờ worker vài giây.
+- **Rule** vẫn chạy cho từng record như khi ghi lẻ. Bảng không có rule nào thì
+  chỉ tốn đúng một câu đếm cho cả batch.
+- Row scope vẫn áp: bulk update chỉ chạm được những dòng actor có quyền sửa.
 
 ## Link giữa các bảng (field `relation`)
 
@@ -218,6 +306,61 @@ await invoices.listLinks(invoiceId, "Khách hàng");            // direction m�
 await invoices.listLinks(invoiceId, "Khách hàng", "incoming");
 await invoices.deleteLink(invoiceId, "Khách hàng", customerRecordId);
 ```
+
+### `preload` — tránh vấn đề 1-n
+
+Quan hệ nằm ở bảng link chứ không nằm trong `data` của record, nên hiển thị
+một danh sách kèm dòng con trước đây phải gọi `listLinks` một lần cho **mỗi**
+record. `preload` giải quyết cả trang trong số câu query cố định — 10 record
+hay 1 000 record thì số query như nhau.
+
+```ts
+const invoices = await app.object("Hóa đơn bán hàng");
+const lines    = await app.object("Chi tiết hóa đơn");
+
+// 1-n: field relation nằm ở bảng con, nên truyền FieldDto của nó.
+const page = await invoices.records().preload(lines.field("Hóa đơn")).fetch();
+for (const invoice of page.records) {
+  const children = invoices.related(invoice, lines.field("Hóa đơn"));
+}
+
+// n-1: field nằm trên chính bảng đang query, chỉ cần tên.
+const withParent = await lines.records().preload("Hóa đơn").fetch();
+const parent = lines.related(withParent.records[0]!, "Hóa đơn")[0];
+```
+
+Chiều (`outgoing`/`incoming`) được suy ra từ việc field thuộc bảng nào, không
+cần khai báo. Record được preload đọc dưới đúng row scope của actor, nên
+preload không bao giờ lộ ra dòng mà actor không tự `get` được. Tối đa 10 quan
+hệ mỗi query và 50 record con mỗi dòng (đổi bằng `{ limit }`, trần 100) — quá
+trần thì bị cắt bớt, nên bảng con lớn vẫn nên query riêng có filter.
+
+Preload **một tầng**. Một query neo ở một bảng có thể fan-out cả lên cha lẫn
+xuống con trong cùng lệnh gọi — hóa đơn kèm cả khách hàng lẫn dòng hàng là hai
+`preload` trên một request:
+
+```ts
+const orders = await app.object("Hóa đơn");
+const items  = await app.object("Chi tiết hóa đơn");
+
+const page = await orders
+  .records()
+  .preload("Khách")                    // n-1: đi lên user
+  .preload(items.field("Hóa đơn"))     // 1-n: đi xuống items
+  .fetch();
+
+for (const order of page.records) {
+  const customer = orders.related(order, "Khách")[0];
+  const lines    = orders.related(order, items.field("Hóa đơn"));
+}
+```
+
+Nhưng record được preload **không** mang `related` của riêng nó, nên chuỗi
+user → hóa đơn → items (neo ở user) là hai lượt gọi: query user kèm preload hóa
+đơn, rồi query items lọc theo danh sách hóa đơn id vừa lấy.
+
+`preload` cũng dùng được với view: `POST /objects/:id/views/:viewId/query`
+nhận cùng tham số.
 
 ## Chọn quyền chạy: app hay user?
 

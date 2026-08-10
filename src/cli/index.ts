@@ -1,6 +1,7 @@
 import { createMiniApp, type ErpClient } from "../client";
 import {
   ErpApiError,
+  FilterValueError,
   MissingPermissionsError,
   SchemaMismatchError,
   UnknownFieldError,
@@ -49,6 +50,15 @@ function serializeError(error: unknown): Record<string, unknown> {
       missing: error.missing,
       conflicts: error.conflicts,
       hint: "Run `erp schema check` to see the diff; applying it is the deployer's step",
+    };
+  }
+  if (error instanceof FilterValueError) {
+    return {
+      type: "FilterValueError",
+      message: error.message,
+      field: error.field,
+      operator: error.operator,
+      hint: "in/not_in take 1..200 values: --where \"Field:in:a,b\" or a JSON array",
     };
   }
   if (error instanceof UnknownFieldError) {

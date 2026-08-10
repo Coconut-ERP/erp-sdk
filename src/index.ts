@@ -1,5 +1,10 @@
 export { createMiniApp, ErpClient, type MiniAppConfig } from "./client";
-export { ObjectHandle, RecordQuery } from "./objects";
+export {
+  MAX_FILTER_VALUES,
+  ObjectHandle,
+  RECORD_ID_FILTER_KEY,
+  RecordQuery,
+} from "./objects";
 export { DataFrame, GroupedFrame, matchesOperator, type AggSpec, type Row } from "./frame";
 export { isAllowed, missingPermissions } from "./permissions";
 export { FetchHttp, API_KEY_PREFIX, type Http, type HttpConfig, type HttpOptions } from "./http";
@@ -46,6 +51,7 @@ export {
 } from "./schema";
 export {
   ErpApiError,
+  FilterValueError,
   MissingPermissionsError,
   SchemaMismatchError,
   UnknownFieldError,
@@ -54,6 +60,10 @@ export {
 } from "./errors";
 export type {
   Action,
+  BulkCreateRecordsRequest,
+  BulkCreateRecordsResult,
+  BulkUpdateRecordsRequest,
+  BulkUpdateRecordsResult,
   EnsureFieldSpec,
   Envelope,
   FieldDto,
@@ -67,6 +77,7 @@ export type {
   RecordDto,
   RecordFilter,
   RecordPage,
+  RecordPreload,
   RecordSort,
   RequiredPermission,
   Resource,

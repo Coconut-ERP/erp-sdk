@@ -110,6 +110,24 @@ describe("value parsing", () => {
     expect(() => parseFilter("Trạng thái")).toThrowError(/Cannot parse filter/);
   });
 
+  it("reads in/not_in values as a list, comma-separated or JSON", () => {
+    expect(parseFilter("Trạng thái:in:approved,paid")).toEqual({
+      field: "Trạng thái",
+      operator: "in",
+      value: ["approved", "paid"],
+    });
+    expect(parseFilter('Tổng tiền:not_in:[0, 1]')).toEqual({
+      field: "Tổng tiền",
+      operator: "not_in",
+      value: [0, 1],
+    });
+    expect(parseFilter("id:in:rec-1")).toEqual({
+      field: "id",
+      operator: "in",
+      value: ["rec-1"],
+    });
+  });
+
   it("parses sorts and field specs", () => {
     expect(parseSort("Tổng tiền:desc")).toEqual({ field: "Tổng tiền", direction: "desc" });
     expect(parseSort("Tổng tiền")).toEqual({ field: "Tổng tiền", direction: "asc" });
@@ -192,6 +210,35 @@ describe("records query", () => {
       "Trạng thái": "approved",
       "Tổng tiền": 1500000,
     });
+  });
+
+  it("sends id:in as a record-id filter, unresolved by the field map", async () => {
+    const cli = harness({
+      ...SCHEMA_ROUTES,
+      "POST /api/v1/objects/obj-1/records/query": { records: [RECORD], hasMore: false },
+    });
+
+    const code = await cli.run([
+      "records",
+      "query",
+      "Hóa đơn",
+      "--where",
+      "id:in:rec-1,rec-2",
+    ]);
+
+    expect(code).toBe(0);
+    const query = cli.calls.find((call) => call.url.endsWith("/records/query"));
+    expect((query?.body as { filters?: unknown }).filters).toEqual([
+      { field: "id", operator: "in", value: ["rec-1", "rec-2"] },
+    ]);
+  });
+
+  it("refuses an in filter with no values before calling the server", async () => {
+    const cli = harness(SCHEMA_ROUTES);
+    expect(await cli.run(["records", "query", "Hóa đơn", "--where", 'Trạng thái:in:[]'])).toBe(1);
+    const error = cli.errorJson().error;
+    expect(error.type).toBe("FilterValueError");
+    expect(cli.calls.some((call) => call.url.endsWith("/records/query"))).toBe(false);
   });
 
   it("reports unknown fields with the known list", async () => {

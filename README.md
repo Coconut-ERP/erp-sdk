@@ -139,9 +139,39 @@ const one = await invoices.records().where("Số hóa đơn", "equals", "INV-001
 const n   = await invoices.records().count();
 ```
 
-Operators: `equals`, `not_equals`, `contains`, `greater_than`,
+Operators: `equals`, `not_equals`, `contains`, `in`, `not_in`, `greater_than`,
 `greater_than_or_equal`, `less_than`, `less_than_or_equal`, `is_empty`,
 `is_not_empty`. Max 20 filters, 3 sorts, 100 records/page (server limits).
+
+### Matching a set of values, and fetching by id
+
+`in`/`not_in` take a list of at most 200 values — the general form of a filter
+that used to cost one request per value:
+
+```ts
+await invoices.records().whereIn("Trạng thái", ["approved", "paid"]).fetchAll();
+await invoices.records().whereNotIn("Trạng thái", ["draft"]).fetchAll();
+```
+
+The filter target `"id"` is the record's own id rather than a field, and it
+takes `equals`, `not_equals`, `in` and `not_in` only. It pairs with relations: a
+relation field arrives inside `data` as an array of related record ids, no
+`preload` needed, so a list screen reads the ids and then fetches them in one
+request instead of one per row.
+
+```ts
+const lines = await invoiceLines.records().fetchAll();
+const customerIds = lines.flatMap((line) => (line.data.customer as string[]) ?? []);
+
+const customers = await customersTable.getMany(customerIds); // chunks by 200, keeps order
+// or, one page at a time:
+await customersTable.records().whereIds(customerIds.slice(0, 200)).fetch();
+```
+
+`getMany` de-duplicates the ids and returns records in the order asked for; an
+id the caller's row scopes exclude is simply absent, so a shorter result is
+normal. A query filtered by id skips its COUNT unless you ask for
+`withTotal()` — the number is one the caller already sent in.
 
 ### CRUD
 
@@ -158,6 +188,74 @@ await invoices.createLink(recordId, "Khách hàng", customerRecordId);
 await invoices.listLinks(recordId, "Khách hàng");
 await invoices.deleteLink(recordId, "Khách hàng", customerRecordId);
 ```
+
+### Writing many records at once
+
+Three calls exist so an app that touches thousands of rows does not turn each
+one into its own HTTP request and its own database transaction.
+
+```ts
+// Bulk insert — one request, one transaction, all-or-nothing.
+const { created } = await invoices.createMany([
+  { "Số hóa đơn": "INV-001", "Tổng tiền": 500_000 },
+  { "Số hóa đơn": "INV-002", "Tổng tiền": 750_000 },
+]);
+
+// Bulk update by query — one UPDATE over every matching row. null clears a field.
+const result = await invoices
+  .records()
+  .where("Trạng thái", "equals", "draft")
+  .where("Hạn thanh toán", "less_than", "2026-01-01")
+  .update({ "Trạng thái": "overdue", "Ghi chú": null });
+// { matched, updated, hasMore }
+```
+
+An invalid row rejects the whole insert naming its index, so a half-imported
+table never happens; batches over 500 records are split for you. A bulk update
+is capped server-side (5 000 rows per call) and sets `hasMore` when the filters
+matched more than that — repeat the same call until it is false. Two rules to
+know: a **unique** field cannot be *set* by a bulk update (one value across many
+rows collides with itself) though it can be cleared, and computed fields
+(`formula`/`lookup`/`rollup`) are left stale for the worker to recompute rather
+than evaluated inside the write.
+
+### Preloading relations (the 1-n problem)
+
+A relation lives in the link table, not in a record's `data`, so showing a list
+with its related records used to mean one `listLinks` call per row. `preload`
+resolves them for the whole page in a fixed number of queries instead.
+
+```ts
+const invoices = await app.object("Hóa đơn bán hàng");
+const lines = await app.object("Chi tiết hóa đơn");
+
+// 1-n: the relation field lives on the child, so pass its FieldDto.
+const page = await invoices.records().preload(lines.field("Hóa đơn")).fetch();
+for (const invoice of page.records) {
+  const children = invoices.related(invoice, lines.field("Hóa đơn"));
+}
+
+// n-1: the field is on this object, so its name is enough.
+const withParent = await lines.records().preload("Hóa đơn").fetch();
+```
+
+The direction is inferred from which object owns the field, so one query can
+fan out both ways at once — an invoice carrying its customer *and* its lines is
+two `preload` calls on one request:
+
+```ts
+const page = await orders
+  .records()
+  .preload("Customer")                 // n-1, up
+  .preload(items.field("Order"))       // 1-n, down
+  .fetch();
+```
+
+Preloading is one level deep: a preloaded record carries no `related` of its
+own, so users → orders → items (anchored on users) is two round trips. Related
+records are read under the caller's own row scopes, so preloading never
+surfaces a record the caller could not have fetched by id. Up to 10 relations
+per query and 50 related records per row by default (`{ limit }`, max 100).
 
 ### Declaring the tables an app needs: `schema.json`
 

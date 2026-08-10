@@ -100,6 +100,61 @@ describe("RecordQuery", () => {
     );
   });
 
+  it("sends in/not_in filters as arrays under the field key", async () => {
+    const page: RecordPage = { records: [], hasMore: false };
+    const http = new FakeHttp({ "POST /objects/obj-1/records/query": [page] });
+    const handle = new ObjectHandle(http, meta, fields);
+
+    await handle
+      .records()
+      .whereIn("Trạng thái", ["approved", "paid"])
+      .whereNotIn("Tổng tiền", [0])
+      .fetch();
+
+    expect((http.calls[0]?.options?.body as { filters?: unknown }).filters).toEqual([
+      { field: "status", operator: "in", value: ["approved", "paid"] },
+      { field: "total", operator: "not_in", value: [0] },
+    ]);
+  });
+
+  it("filters on the record id without resolving it as a field", async () => {
+    const page: RecordPage = { records: [], hasMore: false };
+    const http = new FakeHttp({ "POST /objects/obj-1/records/query": [page] });
+    const handle = new ObjectHandle(http, meta, fields);
+
+    await handle.records().whereIds(["r1", "r2"]).where("id", "not_equals", "r3").fetch();
+
+    expect((http.calls[0]?.options?.body as { filters?: unknown }).filters).toEqual([
+      { field: "id", operator: "in", value: ["r1", "r2"] },
+      { field: "id", operator: "not_equals", value: "r3" },
+    ]);
+  });
+
+  it("lets a real field named id win over the record id key", async () => {
+    const page: RecordPage = { records: [], hasMore: false };
+    const http = new FakeHttp({ "POST /objects/obj-1/records/query": [page] });
+    const handle = new ObjectHandle(http, meta, [...fields, field("code", "ID")]);
+
+    await handle.records().where("id", "equals", "INV-1").fetch();
+
+    expect((http.calls[0]?.options?.body as { filters?: unknown }).filters).toEqual([
+      { field: "code", operator: "equals", value: "INV-1" },
+    ]);
+  });
+
+  it("refuses in/not_in values the server would reject", () => {
+    const handle = new ObjectHandle(new FakeHttp({}), meta, fields);
+    expect(() => handle.records().where("Trạng thái", "in", "approved")).toThrowError(
+      /needs an array of values/,
+    );
+    expect(() => handle.records().whereIn("Trạng thái", [])).toThrowError(
+      /needs at least one value/,
+    );
+    expect(() =>
+      handle.records().whereIn("Trạng thái", Array.from({ length: 201 }, (_, i) => i)),
+    ).toThrowError(/at most 200 values, got 201/);
+  });
+
   it("paginates through all pages in fetchAll", async () => {
     const pageOne: RecordPage = {
       records: [record("r1", { status: "approved" })],
@@ -255,5 +310,202 @@ describe("ErpClient", () => {
     const byId = await client.object("obj-1");
     expect(byName).toBe(byId);
     expect(http.calls.filter((c) => c.path === "/objects")).toHaveLength(1);
+  });
+});
+
+describe("bulk writes", () => {
+  it("sends one request per batch and resolves display names", async () => {
+    const http = new FakeHttp({
+      "POST /objects/obj-1/records/bulk": [
+        { created: 2, records: [record("r1", {}), record("r2", {})] },
+      ],
+    });
+    const handle = new ObjectHandle(http, meta, fields);
+
+    const result = await handle.createMany([
+      { "Trạng thái": "draft", "Tổng tiền": 10 },
+      { "Trạng thái": "draft", "Tổng tiền": 20 },
+    ]);
+
+    expect(result.created).toBe(2);
+    expect(http.calls).toHaveLength(1);
+    expect(http.calls[0]?.options?.body).toEqual({
+      records: [
+        { data: { status: "draft", total: 10 } },
+        { data: { status: "draft", total: 20 } },
+      ],
+    });
+  });
+
+  it("splits a batch larger than the server's cap and keeps the order", async () => {
+    const http = new FakeHttp({
+      "POST /objects/obj-1/records/bulk": [
+        { created: 2, records: [record("r1", {}), record("r2", {})] },
+        { created: 1, records: [record("r3", {})] },
+      ],
+    });
+    const handle = new ObjectHandle(http, meta, fields);
+
+    const result = await handle.createMany(
+      [{ status: "a" }, { status: "b" }, { status: "c" }],
+      { chunkSize: 2 },
+    );
+
+    expect(result.created).toBe(3);
+    expect(result.records.map((r) => r.id)).toEqual(["r1", "r2", "r3"]);
+    expect(http.calls).toHaveLength(2);
+  });
+
+  it("turns a record query into one filtered mass update", async () => {
+    const http = new FakeHttp({
+      "POST /objects/obj-1/records/bulk-update": [
+        { matched: 4, updated: 4, hasMore: false },
+      ],
+    });
+    const handle = new ObjectHandle(http, meta, fields);
+
+    const result = await handle
+      .records()
+      .where("Trạng thái", "equals", "draft")
+      .update({ "Trạng thái": "overdue", "Tổng tiền": null });
+
+    expect(result.updated).toBe(4);
+    expect(http.calls[0]?.options?.body).toEqual({
+      filters: [{ field: "status", operator: "equals", value: "draft" }],
+      data: { status: "overdue", total: null },
+      limit: undefined,
+    });
+  });
+});
+
+describe("getMany", () => {
+  it("chunks the ids, keeps the asked-for order and drops what came back missing", async () => {
+    const http = new FakeHttp({
+      "POST /objects/obj-1/records/query": [
+        { records: [record("r2", {}), record("r1", {})], hasMore: false },
+        { records: [record("r3", {})], hasMore: false },
+      ],
+    });
+    const handle = new ObjectHandle(http, meta, fields);
+
+    const records = await handle.getMany(["r1", "r2", "r3", "r1", "r4"], { chunkSize: 2 });
+
+    expect(records.map((r) => r.id)).toEqual(["r1", "r2", "r3"]);
+    expect(http.calls).toHaveLength(2);
+    expect((http.calls[0]?.options?.body as { filters?: unknown }).filters).toEqual([
+      { field: "id", operator: "in", value: ["r1", "r2"] },
+    ]);
+    expect((http.calls[1]?.options?.body as { filters?: unknown }).filters).toEqual([
+      { field: "id", operator: "in", value: ["r3", "r4"] },
+    ]);
+  });
+
+  it("makes no request for an empty id list", async () => {
+    const http = new FakeHttp({});
+    const handle = new ObjectHandle(http, meta, fields);
+
+    expect(await handle.getMany([])).toEqual([]);
+    expect(http.calls).toHaveLength(0);
+  });
+});
+
+describe("preload", () => {
+  const lineMeta: ObjectDto = { ...meta, id: "obj-2", name: "Chi tiết hóa đơn" };
+  const lineInvoice: FieldDto = {
+    id: "field-invoice",
+    objectId: lineMeta.id,
+    key: "invoice",
+    name: "Hóa đơn",
+    type: "relation",
+    config: { targetObjectId: meta.id },
+    position: 0,
+    isArchived: false,
+    createdAt: "",
+    updatedAt: "",
+  };
+
+  it("infers outgoing for this object's own relation field", async () => {
+    const http = new FakeHttp({ "POST /objects/obj-2/records/query": [{ records: [], hasMore: false }] });
+    const lines = new ObjectHandle(http, lineMeta, [lineInvoice]);
+
+    await lines.records().preload("Hóa đơn").fetch();
+
+    expect((http.calls[0]?.options?.body as { preload?: unknown }).preload).toEqual([
+      { field: "invoice", direction: "outgoing", limit: undefined },
+    ]);
+  });
+
+  it("infers incoming for a relation field belonging to another object", async () => {
+    const http = new FakeHttp({ "POST /objects/obj-1/records/query": [{ records: [], hasMore: false }] });
+    const invoices = new ObjectHandle(http, meta, fields);
+
+    await invoices.records().preload(lineInvoice, { limit: 20 }).fetch();
+
+    expect((http.calls[0]?.options?.body as { preload?: unknown }).preload).toEqual([
+      { field: "invoice", direction: "incoming", limit: 20 },
+    ]);
+  });
+
+  it("reads preloaded records back by field or by raw key", () => {
+    const invoices = new ObjectHandle(new FakeHttp({}), meta, fields);
+    const line = record("l1", {});
+    const parent: RecordDto = { ...record("r1", {}), related: { invoice: [line] } };
+
+    expect(invoices.related(parent, lineInvoice)).toEqual([line]);
+    expect(invoices.related(parent, "invoice")).toEqual([line]);
+    expect(invoices.related(parent, "khong-co")).toEqual([]);
+  });
+});
+
+describe("backward compatibility", () => {
+  it("keeps the query body byte-identical when no preload is asked for", async () => {
+    const http = new FakeHttp({
+      "POST /objects/obj-1/records/query": [{ records: [], hasMore: false }],
+    });
+    const handle = new ObjectHandle(http, meta, fields);
+
+    await handle.records().where("Trạng thái", "equals", "approved").limit(25).fetch();
+
+    const body = http.calls[0]?.options?.body;
+    expect(JSON.parse(JSON.stringify(body))).toEqual({
+      filters: [{ field: "status", operator: "equals", value: "approved" }],
+      limit: 25,
+    });
+    expect(Object.keys(JSON.parse(JSON.stringify(body)))).not.toContain("preload");
+  });
+
+  it("leaves single-record CRUD calls exactly as they were", async () => {
+    const created = record("r1", { status: "draft" });
+    const http = new FakeHttp({
+      "POST /objects/obj-1/records": [created],
+      "PUT /objects/obj-1/records/r1": [created],
+      "DELETE /objects/obj-1/records/r1": [null],
+    });
+    const handle = new ObjectHandle(http, meta, fields);
+
+    await handle.create({ "Trạng thái": "draft" });
+    await handle.update("r1", { "Trạng thái": "approved" }, 1);
+    await handle.delete("r1", 2);
+
+    expect(http.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      "POST /objects/obj-1/records",
+      "PUT /objects/obj-1/records/r1",
+      "DELETE /objects/obj-1/records/r1",
+    ]);
+    expect(http.calls[0]?.options?.body).toEqual({ data: { status: "draft" } });
+    expect(http.calls[1]?.options?.body).toEqual({ data: { status: "approved" }, version: 1 });
+    expect(http.calls[2]?.options?.query).toEqual({ version: 2 });
+  });
+
+  it("reads a record that carries no `related` without touching it", () => {
+    const handle = new ObjectHandle(new FakeHttp({}), meta, fields);
+    const legacy = record("r1", { status: "approved", total: 120 });
+
+    expect(handle.related(legacy, "Trạng thái")).toEqual([]);
+    expect(handle.rowFromRecord(legacy)).toMatchObject({
+      id: "r1",
+      "Trạng thái": "approved",
+      "Tổng tiền": 120,
+    });
   });
 });

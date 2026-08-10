@@ -17,6 +17,17 @@ describe("DataFrame", () => {
     expect(df.where("status", "is_empty").count()).toBe(0);
   });
 
+  it("matches in/not_in against a list, the same set the server would", () => {
+    const df = DataFrame.from(rows);
+    expect(df.where("status", "in", ["approved", "paid"]).count()).toBe(3);
+    expect(df.where("status", "not_in", ["approved"]).pluck("customer")).toEqual(["Bình"]);
+    expect(df.where("total", "in", [50, 200]).pluck("total")).toEqual([50, 200]);
+    // A row with no value is not one of the excluded values, so it stays.
+    expect(
+      DataFrame.from([{ status: null }]).where("status", "not_in", ["approved"]).count(),
+    ).toBe(1);
+  });
+
   it("sorts and selects", () => {
     const sorted = DataFrame.from(rows).sortBy("total", "desc");
     expect(sorted.pluck("total")).toEqual([200, 100, 75, 50]);

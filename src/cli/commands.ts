@@ -585,7 +585,9 @@ export const COMMANDS: CommandSpec[] = [
         name: "where",
         value: "Field:op:value",
         repeatable: true,
-        description: `Filter. Shorthand "Field=value" means equals. Operators: ${OPERATORS.join(", ")}`,
+        description:
+          `Filter. Shorthand "Field=value" means equals. "id" filters on the record id; ` +
+          `in/not_in take a comma list or a JSON array. Operators: ${OPERATORS.join(", ")}`,
       },
       { name: "sort", value: "Field:asc|desc", repeatable: true, description: "Sort (default asc)" },
       { name: "limit", value: "n", description: "Page size (server max 100)" },
@@ -600,6 +602,8 @@ export const COMMANDS: CommandSpec[] = [
     examples: [
       'erp records query "Hóa đơn" --where "Trạng thái=approved" --sort "Tổng tiền:desc" --limit 20',
       'erp records query "Hóa đơn" --where "Tổng tiền:greater_than:1000000" --all',
+      'erp records query "Hóa đơn" --where "Trạng thái:in:approved,paid"',
+      'erp records query "Hóa đơn" --where "id:in:018f…,018g…"',
     ],
     async run(ctx) {
       const client = await ctx.client();

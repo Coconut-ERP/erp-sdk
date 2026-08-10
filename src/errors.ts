@@ -71,6 +71,21 @@ export class SchemaMismatchError extends Error {
   }
 }
 
+/**
+ * A filter the server would refuse anyway, caught before it costs a round trip:
+ * `in`/`not_in` take a non-empty array of at most `MAX_FILTER_VALUES` values.
+ */
+export class FilterValueError extends Error {
+  constructor(
+    readonly field: string,
+    readonly operator: string,
+    readonly reason: string,
+  ) {
+    super(`Filter "${field}" with operator "${operator}": ${reason}`);
+    this.name = "FilterValueError";
+  }
+}
+
 export class UnknownFieldError extends Error {
   constructor(
     readonly field: string,

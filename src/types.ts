@@ -91,6 +91,7 @@ export interface RecordDto {
   updatedBy: string;
   createdAt: string;
   updatedAt: string;
+  related?: Record<string, RecordDto[]>;
 }
 
 export interface RecordPage {
@@ -104,6 +105,9 @@ export type FilterOperator =
   | "equals"
   | "not_equals"
   | "contains"
+  /** Membership: value is an array of at most 200 values. */
+  | "in"
+  | "not_in"
   | "greater_than"
   | "greater_than_or_equal"
   | "less_than"
@@ -112,8 +116,14 @@ export type FilterOperator =
   | "is_not_empty";
 
 export interface RecordFilter {
+  /**
+   * A field key, or the literal `"id"` to filter on the record's own id —
+   * the one filter target that is not a field (`equals`, `not_equals`, `in`,
+   * `not_in` only).
+   */
   field: string;
   operator: FilterOperator;
+  /** An array for `in`/`not_in`, absent for `is_empty`/`is_not_empty`. */
   value?: unknown;
 }
 
@@ -124,15 +134,43 @@ export interface RecordSort {
   direction: SortDirection;
 }
 
+export type LinkDirection = "outgoing" | "incoming";
+
+export interface RecordPreload {
+  field: string;
+  direction?: LinkDirection;
+  limit?: number;
+}
+
 export interface QueryRecordsRequest {
   filters?: RecordFilter[];
   sorts?: RecordSort[];
+  preload?: RecordPreload[];
   cursor?: string;
   limit?: number;
   includeTotal?: boolean;
 }
 
-export type LinkDirection = "outgoing" | "incoming";
+export interface BulkCreateRecordsRequest {
+  records: Array<{ data: Record<string, unknown> }>;
+}
+
+export interface BulkCreateRecordsResult {
+  created: number;
+  records: RecordDto[];
+}
+
+export interface BulkUpdateRecordsRequest {
+  filters?: RecordFilter[];
+  data: Record<string, unknown>;
+  limit?: number;
+}
+
+export interface BulkUpdateRecordsResult {
+  matched: number;
+  updated: number;
+  hasMore: boolean;
+}
 
 export interface UserDto {
   id: string;

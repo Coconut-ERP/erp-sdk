@@ -110,9 +110,21 @@ const created = await leaves.create({ "Lý do": "Việc gia đình" });
 await leaves.update(created.id, { "Trạng thái": "approved" });   // optimistic lock
 ```
 
-Toán tử filter: `equals`, `not_equals`, `contains`, `greater_than`,
-`greater_than_or_equal`, `less_than`, `less_than_or_equal`, `is_empty`,
-`is_not_empty`. Giới hạn server: 20 filter, 3 sort, 100 record/trang.
+Toán tử filter: `equals`, `not_equals`, `contains`, `in`, `not_in`,
+`greater_than`, `greater_than_or_equal`, `less_than`, `less_than_or_equal`,
+`is_empty`, `is_not_empty`. Giới hạn server: 20 filter, 3 sort, 100 record/trang.
+
+`in`/`not_in` nhận mảng tối đa 200 giá trị; `"id"` lọc theo id của chính record
+(chỉ `equals`/`not_equals`/`in`/`not_in`). Field relation về sẵn trong `data`
+dưới dạng mảng id, nên lấy bản ghi liên quan bằng **một** request thay vì mỗi
+dòng một request:
+
+```ts
+await leaves.records().whereIn("Trạng thái", ["pending", "approved"]).fetchAll();
+
+const ids = rows.flatMap((r) => (r.data.nhanVien as string[]) ?? []);
+const staff = await employees.getMany(ids);   // tự chia lô 200, giữ thứ tự
+```
 
 ## Danh tính người dùng (initData)
 

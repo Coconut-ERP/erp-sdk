@@ -41,10 +41,13 @@ cần truyền `workspaceId`.
 ```ts
 handle.records()                      // → RecordQuery
 handle.create(data)                   // key theo display name hoặc field key
+handle.createMany(rows, { chunkSize? })  // bulk insert: 1 transaction, all-or-nothing
 handle.get(id)
 handle.update(id, data, version?)     // không truyền version thì tự đọc trước
+handle.updateWhere(filters, data, { limit? })  // bulk update theo filter
 handle.delete(id, version?)           // soft delete
 handle.restore(id, version)
+handle.related(record, field)         // record đã preload → RecordDto[]
 handle.addField(name, type, { config?, position? })
 handle.updateField(nameOrKey, { name?, config?, position?, isArchived? })
 handle.rename(name)
@@ -87,13 +90,21 @@ type SchemaAction = "create" | "update" | "unchanged" | "conflict";
 ```ts
 .where(field, operator, value?)   // tối đa 20
 .orderBy(field, "asc" | "desc")   // tối đa 3
+.preload(field, { limit? })       // nạp kèm quan hệ, tối đa 10 — tránh N+1
 .limit(n)                          // server max 100
 .cursor(c) .withTotal()
 await .fetch()                     // { records, nextCursor, hasMore, total? }
 await .fetchAll({ max? })          // tự phân trang
 await .first() / .count()
+await .update(data, { limit? })    // bulk update mọi dòng khớp filter
 await .toFrame({ by?, max? })      // → DataFrame
 ```
+
+`preload(field)`: truyền tên field relation của chính bảng đang query (n-1), hoặc
+`FieldDto` của bảng khác trỏ về bảng này (1-n) — chiều tự suy ra. Đọc kết quả bằng
+`handle.related(record, field)`. Bulk: insert ≤ 500/lần (SDK tự chia), update
+≤ 5 000 dòng/lần và trả `hasMore` khi còn; field `unique` không set được bằng bulk
+update, computed field để worker tính lại.
 
 ## DataFrame
 

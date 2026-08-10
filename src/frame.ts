@@ -41,6 +41,17 @@ function compareOrdered(value: unknown, target: unknown): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/** `in`/`not_in` take a list; a lone value is read as a list of one. */
+function toList(target: unknown): unknown[] {
+  return Array.isArray(target) ? target : [target];
+}
+
+function isMember(value: unknown, target: unknown): boolean {
+  return toList(target).some(
+    (item) => item === value || String(item) === String(value),
+  );
+}
+
 export function matchesOperator(
   value: unknown,
   operator: FilterOperator,
@@ -55,6 +66,12 @@ export function matchesOperator(
       return String(value ?? "")
         .toLowerCase()
         .includes(String(target ?? "").toLowerCase());
+    case "in":
+      return isMember(value, target);
+    case "not_in":
+      // Mirrors the server: a record with no value is not one of the excluded
+      // values, so it belongs in the result.
+      return !isMember(value, target);
     case "greater_than":
       return !isEmptyValue(value) && compareOrdered(value, target) > 0;
     case "greater_than_or_equal":

@@ -5,6 +5,8 @@ export const OPERATORS: FilterOperator[] = [
   "equals",
   "not_equals",
   "contains",
+  "in",
+  "not_in",
   "greater_than",
   "greater_than_or_equal",
   "less_than",
@@ -14,6 +16,8 @@ export const OPERATORS: FilterOperator[] = [
 ];
 
 const VALUELESS: FilterOperator[] = ["is_empty", "is_not_empty"];
+
+const LIST_VALUED: FilterOperator[] = ["in", "not_in"];
 
 /**
  * Values are read as JSON when they parse as JSON, otherwise as plain strings.
@@ -30,6 +34,17 @@ export function coerce(raw: string): unknown {
   }
 }
 
+/**
+ * `in` and `not_in` take a list: a JSON array, or the comma-separated shorthand
+ * `a,b,c` whose items are coerced one by one. A value that has to contain a
+ * comma needs the JSON form.
+ */
+export function coerceList(raw: string): unknown[] {
+  const parsed = coerce(raw);
+  if (Array.isArray(parsed)) return parsed;
+  return raw.split(",").map((item) => coerce(item.trim()));
+}
+
 /** `Field:operator:value` — or `Field=value` as shorthand for `equals`. */
 export function parseFilter(input: string): RecordFilter {
   const firstColon = input.indexOf(":");
@@ -43,7 +58,11 @@ export function parseFilter(input: string): RecordFilter {
       if (secondColon === -1) {
         throw new UsageError(`Filter "${input}" needs a value: "Field:${operator}:value"`);
       }
-      return { field, operator, value: coerce(rest.slice(secondColon + 1)) };
+      const raw = rest.slice(secondColon + 1);
+      if (LIST_VALUED.includes(operator)) {
+        return { field, operator, value: coerceList(raw) };
+      }
+      return { field, operator, value: coerce(raw) };
     }
   }
 

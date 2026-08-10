@@ -1,7 +1,9 @@
 import { DataFrame, type Row } from "./frame";
-import { UnknownFieldError } from "./errors";
+import { FilterValueError, UnknownFieldError } from "./errors";
 import type { Http } from "./http";
 import type {
+  BulkCreateRecordsResult,
+  BulkUpdateRecordsResult,
   FieldDto,
   FilterOperator,
   LinkDirection,
@@ -10,11 +12,52 @@ import type {
   RecordDto,
   RecordFilter,
   RecordPage,
+  RecordPreload,
   RecordSort,
   SortDirection,
 } from "./types";
 
 const MAX_PAGE_SIZE = 100;
+
+const MAX_BULK_CREATE = 500;
+
+/**
+ * The filter key that addresses a record's own id instead of a field. The
+ * server compiles it against the primary key, so it takes `equals`,
+ * `not_equals`, `in` and `not_in` and nothing else.
+ */
+export const RECORD_ID_FILTER_KEY = "id";
+
+/** Server cap on how many values one `in`/`not_in` filter may carry. */
+export const MAX_FILTER_VALUES = 200;
+
+const MEMBERSHIP_OPERATORS: readonly FilterOperator[] = ["in", "not_in"];
+
+/**
+ * `in`/`not_in` are the only operators whose value has a shape, and getting it
+ * wrong is a 400 from the server — cheaper to say so here, with the field name
+ * the caller actually wrote.
+ */
+function checkFilterValue(
+  field: string,
+  operator: FilterOperator,
+  value: unknown,
+): void {
+  if (!MEMBERSHIP_OPERATORS.includes(operator)) return;
+  if (!Array.isArray(value)) {
+    throw new FilterValueError(field, operator, "needs an array of values");
+  }
+  if (value.length === 0) {
+    throw new FilterValueError(field, operator, "needs at least one value");
+  }
+  if (value.length > MAX_FILTER_VALUES) {
+    throw new FilterValueError(
+      field,
+      operator,
+      `accepts at most ${MAX_FILTER_VALUES} values, got ${value.length} — split it into chunks`,
+    );
+  }
+}
 
 export class ObjectHandle {
   private readonly byKey = new Map<string, FieldDto>();
@@ -58,6 +101,22 @@ export class ObjectHandle {
 
   fieldKey(nameOrKey: string): string {
     return this.field(nameOrKey).key;
+  }
+
+  /**
+   * The key a *filter* addresses. Same resolution as `fieldKey`, plus one
+   * fallback: the literal `id` means the record's own id, which is not an
+   * `engine_fields` row and so resolves through nothing. A real field named
+   * "id" still wins — the same order the backend resolves filter fields in.
+   */
+  filterKey(nameOrKey: string): string {
+    const field =
+      this.byKey.get(nameOrKey) ?? this.byName.get(nameOrKey.toLowerCase());
+    if (field) return field.key;
+    if (nameOrKey.trim().toLowerCase() === RECORD_ID_FILTER_KEY) {
+      return RECORD_ID_FILTER_KEY;
+    }
+    return this.fieldKey(nameOrKey);
   }
 
   private resolveData(data: Row): Row {
@@ -133,11 +192,75 @@ export class ObjectHandle {
     );
   }
 
+  async createMany(
+    rows: Row[],
+    options: { chunkSize?: number } = {},
+  ): Promise<BulkCreateRecordsResult> {
+    if (rows.length === 0) return { created: 0, records: [] };
+    const chunkSize = Math.min(options.chunkSize ?? MAX_BULK_CREATE, MAX_BULK_CREATE);
+    const result: BulkCreateRecordsResult = { created: 0, records: [] };
+
+    for (let start = 0; start < rows.length; start += chunkSize) {
+      const chunk = rows.slice(start, start + chunkSize);
+      const page = await this.http.request<BulkCreateRecordsResult>(
+        "POST",
+        `/objects/${this.id}/records/bulk`,
+        { body: { records: chunk.map((row) => ({ data: this.resolveData(row) })) } },
+      );
+      result.created += page.created;
+      result.records.push(...page.records);
+    }
+    return result;
+  }
+
+  async updateWhere(
+    filters: RecordFilter[],
+    data: Row,
+    options: { limit?: number } = {},
+  ): Promise<BulkUpdateRecordsResult> {
+    return this.http.request<BulkUpdateRecordsResult>(
+      "POST",
+      `/objects/${this.id}/records/bulk-update`,
+      { body: { filters, data: this.resolveData(data), limit: options.limit } },
+    );
+  }
+
   async get(recordId: string): Promise<RecordDto> {
     return this.http.request<RecordDto>(
       "GET",
       `/objects/${this.id}/records/${recordId}`,
     );
+  }
+
+  /**
+   * Read many records by id in one filtered query per `MAX_FILTER_VALUES` ids,
+   * instead of one request per id — the fetch half of the relation-ids pattern
+   * (a relation field comes back in `data` as an array of related record ids).
+   *
+   * Ids come back in the order asked for. An id the actor's row scopes exclude,
+   * or one that is deleted, is simply absent rather than an error, so a shorter
+   * result than input is normal.
+   */
+  async getMany(
+    ids: string[],
+    options: { chunkSize?: number } = {},
+  ): Promise<RecordDto[]> {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) return [];
+    const chunkSize = Math.min(
+      options.chunkSize ?? MAX_FILTER_VALUES,
+      MAX_FILTER_VALUES,
+    );
+    const found = new Map<string, RecordDto>();
+
+    for (let start = 0; start < unique.length; start += chunkSize) {
+      const chunk = unique.slice(start, start + chunkSize);
+      const records = await this.records().whereIds(chunk).fetchAll();
+      for (const record of records) found.set(record.id, record);
+    }
+    return unique
+      .map((id) => found.get(id))
+      .filter((record): record is RecordDto => record !== undefined);
   }
 
   async update(recordId: string, data: Row, version?: number): Promise<RecordDto> {
@@ -205,6 +328,16 @@ export class ObjectHandle {
     );
   }
 
+  related(record: RecordDto, field: string | FieldDto): RecordDto[] {
+    const key =
+      typeof field === "string"
+        ? (this.byKey.get(field)?.key ??
+          this.byName.get(field.toLowerCase())?.key ??
+          field)
+        : field.key;
+    return record.related?.[key] ?? [];
+  }
+
   rowFromRecord(record: RecordDto, by: "name" | "key" = "name"): Row {
     const row: Row = {
       id: record.id,
@@ -225,6 +358,7 @@ export class ObjectHandle {
 export class RecordQuery {
   private readonly filters: RecordFilter[] = [];
   private readonly sorts: RecordSort[] = [];
+  private readonly preloads: RecordPreload[] = [];
   private cursorValue?: string;
   private limitValue?: number;
   private includeTotalValue?: boolean;
@@ -239,10 +373,36 @@ export class RecordQuery {
     operator: FilterOperator,
     value?: unknown,
   ): this {
+    checkFilterValue(fieldNameOrKey, operator, value);
     this.filters.push({
-      field: this.object.fieldKey(fieldNameOrKey),
+      field: this.object.filterKey(fieldNameOrKey),
       operator,
       value,
+    });
+    return this;
+  }
+
+  /** `where(field, "in", values)` — matches any of at most 200 values. */
+  whereIn(fieldNameOrKey: string, values: unknown[]): this {
+    return this.where(fieldNameOrKey, "in", values);
+  }
+
+  /** `where(field, "not_in", values)`. A record with no value still matches. */
+  whereNotIn(fieldNameOrKey: string, values: unknown[]): this {
+    return this.where(fieldNameOrKey, "not_in", values);
+  }
+
+  /**
+   * Filter on the records' own ids. Bypasses field resolution, so it still
+   * means the record id on an object that happens to own a field named "id".
+   * At most `MAX_FILTER_VALUES` ids — `ObjectHandle.getMany` chunks for you.
+   */
+  whereIds(ids: string[]): this {
+    checkFilterValue(RECORD_ID_FILTER_KEY, "in", ids);
+    this.filters.push({
+      field: RECORD_ID_FILTER_KEY,
+      operator: "in",
+      value: ids,
     });
     return this;
   }
@@ -251,6 +411,23 @@ export class RecordQuery {
     this.sorts.push({
       field: this.object.fieldKey(fieldNameOrKey),
       direction,
+    });
+    return this;
+  }
+
+  preload(
+    field: string | FieldDto,
+    options: { limit?: number; direction?: LinkDirection } = {},
+  ): this {
+    const resolved =
+      typeof field === "string" ? this.object.field(field) : field;
+    const direction =
+      options.direction ??
+      (resolved.objectId === this.object.id ? "outgoing" : "incoming");
+    this.preloads.push({
+      field: resolved.key,
+      direction,
+      limit: options.limit,
     });
     return this;
   }
@@ -274,10 +451,20 @@ export class RecordQuery {
     return {
       filters: this.filters.length > 0 ? this.filters : undefined,
       sorts: this.sorts.length > 0 ? this.sorts : undefined,
+      preload: this.preloads.length > 0 ? this.preloads : undefined,
       cursor: this.cursorValue,
       limit: this.limitValue,
       includeTotal: this.includeTotalValue,
     };
+  }
+
+  async update(
+    data: Row,
+    options: { limit?: number } = {},
+  ): Promise<BulkUpdateRecordsResult> {
+    return this.object.updateWhere(this.filters, data, {
+      limit: options.limit ?? this.limitValue,
+    });
   }
 
   async fetch(): Promise<RecordPage> {

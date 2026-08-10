@@ -59,9 +59,13 @@ erp help [command] [--json]
 ## Cú pháp giá trị
 
 **Filter** — `--where "Field:operator:value"`, hoặc `--where "Field=value"` (viết
-tắt của `equals`). Toán tử: `equals`, `not_equals`, `contains`, `greater_than`,
-`greater_than_or_equal`, `less_than`, `less_than_or_equal`, `is_empty`,
-`is_not_empty` (hai cái cuối không cần value). Lặp `--where` = AND.
+tắt của `equals`). Toán tử: `equals`, `not_equals`, `contains`, `in`, `not_in`,
+`greater_than`, `greater_than_or_equal`, `less_than`, `less_than_or_equal`,
+`is_empty`, `is_not_empty` (hai cái cuối không cần value). Lặp `--where` = AND.
+
+`in`/`not_in` nhận danh sách: `"Trạng thái:in:approved,paid"` hoặc dạng JSON
+`'Tổng tiền:in:[100, 200]'` (giá trị có dấu phẩy thì bắt buộc dùng JSON), tối đa
+200 giá trị. Field `"id"` lọc theo id record: `--where "id:in:<id1>,<id2>"`.
 
 **Sort** — `--sort "Field:desc"` (mặc định `asc`), tối đa 3.
 
@@ -96,6 +100,8 @@ erp objects ensure "Đơn xin nghỉ" \
 # Đọc dữ liệu
 erp records query "Đơn xin nghỉ" --where "Trạng thái=pending" --sort "Từ ngày:desc" --limit 20
 erp records query "Hóa đơn" --where "Tổng tiền:greater_than:1000000" --all --select "Khách hàng,Tổng tiền"
+erp records query "Hóa đơn" --where "Trạng thái:in:approved,paid"
+erp records query "Hóa đơn" --where "id:in:<id1>,<id2>"      # lấy nhiều record theo id
 erp records count "Đơn xin nghỉ" --where "Trạng thái=pending"
 
 # Ghi dữ liệu

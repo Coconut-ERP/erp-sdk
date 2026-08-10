@@ -58,6 +58,7 @@ Thuộc tính: `id`, `name`, `meta: ObjectDto`, `fields: FieldDto[]`.
 | --- | --- |
 | `field(nameOrKey)` | `FieldDto` — không thấy → `UnknownFieldError` (`.known` = danh sách field) |
 | `fieldKey(nameOrKey)` | key nội bộ của field |
+| `filterKey(nameOrKey)` | Như `fieldKey`, nhưng `"id"` (khi không có field trùng tên) trả `"id"` — id của chính record |
 | `addField(name, type, { config?, position? })` | Thêm field (key admin) |
 | `updateField(nameOrKey, { name?, config?, position?, isArchived? })` | Sửa field (key admin) |
 | `rename(name)` | Đổi tên object (key admin) |
@@ -67,11 +68,15 @@ Thuộc tính: `id`, `name`, `meta: ObjectDto`, `fields: FieldDto[]`.
 | Method | Mô tả |
 | --- | --- |
 | `create(data)` | Tạo record → `RecordDto` |
+| `createMany(rows, { chunkSize? })` | Bulk insert → `{ created, records }`. Một transaction, all-or-nothing; batch > 500 tự chia |
 | `get(recordId)` | Lấy một record |
+| `getMany(ids, { chunkSize? })` | Lấy nhiều record theo id — mỗi 200 id một request (`id in`), khử trùng lặp, giữ đúng thứ tự đã hỏi; id không đọc được thì vắng mặt |
 | `update(recordId, data, version?)` | Sửa; không truyền `version` thì tự GET lấy (thêm 1 request). Version lệch → 409 |
+| `updateWhere(filters, data, { limit? })` | Bulk update theo filter thô → `{ matched, updated, hasMore }`. Thường dùng dạng `records().where(...).update(...)` |
 | `delete(recordId, version?)` | Soft delete |
 | `restore(recordId, version)` | Khôi phục |
 | `records()` | Mở `RecordQuery` |
+| `related(record, field)` | Record đã `preload` → `RecordDto[]`; `field` là tên/key của bảng này, hoặc `FieldDto` của bảng khác |
 | `rowFromRecord(record, by = "name")` | Record → object phẳng theo tên/key field, kèm `id`, `version`, `createdAt`, `updatedAt`, merge `computedData` |
 
 **Links (field `relation`):**
@@ -116,11 +121,21 @@ lệnh thực thi:
 
 ```ts
 q.where(field, operator, value?)   // AND; tối đa 20 (server)
+ .whereIn(field, values)           // = where(field, "in", values), tối đa 200 giá trị
+ .whereNotIn(field, values)        // = where(field, "not_in", values)
+ .whereIds(ids)                    // lọc theo id record, tối đa 200
  .orderBy(field, "asc" | "desc")   // tối đa 3
+ .preload(field, { limit?, direction? })  // nạp kèm quan hệ; tối đa 10
  .limit(n)                         // tối đa 100/trang
  .cursor(cursor)                   // phân trang
  .withTotal()                      // đếm tổng (thêm chi phí)
 ```
+
+`preload(field)` nhận tên/key field relation của chính bảng đang query
+(chiều `outgoing`, n-1) hoặc `FieldDto` của bảng khác trỏ về bảng này (chiều
+`incoming`, 1-n) — chiều được suy ra, không cần truyền. Kết quả nằm ở
+`record.related[fieldKey]`, đọc bằng `handle.related(record, field)`. Mặc định
+50 record con mỗi dòng, trần 100.
 
 | Thực thi | Trả về |
 | --- | --- |
@@ -128,12 +143,19 @@ q.where(field, operator, value?)   // AND; tối đa 20 (server)
 | `fetchAll({ max? })` | `RecordDto[]` — tự lặp cursor (100/trang) đến hết hoặc `max` |
 | `first()` | `RecordDto \| undefined` |
 | `count()` | `number` (dùng `withTotal` ngầm) |
+| `update(data, { limit? })` | Bulk update mọi dòng khớp filter → `{ matched, updated, hasMore }`; `null` xoá field, tối đa 5 000 dòng/lần |
 | `toFrame({ by?, max? })` | `DataFrame<Row>` — cột theo `"name"` (mặc định) hoặc `"key"` |
 | `build()` | `QueryRecordsRequest` thô (tự gọi API) |
 
-`FilterOperator`: `equals` · `not_equals` · `contains` · `greater_than` ·
-`greater_than_or_equal` · `less_than` · `less_than_or_equal` · `is_empty` ·
-`is_not_empty`.
+`FilterOperator`: `equals` · `not_equals` · `contains` · `in` · `not_in` ·
+`greater_than` · `greater_than_or_equal` · `less_than` · `less_than_or_equal` ·
+`is_empty` · `is_not_empty`.
+
+`in` / `not_in` nhận **mảng 1–200 giá trị** (`RECORD_ID_FILTER_KEY`,
+`MAX_FILTER_VALUES` được export); sai kiểu/rỗng/quá trần → `FilterValueError`
+ném ngay client. Field `"id"` lọc theo id của chính record (chỉ `equals`,
+`not_equals`, `in`, `not_in`); query có filter id sẽ bỏ COUNT trừ khi
+`withTotal()`.
 
 ## DataFrame
 
@@ -183,6 +205,7 @@ dùng độc lập được.
 | `SchemaMismatchError` | `assertSchema` thấy workspace chưa khớp `schema.json` | `missing: SchemaGap[]`, `conflicts: SchemaGap[]` |
 | `UnknownObjectError` | `object(name)` không khớp | `object` |
 | `UnknownFieldError` | Tên field không khớp | `field`, `objectName`, `known: string[]` |
+| `FilterValueError` | `in`/`not_in` nhận giá trị server sẽ từ chối (không phải mảng, rỗng, > 200) | `field`, `operator`, `reason` |
 
 Mã lỗi hay gặp trong `ErpApiError.status`: 401 (key/token/initData sai hoặc
 hết hạn), 403 (thiếu permission RBAC), 404 (không tồn tại *hoặc* bị ACL ẩn),
@@ -209,7 +232,9 @@ await http.request<T>(method, path, { body?, query? });
 string tuỳ ý) · `Action` (`"create" | "read" | "update" | "delete" | "manage"
 | "*"` + tuỳ ý) · `RequiredPermission` · `PermissionDto` · `ObjectDto` ·
 `FieldDto` · `RecordDto` · `RecordPage` · `RecordFilter` · `RecordSort` ·
-`QueryRecordsRequest` · `LinkDirection` · `UserDto` · `MiniAppInitData` ·
+`RecordPreload` · `QueryRecordsRequest` · `BulkCreateRecordsRequest` ·
+`BulkCreateRecordsResult` · `BulkUpdateRecordsRequest` ·
+`BulkUpdateRecordsResult` · `LinkDirection` · `UserDto` · `MiniAppInitData` ·
 `MiniAppSessionDto` · `EnsureFieldSpec` · `Row` · `AggSpec` · `MiniAppSchema` ·
 `SchemaObjectSpec` · `SchemaFieldSpec` · `SchemaStatus` · `SchemaAction` ·
 `SchemaObjectPlan` · `SchemaFieldPlan` · `MiniAppSchemaPlan` (body của

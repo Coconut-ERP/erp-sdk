@@ -26,6 +26,7 @@ df.first();  df.last();  df.at(-1);
 df.head(10).toArray();  df.tail(5).toArray();  df.slice(10, 20);
 
 df.where("Tổng tiền", "greater_than", 1_000_000)   // cùng bộ toán tử với query server
+  .where("Trạng thái", "in", ["approved", "paid"]) // in/not_in nhận mảng, như server
   .filter((row) => String(row["Khách hàng"]).startsWith("A"))  // predicate tuỳ ý
   .select("Khách hàng", "Tổng tiền")
   .rename({ "Tổng tiền": "revenue" })
