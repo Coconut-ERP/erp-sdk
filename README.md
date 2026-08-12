@@ -18,10 +18,10 @@ attached to a [GitHub Release](https://github.com/Coconut-ERP/erp-sdk/releases) 
 install it by URL with any package manager:
 
 ```bash
-npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz
-bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz
-pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz
-yarn add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz
+npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
+bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
+pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
+yarn add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
 ```
 
 In a `package.json` dependency list that reads:
@@ -29,7 +29,7 @@ In a `package.json` dependency list that reads:
 ```json
 {
   "dependencies": {
-    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz"
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz"
   }
 }
 ```
@@ -47,7 +47,7 @@ npm install -g https://github.com/Coconut-ERP/erp-sdk/releases/download/latest/e
 Use that for a global CLI install or a throwaway script. **Do not put it in an
 app's `package.json`**: package managers cache and lock by URL, so a moving URL
 installs whatever was cached and stops being reproducible. Dependencies get the
-pinned `v0.3.0` URL above.
+pinned `v0.3.1` URL above.
 
 Installing straight from the repo also works, **but only with npm, pnpm or yarn**:
 
@@ -94,9 +94,23 @@ filters/sorting/pagination, walking `relation` fields without N+1, aggregating
 with `DataFrame`, and writing (and bulk-writing) safely.
 
 ```bash
-npx erp skill install               # → .claude/skills/erp-data
+npx erp skill install               # → ~/.agents/skills/erp-data
 npx erp skill path                  # or just point an agent at the files
 ```
+
+It installs **one copy per machine**, in a directory that belongs to no single
+tool, then prints how to reach it from each agent — Claude Code is the only one
+that autoloads a `SKILL.md`, and only from its own directory:
+
+```bash
+ln -sfn ~/.agents/skills/erp-data ~/.claude/skills/erp-data      # claude
+# codex / opencode / pi — one line in AGENTS.md:
+#   ERP data tasks (erp-sdk, object/field/record, ERP_API_KEY):
+#   read ~/.agents/skills/erp-data/SKILL.md first.
+```
+
+`--dir` overrides the target (`erp skill install --dir .claude/skills` keeps it
+inside one repo instead).
 
 Building a **mini app** is a different subject — that is what `docs/` covers.
 

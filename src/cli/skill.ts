@@ -1,10 +1,23 @@
 import { access, copyFile, mkdir, readdir, rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { UsageError } from "./args";
 
 export const SKILL_NAME = "erp-data";
-const DEFAULT_TARGET = ".claude/skills";
+
+/**
+ * One copy per machine, in a directory that belongs to no single tool — Claude
+ * Code, Codex, opencode and pi each get pointed at it rather than each holding
+ * a copy that drifts from the others. {@link wiring} spells out how.
+ */
+export const DEFAULT_SKILLS_DIR = join(homedir(), ".agents", "skills");
+
+/** `~` only expands in a shell, and `--dir "~/x"` from a script would otherwise create a folder named `~`. */
+function expandHome(path: string): string {
+  if (path === "~") return homedir();
+  return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
+}
 
 async function exists(path: string): Promise<boolean> {
   return access(path).then(
@@ -58,12 +71,38 @@ export interface InstallSkillOptions {
 export interface InstallSkillResult {
   skill: string;
   dir: string;
+  entry: string;
   files: string[];
+  wiring: { agent: string; how: string }[];
+}
+
+/**
+ * How each agent is told the skill exists. Only Claude Code loads a `SKILL.md`
+ * on its own, and only from its own directory — hence the symlink. The rest
+ * read `AGENTS.md`, so they get one line pointing at the same file.
+ */
+function wiring(entry: string, dir: string): { agent: string; how: string }[] {
+  const home = homedir();
+  const short = (path: string) => (path.startsWith(home) ? `~${path.slice(home.length)}` : path);
+  return [
+    {
+      agent: "claude",
+      how: `mkdir -p ~/.claude/skills && ln -sfn ${short(dir)} ~/.claude/skills/${SKILL_NAME}`,
+    },
+    {
+      agent: "codex / opencode / pi",
+      how:
+        `add one line to AGENTS.md (repo root, or ~/.codex/AGENTS.md for all repos): ` +
+        `"ERP data tasks (erp-sdk, object/field/record, ERP_API_KEY): read ${short(entry)} first."`,
+    },
+  ];
 }
 
 export async function installSkill(options: InstallSkillOptions): Promise<InstallSkillResult> {
   const source = await skillSource();
-  const root = resolve(options.cwd, options.dir ?? DEFAULT_TARGET);
+  const root = options.dir
+    ? resolve(options.cwd, expandHome(options.dir))
+    : DEFAULT_SKILLS_DIR;
   const target = join(root, SKILL_NAME);
 
   if (await exists(target)) {
@@ -74,5 +113,6 @@ export async function installSkill(options: InstallSkillOptions): Promise<Instal
   }
 
   const files = await copyTree(source, target);
-  return { skill: SKILL_NAME, dir: target, files };
+  const entry = join(target, "SKILL.md");
+  return { skill: SKILL_NAME, dir: target, entry, files, wiring: wiring(entry, target) };
 }

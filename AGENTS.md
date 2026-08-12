@@ -111,7 +111,7 @@ write the app's `schema.json` and validate its format with `validateSchema`.
 | `src/webapp.ts` | Browser side of the initData bridge: URL param, `postMessage`, and `parseInitData` (unverified, display only) |
 | `src/errors.ts` | Error classes that carry the fix, not just a message |
 | `src/cli/` | `args` (parsing), `commands` (the registry), `index` (`runCli`), `help`, `main` (bin entry), `scaffold` (`erp init`), `skill` (`erp skill install`) |
-| `skills/erp-data/` | Skill shipped inside the package — using the **SDK** to read, write and analyse workspace data; `erp skill install` copies it into `.claude/skills/` |
+| `skills/erp-data/` | Skill shipped inside the package — using the **SDK** to read, write and analyse workspace data; `erp skill install` copies it to `~/.agents/skills/` (tool-neutral, one copy per machine) and prints how each agent reaches it |
 
 Two cross-cutting ideas explain most of the code:
 

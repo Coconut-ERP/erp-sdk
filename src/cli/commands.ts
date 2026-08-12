@@ -315,10 +315,18 @@ export const COMMANDS: CommandSpec[] = [
     name: "skill install",
     summary: `Install the ${SKILL_NAME} skill so coding agents know this SDK`,
     flags: [
-      { name: "dir", value: "path", description: "Target skills directory (default .claude/skills)" },
+      {
+        name: "dir",
+        value: "path",
+        description: `Where to install it (default ~/.agents/skills — shared by every agent)`,
+      },
       { name: "force", description: "Overwrite an existing installation" },
     ],
-    examples: ["erp skill install", "erp skill install --dir ~/.claude/skills"],
+    examples: [
+      "erp skill install",
+      "erp skill install --dir .claude/skills",
+      "erp skill install --force",
+    ],
     async run(ctx) {
       const result = await installSkill({
         cwd: ctx.cwd,
@@ -326,6 +334,8 @@ export const COMMANDS: CommandSpec[] = [
         force: flagBool(ctx.args, "force"),
       });
       ctx.note(`Installed skill "${result.skill}" to ${result.dir}`);
+      ctx.note("Point your agents at it:");
+      for (const { agent, how } of result.wiring) ctx.note(`  ${agent}: ${how}`);
       ctx.out(result);
     },
   },

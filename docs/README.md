@@ -19,8 +19,8 @@ thao tác.
 **Dùng terminal hoặc AI agent** — [CLI `erp` & AI agent](10-cli-va-ai-agent.md):
 `erp doctor` để chẩn đoán kết nối/quyền, `erp objects show` / `erp schema dump`
 để xem schema thật, `erp init` để sinh app chạy được, `erp skill install` để cài
-skill `erp-data` cho agent. CLI **không làm CRUD dữ liệu** — đọc/ghi/phân tích
-đều viết bằng SDK.
+skill `erp-data` vào `~/.agents/skills` cho mọi agent (claude, codex, opencode,
+pi). CLI **không làm CRUD dữ liệu** — đọc/ghi/phân tích đều viết bằng SDK.
 
 **Tra cứu khi viết code:**
 
@@ -72,9 +72,9 @@ SDK **không publish lên npm**. Mỗi bản phát hành là một tarball đã 
 — cài bằng URL, package manager nào cũng được:
 
 ```bash
-npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz
-bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz
-pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz
+npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
+bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
+pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
 ```
 
 Trong `package.json` của mini app:
@@ -82,7 +82,7 @@ Trong `package.json` của mini app:
 ```json
 {
   "dependencies": {
-    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz"
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz"
   }
 }
 ```
@@ -100,7 +100,7 @@ npm install -g https://github.com/Coconut-ERP/erp-sdk/releases/download/latest/e
 Dùng URL đó khi cài CLI global hoặc script dùng một lần. **Đừng đưa vào
 `package.json` của app**: package manager khoá lockfile theo URL, URL chạy được
 mãi nghĩa là cài lại có thể ra bản khác (hoặc lấy từ cache) — dependency thì
-ghim URL `v0.3.0` ở trên.
+ghim URL `v0.3.1` ở trên.
 
 Cài thẳng từ repo cũng được, **nhưng chỉ với npm, pnpm hoặc yarn**:
 

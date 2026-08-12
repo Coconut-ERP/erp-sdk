@@ -32,7 +32,7 @@ CLI có sẵn khi cài `erp-sdk`:
 ```bash
 BASE=https://github.com/Coconut-ERP/erp-sdk/releases/download
 
-npm install "$BASE/v0.3.0/erp-sdk.tgz"   # trong project: ghim version
+npm install "$BASE/v0.3.1/erp-sdk.tgz"   # trong project: ghim version
 npx erp help
 
 npm install -g "$BASE/latest/erp-sdk.tgz"   # global: URL không bao giờ phải sửa
@@ -40,7 +40,7 @@ erp help
 ```
 
 Tag `latest` được trỏ lại sau mỗi lần phát hành nên hợp với máy mới và CLI
-global; còn dependency của app thì ghim `v0.3.0` — package manager khoá theo URL,
+global; còn dependency của app thì ghim `v0.3.1` — package manager khoá theo URL,
 URL chạy được mãi thì cài lại không còn tái lập được.
 
 Cấu hình bằng env (hoặc flag tương ứng):
@@ -163,10 +163,29 @@ erp init don-xin-nghi --sdk "file:../erp-sdk"
 ### Cài skill
 
 ```bash
-erp skill install                          # → .claude/skills/erp-data
-erp skill install --dir ~/.claude/skills   # dùng chung mọi project
-erp skill path                             # chỉ in đường dẫn để agent tự đọc
+erp skill install                        # → ~/.agents/skills/erp-data
+erp skill install --dir .claude/skills   # hoặc bó gọn trong một repo
+erp skill path                           # chỉ in đường dẫn để agent tự đọc
 ```
+
+Mặc định cài **một bản cho cả máy**, ở thư mục không thuộc riêng tool nào, rồi in
+sẵn cách nối cho từng agent. Claude Code là công cụ duy nhất tự nạp `SKILL.md`,
+và chỉ nạp từ thư mục của nó — nên nó cần symlink; các tool còn lại đọc
+`AGENTS.md` nên chỉ cần một dòng trỏ tới đúng file đó:
+
+```bash
+mkdir -p ~/.claude/skills
+ln -sfn ~/.agents/skills/erp-data ~/.claude/skills/erp-data     # claude
+```
+
+```markdown
+<!-- AGENTS.md ở gốc repo (hoặc ~/.codex/AGENTS.md cho mọi repo) — codex, opencode, pi -->
+ERP data tasks (erp-sdk, object/field/record, ERP_API_KEY):
+read ~/.agents/skills/erp-data/SKILL.md first.
+```
+
+Một bản duy nhất nên `erp skill install --force` sau khi nâng SDK là mọi agent
+cùng thấy bản mới; không có chuyện bốn bản chép rời nhau rồi lệch dần.
 
 Skill `erp-data` dạy agent **dùng SDK khai thác dữ liệu**: kết nối, đọc schema
 thật, query có filter/sort/phân trang, tránh N+1 khi đi qua `relation`, tổng hợp

@@ -262,6 +262,23 @@ describe("scaffolding", () => {
     expect(await cli.run(["skill", "install", "--dir", join(dir, "skills"), "--force"])).toBe(0);
   });
 
+  it("tells every agent how to reach the one installed copy", async () => {
+    const dir = await temp();
+    const cli = harness({});
+    expect(await cli.run(["skill", "install", "--dir", join(dir, "skills")])).toBe(0);
+
+    const result = cli.json();
+    expect(result.entry).toBe(join(dir, "skills", "erp-data", "SKILL.md"));
+    const wiring = result.wiring as { agent: string; how: string }[];
+    // Only Claude Code autoloads a SKILL.md, and only from its own directory.
+    expect(wiring.find((w) => w.agent === "claude")?.how).toContain("~/.claude/skills/erp-data");
+    // Everything else reads AGENTS.md, so it gets a pointer at the same file.
+    const shared = wiring.find((w) => w.agent.includes("codex"))?.how ?? "";
+    expect(shared).toContain("AGENTS.md");
+    expect(shared).toContain("SKILL.md");
+    expect(cli.err()).toContain("Point your agents at it:");
+  });
+
   it("points at the bundled skill in place", async () => {
     const cli = harness({});
     expect(await cli.run(["skill", "path"])).toBe(0);

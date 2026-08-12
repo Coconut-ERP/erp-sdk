@@ -17,7 +17,7 @@ diễn đạt được bằng cờ dòng lệnh.
 ## 1. Kết nối
 
 ```bash
-npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz
+npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
 ```
 
 Cần hai biến môi trường (Node 18+, `.env` **không bao giờ** commit):
