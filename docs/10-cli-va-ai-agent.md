@@ -30,14 +30,18 @@ node --env-file=.env bao-cao.mjs        # ← việc thật nằm ở đây
 CLI có sẵn khi cài `erp-sdk`:
 
 ```bash
-TGZ=https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz
+BASE=https://github.com/Coconut-ERP/erp-sdk/releases/download
 
-npm install "$TGZ"          # trong project
+npm install "$BASE/v0.3.0/erp-sdk.tgz"   # trong project: ghim version
 npx erp help
 
-npm install -g "$TGZ"       # hoặc cài global để gọi thẳng `erp`
+npm install -g "$BASE/latest/erp-sdk.tgz"   # global: URL không bao giờ phải sửa
 erp help
 ```
+
+Tag `latest` được trỏ lại sau mỗi lần phát hành nên hợp với máy mới và CLI
+global; còn dependency của app thì ghim `v0.3.0` — package manager khoá theo URL,
+URL chạy được mãi thì cài lại không còn tái lập được.
 
 Cấu hình bằng env (hoặc flag tương ứng):
 

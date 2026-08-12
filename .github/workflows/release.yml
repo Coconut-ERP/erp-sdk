@@ -5,8 +5,18 @@ name: Release
 # which refuses to build a git dependency (it blocks lifecycle scripts, and does
 # not install a git dep's devDependencies, so `prepare: tsup` cannot run).
 #
-#   git tag v0.2.0 && git push --follow-tags   → builds, verifies, publishes
+#   git tag v0.3.0 && git push --follow-tags   → builds, verifies, publishes
 #   Actions ▸ Release ▸ Run workflow           → dry run, tarball as an artifact
+#
+# The asset is always named `erp-sdk.tgz`, so only the tag varies in the URL:
+#
+#   .../releases/download/v0.3.0/erp-sdk.tgz   pinned — use this in package.json
+#   .../releases/download/latest/erp-sdk.tgz   moving — re-pointed at every release
+#
+# `latest` is a real tag and a real Release that this workflow force-updates, so
+# the URL never has to be edited. It is for `npm i -g` and throwaway scripts, not
+# for an app's dependencies: package managers key their lockfile on the URL, so a
+# moving one installs whatever it cached and stops being reproducible.
 
 on:
   push:
@@ -51,15 +61,18 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Renamed to a version-less asset name on purpose: the tag already carries
+      # the version, and npm reads the real one from the package.json inside.
       - name: Pack
         id: pack
         run: |
           rm -f ./*.tgz
           npm pack
-          tgz="$(ls erp-sdk-*.tgz)"
-          echo "tgz=$tgz" >> "$GITHUB_OUTPUT"
-          echo "packed $tgz ($(du -h "$tgz" | cut -f1))"
-          tar -tzf "$tgz" | head -20
+          mv "$(ls erp-sdk-*.tgz)" erp-sdk.tgz
+          echo "tgz=erp-sdk.tgz" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          echo "packed erp-sdk.tgz ($(du -h erp-sdk.tgz | cut -f1))"
+          tar -tzf erp-sdk.tgz | head -20
 
       # The tarball is what consumers actually install, so smoke test *it* —
       # not the working tree. dist/ must be present and both module formats
@@ -91,7 +104,7 @@ jobs:
       - name: Upload the tarball as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.pack.outputs.tgz }}
+          name: erp-sdk-${{ steps.pack.outputs.version }}.tgz
           path: ${{ steps.pack.outputs.tgz }}
           if-no-files-found: error
 
@@ -100,8 +113,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tgz="${{ steps.pack.outputs.tgz }}"
-          url="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/${tgz}"
+          base="https://github.com/${{ github.repository }}/releases/download"
+          url="$base/${GITHUB_REF_NAME}/erp-sdk.tgz"
+          moving="$base/latest/erp-sdk.tgz"
           cat > notes.md <<EOF
           Not published to npm — install the tarball below with any package manager.
 
@@ -117,8 +131,48 @@ jobs:
           \`\`\`json
           { "dependencies": { "erp-sdk": "$url" } }
           \`\`\`
+
+          The same build is also served from a URL that never changes:
+          \`$moving\`. Handy for \`npm i -g\` and one-off scripts; keep the pinned
+          URL above in an app's dependencies, since package managers key their
+          lockfile on the URL and a moving one is not reproducible.
           EOF
-          gh release create "$GITHUB_REF_NAME" "$tgz" \
+          gh release create "$GITHUB_REF_NAME" erp-sdk.tgz \
             --title "$GITHUB_REF_NAME" \
-            --notes-file notes.md
+            --notes-file notes.md \
+            --latest
           echo "published $url"
+
+      # A moving pointer, so a fresh machine can install without editing a URL.
+      # The tag is force-updated first: `gh release create` would otherwise open
+      # `latest` on the default branch head rather than on the tagged commit.
+      - name: Re-point the `latest` release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git push -f origin "$GITHUB_SHA:refs/tags/latest"
+
+          cat > notes-latest.md <<EOF
+          Always the newest release — currently **$GITHUB_REF_NAME**.
+
+          \`\`\`bash
+          npm install -g https://github.com/${{ github.repository }}/releases/download/latest/erp-sdk.tgz
+          \`\`\`
+
+          This asset is replaced on every release, so an install from it is not
+          reproducible: package managers cache and lock by URL. Pin
+          [$GITHUB_REF_NAME](https://github.com/${{ github.repository }}/releases/tag/$GITHUB_REF_NAME)
+          in an app's \`package.json\`.
+          EOF
+
+          # `--latest=false` keeps the version release wearing the "Latest" badge.
+          if gh release view latest > /dev/null 2>&1; then
+            gh release upload latest erp-sdk.tgz --clobber
+            gh release edit latest --title "latest ($GITHUB_REF_NAME)" \
+              --notes-file notes-latest.md --latest=false
+          else
+            gh release create latest erp-sdk.tgz --title "latest ($GITHUB_REF_NAME)" \
+              --notes-file notes-latest.md --latest=false
+          fi
+          echo "re-pointed https://github.com/${{ github.repository }}/releases/download/latest/erp-sdk.tgz at $GITHUB_REF_NAME"

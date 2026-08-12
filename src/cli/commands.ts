@@ -285,7 +285,11 @@ export const COMMANDS: CommandSpec[] = [
         value: "text",
         description: `Object the app declares in ${SCHEMA_FILE} and reads/writes`,
       },
-      { name: "sdk", value: "spec", description: 'erp-sdk dependency spec (default "^0.3.0")' },
+      {
+        name: "sdk",
+        value: "spec",
+        description: "erp-sdk dependency spec (default: the pinned release tarball URL)",
+      },
       { name: "force", description: "Overwrite existing files" },
     ],
     examples: ['erp init my-app --name "Đơn xin nghỉ" --object "Đơn xin nghỉ"'],

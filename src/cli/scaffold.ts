@@ -11,6 +11,15 @@ export interface ScaffoldOptions {
   force?: boolean;
 }
 
+/**
+ * A range like `^0.3.0` would not resolve — the package is not on npm. The
+ * generated app therefore depends on the release tarball, pinned: an app's
+ * lockfile keys on this URL, so it must not be the moving `latest` one. Bump it
+ * with the rest of the pinned URLs when cutting a release.
+ */
+export const DEFAULT_SDK_SPEC =
+  "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz";
+
 export interface ScaffoldResult {
   dir: string;
   appName: string;
@@ -36,7 +45,7 @@ export async function scaffoldMiniApp(options: ScaffoldOptions): Promise<Scaffol
   const dirName = target.split("/").filter(Boolean).pop() ?? "mini-app";
   const appName = options.appName ?? dirName;
   const objectName = options.objectName ?? appName;
-  const sdkSpec = options.sdkSpec ?? "^0.3.0";
+  const sdkSpec = options.sdkSpec ?? DEFAULT_SDK_SPEC;
 
   const files = templates({
     appName,

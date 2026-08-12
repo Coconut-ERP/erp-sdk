@@ -10,7 +10,7 @@ workspace. Cần: Node 18+, một tài khoản ERP có quyền admin trong works
 ```bash
 mkdir hello-miniapp && cd hello-miniapp
 npm init -y
-npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz express
+npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz express
 ```
 
 SDK không nằm trên npm registry — nó là tarball trong GitHub Release, cài bằng

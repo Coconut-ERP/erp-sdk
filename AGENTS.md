@@ -37,16 +37,24 @@ cannot happen by accident. A release is a **prebuilt tarball attached to a GitHu
 Release**, installed by URL:
 
 ```
-https://github.com/Coconut-ERP/erp-sdk/releases/download/v<version>/erp-sdk-<version>.tgz
+https://github.com/Coconut-ERP/erp-sdk/releases/download/v<version>/erp-sdk.tgz   # pinned
+https://github.com/Coconut-ERP/erp-sdk/releases/download/latest/erp-sdk.tgz       # moving
 ```
+
+The asset is **always named `erp-sdk.tgz`** — the tag carries the version, and npm reads
+the real one from the package.json inside the tarball. `latest` is a tag and a Release
+that the workflow force-updates on every release, so a fresh machine can install without
+editing a URL; it is for `npm i -g` and one-off scripts only. Anything with a lockfile
+pins the version URL, because package managers cache and lock by URL.
 
 **Cutting a release** is `npm version <patch|minor|major> && git push --follow-tags`.
 `.github/workflows/release.yml` fires on the `v*` tag: `npm ci` (which runs `prepare`,
-building `dist/`), typecheck, test, build, `npm pack`, smoke-test the tarball under both
-npm and bun, then `gh release create`. Running the workflow manually from the Actions tab
-does everything except publish, leaving the tarball as an artifact — use that to test
-pipeline changes. Afterwards, bump the pinned URL wherever it appears — `README.md`,
-`docs/`, `skills/`.
+building `dist/`), typecheck, test, build, `npm pack` → `erp-sdk.tgz`, smoke-test that
+tarball under both npm and bun, `gh release create` for the tag, then re-point `latest`.
+Running the workflow manually from the Actions tab does everything except publish, leaving
+the tarball as an artifact — use that to test pipeline changes. Afterwards, bump the
+pinned URL wherever it appears: `README.md`, `docs/`, `skills/`, and `DEFAULT_SDK_SPEC`
+in `src/cli/scaffold.ts` (what `erp init` writes into a generated app).
 
 Why a tarball and not just `github:Coconut-ERP/erp-sdk`:
 

@@ -15,7 +15,7 @@ ERP backend.
 ```bash
 mkdir miniapp-leave-request && cd miniapp-leave-request
 npm init -y
-npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz express
+npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz express
 mkdir public
 ```
 
@@ -28,7 +28,7 @@ mkdir public
   "engines": { "node": ">=18" },
   "scripts": { "start": "node server.js" },
   "dependencies": {
-    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz",
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz",
     "express": "^4.19.2"
   }
 }

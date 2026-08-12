@@ -18,10 +18,10 @@ attached to a [GitHub Release](https://github.com/Coconut-ERP/erp-sdk/releases) 
 install it by URL with any package manager:
 
 ```bash
-npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz
-bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz
-pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz
-yarn add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz
+npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz
+bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz
+pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz
+yarn add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz
 ```
 
 In a `package.json` dependency list that reads:
@@ -29,13 +29,25 @@ In a `package.json` dependency list that reads:
 ```json
 {
   "dependencies": {
-    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz"
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk.tgz"
   }
 }
 ```
 
 The tarball arrives prebuilt — no compiler, no `git`, no build step on your side.
 Requires Node 18+.
+
+The asset name never carries the version, so only the tag varies — and one tag,
+`latest`, is re-pointed at every release:
+
+```bash
+npm install -g https://github.com/Coconut-ERP/erp-sdk/releases/download/latest/erp-sdk.tgz
+```
+
+Use that for a global CLI install or a throwaway script. **Do not put it in an
+app's `package.json`**: package managers cache and lock by URL, so a moving URL
+installs whatever was cached and stops being reproducible. Dependencies get the
+pinned `v0.3.0` URL above.
 
 Installing straight from the repo also works, **but only with npm, pnpm or yarn**:
 
