@@ -45,8 +45,8 @@ https://github.com/Coconut-ERP/erp-sdk/releases/download/v<version>/erp-sdk-<ver
 building `dist/`), typecheck, test, build, `npm pack`, smoke-test the tarball under both
 npm and bun, then `gh release create`. Running the workflow manually from the Actions tab
 does everything except publish, leaving the tarball as an artifact — use that to test
-pipeline changes. Afterwards, bump the pinned URL in `examples/*/package.json`, `README.md`
-and `docs/`.
+pipeline changes. Afterwards, bump the pinned URL wherever it appears — `README.md`,
+`docs/`, `skills/`.
 
 Why a tarball and not just `github:Coconut-ERP/erp-sdk`:
 
@@ -56,7 +56,7 @@ Why a tarball and not just `github:Coconut-ERP/erp-sdk`:
 - **Bun cannot.** It blocks lifecycle scripts by default, and even listed in
   `trustedDependencies` it does not install a git dependency's devDependencies, so
   `prepare` dies on `tsup: command not found`. Bun also ignores the `files` field for git
-  deps and checks out the whole repo. `examples/miniapp-hr` is a bun project, so the
+  deps and checks out the whole repo. Mini apps built with bun are normal, so the
   tarball is the only spec that works everywhere.
 - The tarball is also what `files` filters down to (~68 kB: `dist` + `skills`), needs no
   `git` on the installing machine, and pins the version in the URL itself.
@@ -74,16 +74,21 @@ workspace:
 
 ```bash
 ./dist/cli.js doctor                    # env + connectivity + permissions → {ok, checks[]}
+./dist/cli.js whoami                    # which identity, and its effective IAM rules
 ./dist/cli.js objects list
 ./dist/cli.js objects show "<Object>"
 ./dist/cli.js schema dump --out workspace.json
-./dist/cli.js schema check              # an app's schema.json: format + diff vs workspace
-./dist/cli.js schema check --offline    # format only, no credentials needed
 ```
+
+That is the whole discovery surface — **the CLI has no data commands**. Reading,
+writing and analysing records happens in a script against the SDK, because the real
+tasks are multi-step (filter, join, count before writing, aggregate) and flags express
+that badly. Checking an app's `schema.json` is likewise SDK work: `validateSchema`
+(format), `planSchema(schema, dump.objects)` (offline diff) or `client.schemaPlan`.
 
 Needs `ERP_BASE_URL` and `ERP_API_KEY` in the environment, or `--env-file .env`
 (real env wins over the file). Without credentials, do not invent a schema — ask, or
-write the app's `schema.json` and validate its format with `--offline`.
+write the app's `schema.json` and validate its format with `validateSchema`.
 
 ## Architecture
 
@@ -97,10 +102,8 @@ write the app's `schema.json` and validate its format with `--offline`.
 | `src/permissions.ts` | `isAllowed`/`missingPermissions`, mirroring the backend enforcer (deny beats allow, `*` wildcards, `manage` implies nothing) |
 | `src/webapp.ts` | Browser side of the initData bridge: URL param, `postMessage`, and `parseInitData` (unverified, display only) |
 | `src/errors.ts` | Error classes that carry the fix, not just a message |
-| `src/cli/` | `args`/`values` (parsing), `commands` (the registry), `index` (`runCli`), `main` (bin entry), `scaffold` (`erp init`), `skill` (`erp skill install`) |
-| `skills/erp-miniapp/` | Skill shipped inside the package; `erp skill install` copies it into `.claude/skills/` |
-| `examples/miniapp-leave-request/` | Complete runnable mini app (Express + static HTML) |
-| `examples/miniapp-hr/` | Larger mini app (Next.js + Tailwind + shadcn): 10 linked tables, `relation`/`lookup` columns, per-employee data scoping |
+| `src/cli/` | `args` (parsing), `commands` (the registry), `index` (`runCli`), `help`, `main` (bin entry), `scaffold` (`erp init`), `skill` (`erp skill install`) |
+| `skills/erp-data/` | Skill shipped inside the package — using the **SDK** to read, write and analyse workspace data; `erp skill install` copies it into `.claude/skills/` |
 
 Two cross-cutting ideas explain most of the code:
 
@@ -130,10 +133,14 @@ internal key.
 
 ## Conventions
 
-- **Adding a CLI command means adding one entry to `COMMANDS` in `src/cli/commands.ts`** —
-  summary, args, flags and examples included. The same spec renders `erp help` and
-  `erp help --json`; there is no separate help text to update. Unknown flags are rejected
-  against that spec.
+- **The CLI's scope is closed: setup, diagnosis, discovery.** `doctor`, `whoami`,
+  `objects list/show`, `schema dump`, `init`, `skill install/path` — and nothing that
+  reads, writes or analyses records. New capability belongs in the SDK (and in the
+  `erp-data` skill that teaches it), not in a new command; a command that only wraps one
+  SDK call in flags is exactly what was removed. If a command genuinely is setup work, it
+  is one entry in `COMMANDS` (`src/cli/commands.ts`) with summary, args, flags and
+  examples — the same spec renders `erp help` and `erp help --json`, and unknown flags are
+  rejected against it, so there is no separate help text to update.
 - CLI results go to **stdout as JSON**; notes and errors to **stderr** as `{"error":{…}}`.
   Exit codes: 0 ok, 1 runtime/API error, 2 usage error. Never print progress to stdout.
 - Errors carry what you need to fix them — `UnknownFieldError.known` lists valid fields,

@@ -49,7 +49,9 @@ function serializeError(error: unknown): Record<string, unknown> {
       message: error.message,
       missing: error.missing,
       conflicts: error.conflicts,
-      hint: "Run `erp schema check` to see the diff; applying it is the deployer's step",
+      hint:
+        "Compare the declaration with `erp schema dump`, or diff it in code with " +
+        "planSchema() from erp-sdk; applying it is the deployer's step",
     };
   }
   if (error instanceof FilterValueError) {
@@ -58,7 +60,7 @@ function serializeError(error: unknown): Record<string, unknown> {
       message: error.message,
       field: error.field,
       operator: error.operator,
-      hint: "in/not_in take 1..200 values: --where \"Field:in:a,b\" or a JSON array",
+      hint: "in/not_in take an array of 1..200 values: .whereIn(field, [a, b])",
     };
   }
   if (error instanceof UnknownFieldError) {

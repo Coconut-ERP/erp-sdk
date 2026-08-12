@@ -10,7 +10,7 @@ workspace. Cần: Node 18+, một tài khoản ERP có quyền admin trong works
 ```bash
 mkdir hello-miniapp && cd hello-miniapp
 npm init -y
-npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz express
+npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz express
 ```
 
 SDK không nằm trên npm registry — nó là tarball trong GitHub Release, cài bằng
@@ -135,8 +135,11 @@ App cần bảng riêng thì **không tự tạo** mà khai trong `schema.json` 
 { "objects": [ { "name": "Đơn xin nghỉ", "fields": [ { "name": "Lý do", "type": "long_text" } ] } ] }
 ```
 
-```bash
-npx erp schema check      # soi cú pháp + diff với workspace trước khi zip
+```js
+// soi cú pháp trước khi zip — hàm thuần, không cần credential
+import { readFileSync } from "node:fs";
+import { validateSchema } from "erp-sdk";
+console.log(validateSchema(JSON.parse(readFileSync("schema.json", "utf8"))));  // [] = ổn
 ```
 
 Nếu workspace chưa có đủ, response cài app trả `schemaStatus: "pending"` và

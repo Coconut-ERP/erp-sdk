@@ -84,13 +84,22 @@ cấu trúc mà màn duyệt dùng (`action`: `create` / `update` / `unchanged` 
 - Tên bảng/field không trùng nhau (không phân biệt hoa thường), ≤ 255 ký tự;
   tối đa 50 bảng, 200 field/bảng; file ≤ 256KB; key lạ trong JSON bị từ chối.
 
-Sai bất kỳ điểm nào → `400` ngay lúc upload. Bắt trước bằng CLI:
+Sai bất kỳ điểm nào → `400` ngay lúc upload. Bắt trước bằng chính SDK — cùng bộ
+luật với backend, thuần hàm nên không cần credential:
 
-```bash
-erp schema check                 # cú pháp + diff với workspace hiện tại
-erp schema check --offline       # chỉ cú pháp, không cần credential
-erp schema init --object "Nhân viên"   # xuất bảng đang có ra schema.json
+```js
+import { readFileSync } from "node:fs";
+import { validateSchema, planSchema, schemaConflicts } from "erp-sdk";
+
+const schema = JSON.parse(readFileSync("schema.json", "utf8"));
+validateSchema(schema);              // string[] mọi lỗi backend sẽ bắt; [] = hợp lệ
+
+// diff với workspace thật: `erp schema dump --out workspace.json` rồi
+const workspace = JSON.parse(readFileSync("workspace.json", "utf8")).objects;
+schemaConflicts(planSchema(schema, workspace));   // [] = không xung đột kiểu
 ```
+
+Có client sẵn thì `client.schemaPlan(schema)` làm luôn cả hai bước.
 
 ### Đổi schema
 

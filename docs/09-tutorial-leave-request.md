@@ -15,7 +15,7 @@ ERP backend.
 ```bash
 mkdir miniapp-leave-request && cd miniapp-leave-request
 npm init -y
-npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz express
+npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz express
 mkdir public
 ```
 
@@ -28,7 +28,7 @@ mkdir public
   "engines": { "node": ">=18" },
   "scripts": { "start": "node server.js" },
   "dependencies": {
-    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz",
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz",
     "express": "^4.19.2"
   }
 }
@@ -65,8 +65,10 @@ id, ERP UI hiển thị thành tên người.
 
 Soi trước khi ship (bắt lỗi type/tên ngay tại máy, thay vì ăn `400` lúc upload):
 
-```bash
-npx erp schema check
+```js
+import { readFileSync } from "node:fs";
+import { validateSchema } from "erp-sdk";
+console.log(validateSchema(JSON.parse(readFileSync("schema.json", "utf8"))));  // [] = ổn
 ```
 
 ## Bước 2 — Boot + khai quyền + kiểm tra schema
@@ -275,7 +277,7 @@ ERP sẽ tự expose `logoUrl` cho màn danh sách app.
 ```bash
 # Tạo SA + key dev:  POST /iam/service-accounts, POST /iam/service-accounts/:id/api-keys
 # Bảng phải có sẵn trong workspace trước khi chạy local — tạo tay trong ERP,
-# hoặc dùng key admin: erp objects ensure "Đơn xin nghỉ" --field "Lý do:long_text" …
+# hoặc bằng key admin: admin.ensureObject("Đơn xin nghỉ", [{ name: "Lý do", type: "long_text" }, …])
 ERP_BASE_URL=http://localhost:8000 ERP_API_KEY=erp_sk_... PORT=4567 npm start
 
 # Giả lập user mở app: lấy initData bằng token user thật

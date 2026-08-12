@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { UsageError } from "./args";
 
-export const SKILL_NAME = "erp-miniapp";
+export const SKILL_NAME = "erp-data";
 const DEFAULT_TARGET = ".claude/skills";
 
 async function exists(path: string): Promise<boolean> {

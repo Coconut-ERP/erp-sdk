@@ -66,10 +66,14 @@ export function helpText(command?: CommandSpec): string {
   }
 
   const lines = [
-    "erp — CLI for the 1kk ERP backend (erp-sdk)",
+    "erp — setup and discovery for erp-sdk (1kk ERP backend)",
     "",
     "Usage: erp <command> [args] [flags]",
     "Results print as JSON on stdout; notes and errors go to stderr.",
+    "",
+    "Reading, writing and analysing records is the SDK's job, not the CLI's:",
+    "these commands only prove the credentials work and print the real object",
+    "and field names you need before writing code.",
     "",
     "Commands:",
   ];

@@ -18,10 +18,10 @@ attached to a [GitHub Release](https://github.com/Coconut-ERP/erp-sdk/releases) 
 install it by URL with any package manager:
 
 ```bash
-npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
-bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
-pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
-yarn add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
+npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz
+bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz
+pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz
+yarn add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz
 ```
 
 In a `package.json` dependency list that reads:
@@ -29,7 +29,7 @@ In a `package.json` dependency list that reads:
 ```json
 {
   "dependencies": {
-    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz"
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz"
   }
 }
 ```
@@ -51,36 +51,42 @@ the build fails with `tsup: command not found`. Bun users need the release tarba
 
 ## CLI
 
-Installing the package also installs `erp`, a JSON-first CLI for exploring a
-workspace and scaffolding apps — for humans in a terminal and for coding agents
-alike. Results print as JSON on stdout; notes and errors as JSON on stderr.
+Installing the package also installs `erp`. It is deliberately small: it sets an
+environment up, proves the credentials work, and prints the real object and field
+names you need before writing code. **Reading, writing and analysing records is
+the SDK's job** — that work belongs in a script, not in shell flags. Results
+print as JSON on stdout; notes and errors as JSON on stderr.
 
 ```bash
 export ERP_BASE_URL=http://localhost:8000 ERP_API_KEY=erp_sk_...
 
 npx erp doctor --require object:record:create   # env, connectivity, permissions
+npx erp whoami                                  # who this key is, and its IAM rules
+npx erp objects list                            # what tables exist
 npx erp objects show "Đơn xin nghỉ"             # fields, types, config
-npx erp records query "Hóa đơn" --where "Trạng thái=approved" --sort "Tổng tiền:desc" --limit 20
-npx erp records create "Hóa đơn" --set "Trạng thái=draft" --set "Tổng tiền=500000"
 npx erp schema dump --out workspace.json        # whole workspace as JSON
-npx erp schema check                            # validate schema.json + diff it against the workspace
 npx erp init my-app --name "Đơn xin nghỉ"       # runnable Express mini app
+npx erp skill install                           # the agent skill, see below
 ```
 
-Errors carry what you need to fix them — `UnknownFieldError` lists the valid
-fields, `MissingPermissionsError` lists the exact `resource:action` pairs to
-grant. `erp help` for the command list, `erp help <command>` for details.
+Errors carry what you need to fix them — `UnknownObjectError` names the object,
+`MissingPermissionsError` lists the exact `resource:action` pairs to grant.
+`erp help` for the command list, `erp help <command>` for details.
 
 ## For AI agents
 
 `erp help --json` returns the entire command surface as machine-readable JSON,
-and the package ships a skill teaching agents this SDK — the mini app model,
-initData, the two authority modes, and the CLI:
+and the package ships an **`erp-data` skill** teaching agents to use this SDK
+against a real workspace: reading the live schema first, querying with
+filters/sorting/pagination, walking `relation` fields without N+1, aggregating
+with `DataFrame`, and writing (and bulk-writing) safely.
 
 ```bash
-npx erp skill install               # → .claude/skills/erp-miniapp
+npx erp skill install               # → .claude/skills/erp-data
 npx erp skill path                  # or just point an agent at the files
 ```
+
+Building a **mini app** is a different subject — that is what `docs/` covers.
 
 See [docs/10-cli-va-ai-agent.md](docs/10-cli-va-ai-agent.md) (tiếng Việt).
 
@@ -295,16 +301,19 @@ const { "Đơn nghỉ phép": leaves } = await app.assertSchema(schema);
 ```
 
 Catch a bad declaration before uploading the zip — same rules the backend
-applies, plus the diff the review screen shows:
+applies, plus the diff the review screen shows. These are pure functions, so a
+CI check needs no credentials:
 
-```bash
-npx erp schema check              # exit 1 on problems: CI-friendly
-npx erp schema check --offline    # format only, no credentials needed
-npx erp schema init --object "Nhân viên"   # export existing tables into schema.json
+```ts
+import { validateSchema, planSchema, schemaConflicts } from "erp-sdk";
+
+validateSchema(schema);            // string[] of everything the backend would reject
+schemaConflicts(planSchema(schema, workspace));   // workspace = `erp schema dump`.objects
+await client.schemaPlan(schema);   // or let a client fetch the workspace shape for you
 ```
 
-`validateSchema`, `planSchema`, `schemaConflicts` and friends are exported for
-build scripts that generate the file from TypeScript definitions.
+`validateSchema`, `planSchema`, `schemaConflicts` and friends are also exported
+for build scripts that generate the file from TypeScript definitions.
 
 ### Shaping a workspace with an admin key
 

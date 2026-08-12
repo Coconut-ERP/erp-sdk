@@ -17,8 +17,10 @@ thao tác.
    tutorial hoàn chỉnh một app thật: form + bảng dữ liệu + danh tính user.
 
 **Dùng terminal hoặc AI agent** — [CLI `erp` & AI agent](10-cli-va-ai-agent.md):
-`erp doctor` để chẩn đoán kết nối/quyền, `erp objects show` để xem schema thật,
-`erp init` để sinh app chạy được, `erp skill install` để agent nắm cách làm.
+`erp doctor` để chẩn đoán kết nối/quyền, `erp objects show` / `erp schema dump`
+để xem schema thật, `erp init` để sinh app chạy được, `erp skill install` để cài
+skill `erp-data` cho agent. CLI **không làm CRUD dữ liệu** — đọc/ghi/phân tích
+đều viết bằng SDK.
 
 **Tra cứu khi viết code:**
 
@@ -30,7 +32,7 @@ thao tác.
 | [06 — Phân quyền](06-phan-quyen.md) | Service account, khai báo permission, `can()`/`assertPermissions()`, các tầng IAM |
 | [07 — Triển khai & vận hành](07-trien-khai-van-hanh.md) | Cài app (template/repo/zip), duyệt `schema.json` khi deploy, vòng đời deploy, ENV được inject, logs, logo, lỗi thường gặp |
 | [08 — API reference](08-api-reference.md) | Toàn bộ export của SDK: chữ ký hàm, kiểu dữ liệu, error |
-| [10 — CLI `erp` & AI agent](10-cli-va-ai-agent.md) | Khám phá workspace từ terminal (`doctor`, `objects show`, `records query`), sinh app bằng `erp init`, cài skill cho agent |
+| [10 — CLI `erp` & AI agent](10-cli-va-ai-agent.md) | Khám phá workspace từ terminal (`doctor`, `whoami`, `objects show`, `schema dump`), sinh app bằng `erp init`, cài skill `erp-data` cho agent |
 
 ## Bức tranh 30 giây
 
@@ -70,9 +72,9 @@ SDK **không publish lên npm**. Mỗi bản phát hành là một tarball đã 
 — cài bằng URL, package manager nào cũng được:
 
 ```bash
-npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
-bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
-pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
+npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz
+bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz
+pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz
 ```
 
 Trong `package.json` của mini app:
@@ -80,7 +82,7 @@ Trong `package.json` của mini app:
 ```json
 {
   "dependencies": {
-    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz"
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz"
   }
 }
 ```

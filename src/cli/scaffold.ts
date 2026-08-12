@@ -36,7 +36,7 @@ export async function scaffoldMiniApp(options: ScaffoldOptions): Promise<Scaffol
   const dirName = target.split("/").filter(Boolean).pop() ?? "mini-app";
   const appName = options.appName ?? dirName;
   const objectName = options.objectName ?? appName;
-  const sdkSpec = options.sdkSpec ?? "^0.1.0";
+  const sdkSpec = options.sdkSpec ?? "^0.3.0";
 
   const files = templates({
     appName,
@@ -366,8 +366,19 @@ source; người deploy xem bảng so sánh (khai báo ⟷ workspace) rồi bấ
 backend tạo phần còn thiếu bằng quyền của chính người đó. \`assertSchema\` trong
 \`server.js\` chỉ kiểm tra lúc boot và báo lỗi rõ ràng nếu workspace chưa khớp.
 
-\`\`\`bash
-npx erp schema check          # soi lỗi cú pháp + diff với workspace trước khi zip
+Kiểm tra trước khi zip bằng chính SDK (\`validateSchema\` / \`planSchema\` là hàm
+thuần, không gọi mạng):
+
+\`\`\`js
+import { readFileSync } from "node:fs";
+import { validateSchema, planSchema, schemaConflicts } from "erp-sdk";
+
+const schema = JSON.parse(readFileSync("./schema.json", "utf8"));
+console.log(validateSchema(schema));   // [] = cú pháp hợp lệ
+
+// muốn so với workspace thật: npx erp schema dump --out workspace.json
+const workspace = JSON.parse(readFileSync("./workspace.json", "utf8")).objects;
+console.log(schemaConflicts(planSchema(schema, workspace)));
 \`\`\`
 
 Muốn đổi cấu trúc: sửa \`schema.json\`, upload version mới, người deploy duyệt

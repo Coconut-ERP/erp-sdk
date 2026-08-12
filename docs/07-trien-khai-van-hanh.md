@@ -96,10 +96,11 @@ sửa) — mở màn duyệt là fetch lại, đừng cache. Mỗi bảng/field 
   phép.Số ngày is text, the app declares number"`;
 - thành công → build được xếp hàng, quay lại vòng poll bình thường.
 
-Người viết app soi trước bằng CLI, không cần đợi tới lúc upload:
+Người viết app soi trước bằng SDK, không cần đợi tới lúc upload:
 
-```bash
-erp schema check          # cú pháp + diff (create/update/unchanged/conflict)
+```js
+// create / update / unchanged / conflict — đúng thứ màn duyệt sẽ hiện
+console.log(await client.schemaPlan(schema));
 ```
 
 ## Vòng đời trạng thái
@@ -164,7 +165,7 @@ Giả lập user mở app: lấy initData bằng token user thật
 | --- | --- |
 | `failed` ngay sau cài, log có `MissingPermissionsError` | Key thiếu quyền app khai. Gắn IAM rule cấp đúng phần `.missing` cho service account rồi `POST /:id/deploy`. Nếu app khai `object:create`/`object:field:create` thì bỏ đi — mini app không bao giờ có quyền đó |
 | Cài xong app đứng yên, không có build nào | `schemaStatus: "pending"` — đang chờ duyệt `schema.json`, xem mục "Duyệt schema.json" |
-| `failed`, log có `SchemaMismatchError` | Workspace bị sửa sau khi duyệt (đổi tên/kiểu field). `erp schema check` để xem lệch chỗ nào, sửa workspace hoặc ship `schema.json` mới |
+| `failed`, log có `SchemaMismatchError` | Workspace bị sửa sau khi duyệt (đổi tên/kiểu field). `.missing`/`.conflicts` của lỗi (hoặc `client.schemaPlan`) chỉ đúng chỗ lệch — sửa workspace hoặc ship `schema.json` mới |
 | 400 ngay lúc upload zip, message nói về field/type | `schema.json` sai luật (type lạ, `formula`/`lookup`/`rollup`, trùng tên, thiếu `config.targetObject`). Hiện thẳng message đó — nó chỉ đúng chỗ sai |
 | 403 khi bấm áp dụng schema | Người bấm thiếu `object:create` / `object:field:create` — nhờ admin cấp IAM rule hoặc nhờ admin bấm hộ |
 | `failed`, statusMessage là output nixpacks | Build hỏng: thiếu script `start`, lockfile lệch, stack không nhận diện. Sửa source, ship lại |

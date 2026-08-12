@@ -4,17 +4,33 @@ Hai thứ trong chương này phục vụ cùng một mục đích: để **con 
 đều tự khám phá được workspace** trước khi viết dòng code đầu tiên, thay vì đoán
 tên bảng, tên field rồi chết lúc runtime.
 
-- `erp` — CLI đi kèm gói `erp-sdk`, in JSON, không cần viết script tạm.
-- Skill `erp-miniapp` — gói hướng dẫn cài vào Claude Code (hoặc agent khác đọc
-  được thư mục skill) để agent biết mô hình mini app, luồng initData, hai mô
-  hình quyền và cú pháp CLI.
+- `erp` — CLI đi kèm gói `erp-sdk`: dựng môi trường, kiểm kết nối/quyền, in
+  schema thật. **Không có lệnh CRUD dữ liệu.**
+- Skill `erp-data` — gói hướng dẫn cài vào Claude Code (hoặc agent khác đọc được
+  thư mục skill) để agent biết dùng SDK đọc/ghi/phân tích dữ liệu ERP.
+
+## Vì sao CLI không làm CRUD
+
+Có một thời CLI này có đủ `records query/create/update/delete`, `fields add`,
+`links add`… Bỏ hết, vì mọi việc thật đều nhiều bước: lọc rồi đối chiếu, join hai
+bảng, đếm trước khi ghi, tổng hợp theo tháng. Diễn đạt chuỗi đó bằng cờ dòng lệnh
+vừa dài vừa mất dữ liệu trung gian, trong khi cùng logic viết bằng SDK là mươi
+dòng đọc được, chạy lại được, và test được.
+
+Nên phân vai: **CLI dựng sân, SDK chơi bóng.**
+
+```bash
+erp doctor                              # sân có ổn không
+erp schema dump --out workspace.json    # sân trông thế nào
+node --env-file=.env bao-cao.mjs        # ← việc thật nằm ở đây
+```
 
 ## Cài
 
 CLI có sẵn khi cài `erp-sdk`:
 
 ```bash
-TGZ=https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.1.0/erp-sdk-0.1.0.tgz
+TGZ=https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.0/erp-sdk-0.3.0.tgz
 
 npm install "$TGZ"          # trong project
 npx erp help
@@ -33,16 +49,25 @@ Cấu hình bằng env (hoặc flag tương ứng):
 | `ERP_WORKSPACE_ID` | `--workspace` | Chỉ cần khi dùng token |
 | — | `--env-file .env` | Nạp từ file; env thật vẫn thắng |
 
-## Ba lệnh dùng nhiều nhất
+## Toàn bộ bảng lệnh
 
-```bash
-erp doctor                          # env + kết nối + quyền, ra {ok, checks[]}
-erp objects show "Đơn xin nghỉ"     # field nào, type gì, config ra sao
-erp records query "Đơn xin nghỉ" --where "Trạng thái=pending" --limit 20
+```
+erp doctor [--require resource:action]…
+erp whoami
+erp objects list [--fields]
+erp objects show <object>
+erp schema dump [--out file]
+erp init [dir] [--name x] [--object x] [--sdk spec] [--force]
+erp skill install [--dir path] [--force] | erp skill path
+erp help [command] [--json]
 ```
 
-`doctor` trả lời đúng câu hỏi hay bị vướng nhất — *key có sống không, thiếu
-quyền gì*:
+Hết. Đọc/ghi record, thêm field, tạo link, phân tích → viết script SDK
+([03](03-du-lieu.md), [04](04-dataframe.md)).
+
+## `doctor` — câu hỏi hay vướng nhất
+
+*Key có sống không, thiếu quyền gì:*
 
 ```jsonc
 {
@@ -51,6 +76,7 @@ quyền gì*:
     { "name": "base-url", "status": "ok", "detail": "http://localhost:8000" },
     { "name": "credentials", "status": "ok", "detail": "API key (erp_sk_…)" },
     { "name": "connection", "status": "ok", "detail": "7 effective permission(s)" },
+    { "name": "objects", "status": "ok", "detail": "12 object(s) visible" },
     { "name": "permission object:record:create", "status": "fail",
       "detail": "not granted", "hint": "Add an IAM allow rule for object:record:create" }
   ]
@@ -58,85 +84,56 @@ quyền gì*:
 ```
 
 ```bash
-erp doctor --require object:record:create --require object:field:create
+erp doctor --require object:record:create --require object:field:read
 ```
+
+Exit `1` khi có check hỏng → dùng thẳng trong CI hoặc script khởi động.
+
+`erp whoami` bổ sung góc nhìn còn lại: key này *là ai* và đang có **những rule
+nào** (kể cả row scope) — nơi để nhìn khi đọc ra 0 record dù bảng có dữ liệu.
+
+## Xem schema thật
+
+```bash
+erp objects list                      # id, name, position
+erp objects list --fields             # kèm field (1 request/bảng)
+erp objects show "Đơn xin nghỉ"       # 1 bảng, đủ type + config
+erp schema dump --out workspace.json  # cả workspace, để nạp làm context
+```
+
+`schema dump` in `{ objects: [{ id, name, fields: [{ key, name, type, config,
+position, isArchived }] }] }` — đọc `config` để biết `relation` trỏ bảng nào,
+`single_select` có option gì, `source: "workspace_users"` (giá trị là user id).
+
+Output này cũng chính là dạng `planSchema(schema, workspace)` nhận vào, nên so
+`schema.json` với workspace thật làm được offline:
+
+```js
+import { readFileSync } from "node:fs";
+import { validateSchema, planSchema, schemaConflicts } from "erp-sdk";
+
+const schema = JSON.parse(readFileSync("schema.json", "utf8"));
+console.log(validateSchema(schema));                       // [] = cú pháp hợp lệ
+
+const workspace = JSON.parse(readFileSync("workspace.json", "utf8")).objects;
+console.log(schemaConflicts(planSchema(schema, workspace)));  // [] = không xung đột kiểu
+```
+
+Có credential thì gọn hơn nữa: `client.schemaPlan(schema)` (diff như màn duyệt,
+không ném lỗi) hoặc `client.assertSchema(schema)` (ném `SchemaMismatchError`).
 
 ## Quy ước output
 
 - **Kết quả luôn là JSON trên stdout** → pipe vào `jq` hoặc để agent parse.
 - Ghi chú và lỗi ra **stderr**, cũng là JSON: `{"error":{"type":…,"message":…}}`,
-  kèm dữ liệu để sửa được ngay (`UnknownFieldError` có `.known` liệt kê field
-  hợp lệ, `MissingPermissionsError` có `.missing`).
+  kèm dữ liệu để sửa được ngay (`UnknownObjectError` có `.object`,
+  `MissingPermissionsError` có `.missing`).
 - Exit code: `0` OK, `1` lỗi runtime/API, `2` sai cú pháp.
 - `--compact` để JSON một dòng.
 
 ```bash
-erp records query "Hóa đơn" --all --compact | jq '[.records[]["Tổng tiền"]] | add'
+erp schema dump --compact | jq '[.objects[] | {name, fields: (.fields | length)}]'
 ```
-
-## Bảng lệnh
-
-```
-erp doctor | whoami | perms list | perms check <resource> <action>
-erp objects list [--fields] | show <object> | create <name> | delete <object> --yes
-erp objects ensure <name> [--field "Name:type[:config]"]…      # cần key admin
-erp fields types | add <object> <name> <type> [--config json] | update <object> <field> …
-erp records query <object> [--where …] [--sort …] [--limit n] [--all] [--total] [--select "A,B"]
-erp records count | get | create | update | delete | restore
-erp links list | add | remove
-erp schema dump [--out file]
-erp schema check [file] [--offline]
-erp schema init [file] [--object name]… [--force]
-erp init [dir] [--name x] [--object x]
-erp skill install [--dir path] | skill path
-erp help [command] [--json]
-```
-
-Cú pháp giá trị:
-
-- Filter: `--where "Field:operator:value"`, hoặc `--where "Field=value"` (viết
-  tắt của `equals`). Lặp nhiều `--where` = AND.
-- Sort: `--sort "Tổng tiền:desc"` (mặc định `asc`).
-- Gán: `--set "Field=value"` (lặp được) hoặc `--data '{"Field": …}'`.
-- Ép kiểu: parse được JSON thì là JSON (`42` → number, `true` → boolean), còn
-  lại là string (`approved`, `2026-08-03`). Cần chính xác kiểu thì dùng `--data`.
-- Field spec: `"Lý do:long_text"`, `"Người:single_select:{\"source\":\"workspace_users\"}"`,
-  hoặc viết tắt select `"Trạng thái:single_select:pending,approved,rejected"`.
-
-## Làm việc với `schema.json`
-
-Mini app khai bảng nó cần trong `schema.json` ở gốc source; người deploy duyệt
-rồi mới build ([03](03-du-lieu.md#khai-báo-schema--schemajson)). Hai lệnh đi kèm:
-
-```bash
-erp schema check                       # cú pháp (luật y hệt backend) + diff với workspace
-erp schema check app/schema.json --offline    # chỉ cú pháp, không cần credential
-erp schema init --object "Nhân viên" --object "Phòng ban"   # xuất bảng đang có ra schema.json
-```
-
-`schema check` trả đúng thứ màn duyệt sẽ hiện, nên biết trước app sẽ deploy
-thẳng hay phải chờ duyệt:
-
-```jsonc
-{
-  "ok": false,
-  "checked": "workspace",
-  "problems": ["Đơn nghỉ phép.Số ngày is text, the app declares number"],
-  "wouldBe": "pending",              // "applied" = không có gì để duyệt
-  "objects": [
-    { "name": "Đơn nghỉ phép", "action": "update", "fields": [
-      { "name": "Lý do", "type": "long_text", "action": "unchanged" },
-      { "name": "Số ngày", "type": "number", "action": "conflict", "currentType": "text" }
-    ]}
-  ]
-}
-```
-
-Exit code `1` khi có vấn đề → dùng thẳng trong CI trước khi đóng zip.
-
-`schema init` đi ngược lại: dựng bảng bằng tay trong UI cho nhanh, rồi xuất ra
-khai báo. Nó bỏ qua cột computed (`formula`/`lookup`/`rollup` — không khai báo
-được) và đổi `targetObjectId` của relation thành `targetObject` theo tên bảng.
 
 ## Dựng app mới trong một lệnh
 
@@ -162,43 +159,35 @@ erp init don-xin-nghi --sdk "file:../erp-sdk"
 ### Cài skill
 
 ```bash
-erp skill install                      # → .claude/skills/erp-miniapp
+erp skill install                          # → .claude/skills/erp-data
 erp skill install --dir ~/.claude/skills   # dùng chung mọi project
-erp skill path                         # chỉ in đường dẫn để agent tự đọc
+erp skill path                             # chỉ in đường dẫn để agent tự đọc
 ```
 
-Skill gồm `SKILL.md` (mô hình mini app, initData, hai mô hình quyền, checklist
-debug) và `references/` (toàn bộ CLI + bề mặt SDK). Agent tự nạp khi thấy task
-nhắc tới erp-sdk, mini app, object/record của ERP.
+Skill `erp-data` dạy agent **dùng SDK khai thác dữ liệu**: kết nối, đọc schema
+thật, query có filter/sort/phân trang, tránh N+1 khi đi qua `relation`, tổng hợp
+bằng `DataFrame`, ghi và ghi hàng loạt an toàn, đọc lỗi để tự sửa. Gồm `SKILL.md`
++ `references/api.md` (bề mặt SDK) + `references/recipes.md` (script chạy được:
+báo cáo, join, import CSV, dọn dữ liệu).
 
-### Vì sao agent làm tốt hơn với CLI này
-
-- `erp help --json` trả **toàn bộ command surface** dạng máy đọc — agent không
-  phải đoán tên lệnh hay flag.
-- `erp schema dump --out workspace.json` nạp nguyên schema workspace làm context
-  → không bịa tên field.
-- `erp schema check` cho agent một vòng lặp đóng: sửa `schema.json` → chạy →
-  đọc `problems` → sửa tiếp, không cần upload zip mới biết sai.
-- Lỗi có cấu trúc và kèm cách sửa, nên agent tự chữa được vòng lặp
-  `sai tên field → đọc .known → gọi lại`.
-- Flag lạ bị chặn ngay với danh sách flag hợp lệ, thay vì im lặng bỏ qua.
+Dựng **mini app** là chủ đề khác — bộ `docs/` này (01→09) mới là nguồn cho việc
+đó; chỉ cho agent đọc `docs/` khi task đúng là làm mini app.
 
 ### Quy trình gợi ý cho agent
 
 1. `erp doctor` — chắc chắn có kết nối và đủ quyền trước khi làm gì.
-2. `erp objects list` / `erp schema dump` — nắm dữ liệu thật đang có.
-3. `erp init …` — sinh khung app, rồi sửa code.
-4. `erp schema check` — khai báo hợp lệ chưa, deploy có phải chờ duyệt không.
-5. `erp records query/create` — kiểm chứng luồng dữ liệu trước khi tin vào UI.
-
-Đừng để app tự gọi `objects create` / `objects ensure` lúc boot: service
-account của mini app không có quyền đó, chỉ nhận `403`.
+2. `erp schema dump --out workspace.json` — nắm tên bảng/field thật.
+3. Viết script SDK, chạy `node --env-file=.env script.mjs`, đọc kết quả.
+4. Script có ghi: chạy `.count()` trước, in thử payload, chỉ ghi thật sau khi
+   người dùng xác nhận.
 
 ### Ranh giới an toàn
 
 - CLI **không bao giờ** in API key ra output; đừng dán key vào lệnh trong
   transcript — dùng env hoặc `--env-file`.
-- `objects delete` bắt buộc `--yes` (xóa bảng là xóa cả record).
-- `records delete` là soft delete — hoàn tác bằng `records restore --version`.
-- Mọi thao tác chạy bằng quyền của key đang cấu hình. Muốn agent chỉ đọc, cấp
-  cho nó một service account chỉ có `*:read`.
+- Muốn agent chỉ đọc, cấp cho nó một service account chỉ có `*:read`. Đó là
+  hàng rào chắc chắn hơn mọi quy ước trong prompt.
+- Xóa record qua SDK là **soft delete** (`handle.restore(id, version)` để hoàn
+  tác); xóa object thì mất cả record — service account `member` không làm được
+  việc đó, và cũng không nên làm hộ người dùng.
+- Bulk update chạm tới hàng nghìn dòng trong một request: đếm trước, hỏi trước.
