@@ -4,6 +4,13 @@ Mỗi mục là một file `.mjs` chạy bằng `node --env-file=.env <file>` (N
 hoặc `.ts` chạy bằng `npx tsx`. Node 18 thì tự nạp env:
 `ERP_BASE_URL=… ERP_API_KEY=… node file.mjs`.
 
+Script có ghi thì chạy hai lượt, **cùng một file, không sửa dòng nào**:
+
+```bash
+ERP_ENV=development node script.mjs   # server validate thật rồi rollback
+node script.mjs                        # ưng con số rồi thì ghi thật
+```
+
 ## 0. Khung chung
 
 ```js
@@ -126,7 +133,62 @@ dfOrders.leftJoin(dfCustomers, "customerId")
 
 Không bao giờ gọi `handle.get(id)` trong vòng lặp theo dòng.
 
-## 5. Nhập dữ liệu từ CSV/JSON
+## 5. Ghi link: tạo record kèm quan hệ trong **một** request
+
+Relation là một field như mọi field khác, giá trị là mảng id — không còn cảnh
+"record đã tạo nhưng link fail":
+
+```js
+const orders = await erp.object("Đơn hàng");
+const lines = await erp.object("Chi tiết đơn");
+
+// 1. tạo các dòng chi tiết trước để có id
+const created = await lines.createMany([
+  { "Sản phẩm": "SP-1", "Số lượng": 2 },
+  { "Sản phẩm": "SP-2", "Số lượng": 1 },
+]);
+
+// 2. tạo đơn kèm link, cùng một transaction, thứ tự mảng = thứ tự hiển thị
+await orders.create({
+  "Mã đơn": "DH-001",
+  "Chi tiết": created.records.map((r) => r.id),   // id, không phải cả record
+});
+```
+
+Sửa list của một record đang có sẵn — **gửi đủ mọi id muốn giữ**, vì ghi relation
+là *thay cả list*:
+
+```js
+const rec = await orders.records().where("Mã đơn", "equals", "DH-001").first();
+const dangCo = orders.linkedIds(rec, "Chi tiết");        // đọc từ data
+
+await orders.update(rec.id, { "Chi tiết": [...dangCo, idMoi] });   // thêm 1
+await orders.update(rec.id, { "Chi tiết": dangCo.filter((i) => i !== idBo) }); // bớt 1
+await orders.update(rec.id, { "Chi tiết": [] });                   // gỡ hết
+await orders.update(rec.id, { "Trạng thái": "paid" });             // không đụng link
+```
+
+`null` = "không nói gì về field này" (link giữ nguyên), `[]` = gỡ hết. Đừng để
+code tự biến `undefined` thành `[]` — đó là cách xoá link ngoài ý muốn.
+
+Import nhiều đơn cùng lúc thì gộp luôn vào `createMany`, mỗi dòng mang link của
+nó; backend gom toàn bộ id của cả request để kiểm một lượt:
+
+```js
+await orders.createMany(
+  don.map((d) => ({ "Mã đơn": d.code, "Chi tiết": idChiTietCua[d.code] })),
+);
+```
+
+Quan hệ **hơn 100 id** thì không ghi inline được (đọc cũng chỉ trả 100) — dùng
+`createLink` / `deleteLink` từng cái:
+
+```js
+await orders.createLink(rec.id, "Chi tiết", idMoi, dangCo.length);
+await orders.deleteLink(rec.id, "Chi tiết", idBo);
+```
+
+## 6. Nhập dữ liệu từ CSV/JSON
 
 ```js
 import { readFileSync } from "node:fs";
@@ -146,28 +208,35 @@ for (const col of Object.keys(rows[0])) {
   if (!known.has(col)) throw new Error(`Bảng không có field "${col}"`);
 }
 
-// 2. in thử 3 dòng, dừng lại nếu chạy dry-run
+// 2. in thử 3 dòng
 console.log(rows.slice(0, 3));
-if (process.env.APPLY !== "1") {
-  console.log(`Dry run: ${rows.length} dòng sẽ được tạo. Chạy lại với APPLY=1.`);
-  process.exit(0);
-}
 
-// 3. ghi thật — SDK tự chia lô 500, mỗi lô một transaction
+// 3. ghi — SDK tự chia lô 500, mỗi lô một transaction.
+//    ERP_ENV=development thì lệnh này là dry run: server validate từng dòng
+//    (unique, kiểu dữ liệu, id relation) rồi rollback, lỗi báo đúng dòng nào.
 const result = await products.createMany(rows);
-console.log(`Đã tạo ${result.created} record`);
+console.log(
+  result.dryRun
+    ? `Chạy thử OK: ${rows.length} dòng hợp lệ. Bỏ ERP_ENV rồi chạy lại để ghi thật.`
+    : `Đã tạo ${result.created} record`,
+);
 ```
 
-Cờ `APPLY=1` là mặc định tốt cho mọi script ghi: chạy lần đầu luôn là dry run.
+Không cần cờ `APPLY=1` tự chế nữa: `ERP_ENV=development` cho **đúng** đường đi
+của lệnh thật (kể cả lỗi từ server), thay vì chỉ in payload rồi thoát sớm.
 
-## 6. Cập nhật hàng loạt an toàn
+## 7. Cập nhật hàng loạt an toàn
 
 ```js
 const filterOf = () => orders.records().where("Trạng thái", "equals", "new");
 
 const total = await filterOf().count();          // đếm trước, báo con số
 console.log(`${total} đơn sẽ chuyển sang "processing"`);
-if (process.env.APPLY !== "1") process.exit(0);
+
+// thử một lượt: matched là số thật, không có dòng nào bị sửa
+const thu = await filterOf().update({ "Trạng thái": "processing" }, { dryRun: true });
+console.log(`Chạy thử: khớp ${thu.matched}, sẽ sửa ${thu.updated}`);
+if (erp.dryRun) process.exit(0);                 // ERP_ENV=development thì dừng ở đây
 
 let done = 0;
 for (;;) {
@@ -182,7 +251,7 @@ Vòng lặp này chỉ kết thúc vì bản update **làm dòng đã sửa rớ
 field được set không nằm trong filter, vòng lặp sẽ chạy mãi — khi đó lấy danh
 sách id trước rồi update theo lô id.
 
-## 7. Sửa một record đúng phiên bản (tránh mất dữ liệu)
+## 8. Sửa một record đúng phiên bản (tránh mất dữ liệu)
 
 ```js
 import { ErpApiError } from "erp-sdk";
@@ -202,7 +271,7 @@ async function updateSafely(handle, id, patch, retries = 2) {
 await updateSafely(orders, id, (row) => ({ "Tổng tiền": Number(row["Tổng tiền"]) + 1000 }));
 ```
 
-## 8. Soi chất lượng dữ liệu
+## 9. Soi chất lượng dữ liệu
 
 ```js
 const df = await orders.records().toFrame({ max: 50000 });
@@ -218,7 +287,7 @@ console.log("Trùng mã:", dup);
 df.where("Tổng tiền", "less_than", 0).toArray().forEach((r) => console.log(r.id, r["Tổng tiền"]));
 ```
 
-## 9. Chạy theo quyền của một user cụ thể
+## 10. Chạy theo quyền của một user cụ thể
 
 ```js
 const asUser = erp.asUser(accessTokenCuaUser);       // hoặc (await erp.session(initData)).client
@@ -235,7 +304,7 @@ biết "user này thực sự nhìn thấy gì", không phải khi cần dữ li
   phải có field `date`/`datetime` của chính nó. (`rowFromRecord` vẫn trả
   `createdAt`/`updatedAt`, nên lọc phía client bằng `DataFrame` được.)
 - **Query là builder có trạng thái**: `count()`/`first()` set `limit` lên chính
-  nó — dựng chain mới mỗi lần dùng (xem `filterOf()` ở mục 6).
+  nó — dựng chain mới mỗi lần dùng (xem `filterOf()` ở mục 7).
 - **`fetchAll()` không có trần mặc định** — bảng lớn nhớ `{ max }`.
 - **`in`/`not_in` tối đa 200 giá trị**; nhiều hơn thì chia lô, hoặc dùng
   `getMany` (đã chia lô sẵn).
@@ -247,3 +316,11 @@ biết "user này thực sự nhìn thấy gì", không phải khi cần dữ li
   đọc, và do worker tính nền — có thể chưa cập nhật ngay sau khi ghi.
 - **Đổi cấu trúc bảng xong phải `erp.invalidate()`**, nếu không handle cache còn
   giữ danh sách field cũ.
+- **Ghi relation là thay cả list, không phải thêm**: gửi thiếu id = gỡ link. Đọc
+  `linkedIds()` rồi gửi lại đủ.
+- **`get(id)` không trả relation** — muốn mảng id thì lấy record bằng
+  `records().…` (query), hoặc `preload`.
+- **Id trả về từ dry-run create là id giả** (`ERP_ENV=development`): đừng lưu,
+  đừng dùng làm khoá cho bước sau. Muốn có id thật thì phải chạy thật.
+- **`delete` không có dry run**: ở chế độ development nó ném
+  `DryRunUnsupportedError` chứ không xoá — đó là chủ ý.

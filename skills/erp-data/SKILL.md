@@ -1,6 +1,6 @@
 ---
 name: erp-data
-description: Đọc, ghi và phân tích dữ liệu trong workspace ERP 1kk bằng erp-sdk (TypeScript/JavaScript). Dùng khi task nhắc tới erp-sdk, createMiniApp, ErpClient, ObjectHandle, RecordQuery, DataFrame, ERP_API_KEY / erp_sk_, object–field–record của ERP, hoặc khi người dùng muốn lấy/thống kê/nhập/sửa dữ liệu trên ERP ("lấy danh sách đơn hàng từ ERP", "báo cáo doanh thu theo tháng", "import CSV vào bảng", "cập nhật hàng loạt", "join hai bảng", "xuất Excel/CSV từ ERP").
+description: Đọc, ghi và phân tích dữ liệu trong workspace ERP 1kk bằng erp-sdk (TypeScript/JavaScript). Dùng khi task nhắc tới erp-sdk, createMiniApp, ErpClient, ObjectHandle, RecordQuery, DataFrame, ERP_API_KEY / erp_sk_, ERP_ENV / dryRun / chạy thử trước khi ghi, link–relation giữa hai bảng, object–field–record của ERP, hoặc khi người dùng muốn lấy/thống kê/nhập/sửa dữ liệu trên ERP ("lấy danh sách đơn hàng từ ERP", "báo cáo doanh thu theo tháng", "import CSV vào bảng", "cập nhật hàng loạt", "join hai bảng", "xuất Excel/CSV từ ERP").
 ---
 
 # Khai thác dữ liệu ERP bằng erp-sdk
@@ -12,19 +12,23 @@ key nội bộ, phân trang hộ, và có sẵn `DataFrame` kiểu pandas để 
 **Cách làm việc mặc định: viết một script chạy được rồi chạy nó.** CLI `erp` chỉ
 để dựng môi trường và xem schema thật — mọi thao tác đọc/ghi/phân tích đều viết
 bằng SDK, vì logic nhiều bước (join, tổng hợp, kiểm tra trước khi ghi) không
-diễn đạt được bằng cờ dòng lệnh.
+diễn đạt được bằng cờ dòng lệnh. Script có ghi dữ liệu thì **chạy thử bằng
+`ERP_ENV=development` trước** (§7) — cùng một đoạn code, không sửa gì.
 
 ## 1. Kết nối
 
 ```bash
-npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
+npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz
 ```
 
-Cần hai biến môi trường (Node 18+, `.env` **không bao giờ** commit):
+Cần hai biến môi trường (Node 18+, `.env` **không bao giờ** commit), cộng một
+biến tùy chọn quyết định script **ghi thật hay chạy thử** (§7):
 
 ```
 ERP_BASE_URL=https://erp.example.com
 ERP_API_KEY=erp_sk_...
+ERP_ENV=development     # tùy chọn — mọi lệnh ghi record thành dry run
+                        # không đặt (hoặc =production) → ghi thật
 ```
 
 ```bash
@@ -118,8 +122,8 @@ thị**: `orders.rowFromRecord(record)`.
 
 ## 4. Quan hệ giữa các bảng — đừng N+1
 
-Field `relation` trả về trong `data` dưới dạng **mảng id**. Ba cách lấy dữ liệu
-liên quan, theo thứ tự nên dùng:
+Field `relation` nằm trong `data` dưới dạng **mảng id** — cả khi đọc lẫn khi ghi
+(§6.1). Ba cách lấy dữ liệu liên quan, theo thứ tự nên dùng:
 
 ```ts
 // 1. preload — server nạp kèm, tối đa 10 preload/query
@@ -188,17 +192,105 @@ await orders.delete(rec.id);                        // soft delete
 await orders.restore(rec.id, version);
 ```
 
+### 6.1 Link giữa các bảng ghi thẳng trong `data`
+
+Field `relation` ghi như một field bình thường, giá trị là **mảng record id của
+bên kia**, theo đúng thứ tự muốn hiển thị. Cùng một request, cùng một
+transaction — **không** còn vòng lặp `createLink` sau khi tạo record:
+
+```ts
+await orders.create({
+  "Mã đơn": "DH-001",
+  "Chi tiết": [lineId1, lineId2],      // relation: cả list, đúng thứ tự
+});
+```
+
+Ngữ nghĩa là **thay cả list**, không phải thêm/bớt — nhớ đúng bốn dòng này:
+
+| Gửi gì | Kết quả |
+| --- | --- |
+| không có key trong `data` | link giữ nguyên |
+| `"Chi tiết": null` | **giống hệt không gửi key** — link giữ nguyên |
+| `"Chi tiết": [a, b]` | record link **đúng** a, b; link cũ khác biến mất |
+| `"Chi tiết": []` | **xoá sạch link** của field đó |
+
+Ngược với field thường (ở đó `null` là *xoá giá trị*). Muốn thêm 1 link vào
+record đang có 3 link thì gửi cả 4 id:
+
+```ts
+const rec = await orders.records().whereIds([id]).first();
+await orders.update(id, { "Chi tiết": [...orders.linkedIds(rec, "Chi tiết"), lineId3] });
+```
+
+`linkedIds` đọc từ `data`, nên record phải lấy bằng `records().…` — `get(id)`
+**không** trả relation.
+
+Giới hạn: **100 id / field / record** cho cả đọc lẫn ghi. Quan hệ dài hơn 100 thì
+không sửa inline được, phải dùng `createLink` / `deleteLink` từng cái. Cả một
+request tối đa 20 000 link. SDK chặn trước bằng `RelationValueError` khi mảng quá
+100, khi truyền nguyên `RecordDto` thay vì id, hoặc khi giá trị không phải mảng.
+Một id sai làm hỏng **cả request** (kể cả bulk) — all-or-nothing.
+
+`bulk-update` với relation nghĩa là "mọi record khớp filter đều có **đúng** list
+này": `.update({ "Chi tiết": [] })` gỡ link của tối đa 5 000 record trong một
+lệnh. Chạy `dryRun` xem `matched` trước.
+
 **Quy tắc trước khi ghi hàng loạt** (dữ liệu thật của người dùng, không undo được
 bằng Ctrl-Z):
 
 1. Chạy đúng filter đó với `.count()` trước, báo con số cho người dùng.
-2. Với thao tác lớn hoặc phá hủy (bulk update, xóa, đổi trạng thái hàng loạt):
+2. Chạy thử bằng `dryRun` (§7) — server validate y như thật rồi rollback.
+3. Với thao tác lớn hoặc phá hủy (bulk update, xóa, đổi trạng thái hàng loạt):
    **hỏi xác nhận** rồi mới chạy.
-3. Bulk update ≤ 5 000 dòng/lần và trả `hasMore`; insert SDK tự chia lô 500.
+4. Bulk update ≤ 5 000 dòng/lần và trả `hasMore`; insert SDK tự chia lô 500.
    Field `unique` không set được bằng bulk update; computed field để worker tính.
-4. Import từ file: kiểm tra vài dòng đầu, in thử payload đã map, rồi mới chạy hết.
+5. Import từ file: kiểm tra vài dòng đầu, in thử payload đã map, rồi mới chạy hết.
 
-## 7. Quyền và ranh giới
+## 7. Hai chế độ chạy: `development` (thử) và `production` (thật)
+
+SDK đọc **`ERP_ENV`** lúc tạo client. Không đặt → `production`, ghi thật.
+`ERP_ENV=development` → **mọi lệnh ghi record chạy dry run**: backend chạy đúng
+câu lệnh thật (validate field, unique, version, id relation, rule, computed) rồi
+**rollback**. Sai thì lỗi y hệt lúc chạy thật; đúng thì không để lại dấu vết nào
+— không record, không link, không event, `version` không tăng.
+
+`NODE_ENV` **không** được đọc: một app đang dev vẫn thường phải ghi thật.
+Giá trị lạ (`ERP_ENV=devlopment`) thì SDK **ném lỗi** thay vì đoán bừa.
+
+```bash
+ERP_ENV=development node script.mjs   # chạy thử toàn bộ, không đụng dữ liệu
+node script.mjs                        # ưng rồi thì chạy thật
+```
+
+```ts
+erp.mode          // "development" | "production"
+erp.dryRun        // true nếu ghi mặc định là dry run
+erp.production()  // cùng credential, chế độ kia (cache riêng, đọc lại schema)
+erp.development()
+
+await orders.create(row, { dryRun: true });   // thử một lệnh dù đang production
+await orders.create(row, { dryRun: false });  // ghi thật dù đang development
+await orders.update(id, patch, { version: 3, dryRun: true });
+const res = await orders.records().where(…).update(patch, { dryRun: true });
+// → { matched, updated, hasMore, dryRun: true } — matched là số thật
+```
+
+Kết quả trả về mang `dryRun: true`. **Record id trả về từ dry-run create là id
+giả**, chưa từng được lưu: đừng cache, đừng dùng làm khóa, đừng đi tiếp theo nó.
+
+Dry run chỉ có ở 4 lệnh ghi record (`create`, `createMany`, `update`,
+`updateWhere`/`.records().update()`). `delete`, `restore`, `createLink`,
+`deleteLink` **không có** dry run — gọi trong chế độ development thì SDK ném
+`DryRunUnsupportedError` (không xoá lén, cũng không giả vờ). Muốn xoá thật thì
+`{ dryRun: false }` hoặc chuyển sang production. Đổi cấu trúc bảng (`createObject`,
+`addField`) cũng không có dry run, luôn chạy thật.
+
+**Cách làm mặc định khi được giao việc ghi dữ liệu:** viết script → chạy với
+`ERP_ENV=development` → báo cáo `matched`/`created` và lỗi nếu có → xin xác nhận
+→ chạy lại không có `ERP_ENV`. Kiểm tra đang ở chế độ nào: `npx erp doctor` (check
+`mode`) hoặc `npx erp whoami`.
+
+## 8. Quyền và ranh giới
 
 - Key `erp_sk_…` là **service account**, thường ở mức `member`: đọc/ghi record
   được, **tạo bảng/field thì không** (403). Muốn tạo bảng phải dùng key admin
@@ -211,20 +303,22 @@ bằng Ctrl-Z):
 - **API key chỉ ở server.** Không log, không commit, không ship xuống browser,
   không viết vào file kết quả.
 
-## 8. Lỗi nói thẳng cần sửa gì
+## 9. Lỗi nói thẳng cần sửa gì
 
 | Lỗi | Trường hữu ích | Việc cần làm |
 | --- | --- | --- |
 | `UnknownObjectError` | `.object` | `npx erp objects list` — sai tên bảng |
 | `UnknownFieldError` | `.field`, `.known` | `.known` liệt kê đúng field hợp lệ |
 | `FilterValueError` | `.field`, `.operator` | `in`/`not_in` cần mảng 1..200 giá trị |
+| `RelationValueError` | `.field` | relation cần **mảng id** ≤ 100; `null` giữ nguyên, `[]` gỡ hết |
+| `DryRunUnsupportedError` | `.operation` | lệnh này không dry run được — `{ dryRun: false }` hoặc `ERP_ENV=production` |
 | `MissingPermissionsError` | `.missing` | cấp IAM rule đúng cặp `resource:action` |
 | `SchemaMismatchError` | `.missing`, `.conflicts` | workspace chưa có bảng/field như khai báo |
 | `ErpApiError` | `.status`, `.trace`, `.details` | 401/403 → key hoặc quyền; 409 → version cũ, đọc lại rồi update |
 
 Đọc ra 0 record dù chắc chắn có dữ liệu → row scope, không phải filter.
 
-## 9. CLI `erp` có gì
+## 10. CLI `erp` có gì
 
 Chỉ những lệnh phục vụ việc dùng SDK — không có lệnh CRUD dữ liệu:
 

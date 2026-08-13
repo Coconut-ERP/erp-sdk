@@ -1,10 +1,19 @@
 export { createMiniApp, ErpClient, type MiniAppConfig } from "./client";
 export {
   MAX_FILTER_VALUES,
+  MAX_RELATION_IDS,
   ObjectHandle,
   RECORD_ID_FILTER_KEY,
   RecordQuery,
+  type VersionedWriteOptions,
+  type WriteOptions,
 } from "./objects";
+export {
+  ERP_ENV_VAR,
+  isDryRunMode,
+  resolveMode,
+  type ErpMode,
+} from "./mode";
 export { DataFrame, GroupedFrame, matchesOperator, type AggSpec, type Row } from "./frame";
 export { isAllowed, missingPermissions } from "./permissions";
 export { FetchHttp, API_KEY_PREFIX, type Http, type HttpConfig, type HttpOptions } from "./http";
@@ -50,9 +59,11 @@ export {
   type WorkspaceObjectShape,
 } from "./schema";
 export {
+  DryRunUnsupportedError,
   ErpApiError,
   FilterValueError,
   MissingPermissionsError,
+  RelationValueError,
   SchemaMismatchError,
   UnknownFieldError,
   UnknownObjectError,
@@ -64,6 +75,8 @@ export type {
   BulkCreateRecordsResult,
   BulkUpdateRecordsRequest,
   BulkUpdateRecordsResult,
+  CreateRecordRequest,
+  UpdateRecordRequest,
   EnsureFieldSpec,
   Envelope,
   FieldDto,

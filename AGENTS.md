@@ -110,6 +110,7 @@ write the app's `schema.json` and validate its format with `validateSchema`.
 | `src/permissions.ts` | `isAllowed`/`missingPermissions`, mirroring the backend enforcer (deny beats allow, `*` wildcards, `manage` implies nothing) |
 | `src/webapp.ts` | Browser side of the initData bridge: URL param, `postMessage`, and `parseInitData` (unverified, display only) |
 | `src/errors.ts` | Error classes that carry the fix, not just a message |
+| `src/mode.ts` | `ERP_ENV` → `production` \| `development`, the switch that makes every record write a server-side dry run |
 | `src/cli/` | `args` (parsing), `commands` (the registry), `index` (`runCli`), `help`, `main` (bin entry), `scaffold` (`erp init`), `skill` (`erp skill install`) |
 | `skills/erp-data/` | Skill shipped inside the package — using the **SDK** to read, write and analyse workspace data; `erp skill install` copies it to `~/.agents/skills/` (tool-neutral, one copy per machine) and prints how each agent reaches it |
 
@@ -130,6 +131,15 @@ retyped. `createObject`/`ensureObject`/`addField` still exist but are for admin-
 tooling only — called from an app they just produce 403s. Computed types (`formula`,
 `lookup`, `rollup`) cannot be declared at all: their config addresses other fields by
 internal key.
+
+**Two environment modes**, read once at client construction from `ERP_ENV`
+(`config.mode`/`config.env` override, `NODE_ENV` is deliberately ignored — a locally
+developed app still means its writes). `development` makes the four record-write
+endpoints send `dryRun: true`, which the backend runs for real and rolls back; every
+write method takes `{ dryRun }` to override per call. What has no dry run on the server
+— `delete`, `restore`, the link endpoints, anything structural — throws
+`DryRunUnsupportedError` in that mode rather than silently doing the real thing. A new
+write path must decide which of those two it is.
 
 **Two authority modes** in a mini app, worth keeping straight when touching
 `client.ts` or the docs:

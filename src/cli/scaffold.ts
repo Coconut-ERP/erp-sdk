@@ -18,7 +18,7 @@ export interface ScaffoldOptions {
  * with the rest of the pinned URLs when cutting a release.
  */
 export const DEFAULT_SDK_SPEC =
-  "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz";
+  "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz";
 
 export interface ScaffoldResult {
   dir: string;
@@ -359,6 +359,11 @@ function envExample(): string {
 ERP_BASE_URL=http://localhost:8000
 ERP_API_KEY=erp_sk_...
 PORT=3000
+
+# Optional. "development" turns every record write into a server-side dry run
+# (validated, then rolled back) — for rehearsing an import or a bulk update.
+# Unset, or "production", writes for real.
+# ERP_ENV=development
 `;
 }
 

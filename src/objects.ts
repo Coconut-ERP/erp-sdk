@@ -1,5 +1,10 @@
 import { DataFrame, type Row } from "./frame";
-import { FilterValueError, UnknownFieldError } from "./errors";
+import {
+  DryRunUnsupportedError,
+  FilterValueError,
+  RelationValueError,
+  UnknownFieldError,
+} from "./errors";
 import type { Http } from "./http";
 import type {
   BulkCreateRecordsResult,
@@ -31,7 +36,66 @@ export const RECORD_ID_FILTER_KEY = "id";
 /** Server cap on how many values one `in`/`not_in` filter may carry. */
 export const MAX_FILTER_VALUES = 200;
 
+/**
+ * Server cap on how many ids one relation field of one record may name in a
+ * single write. Past it, the list is not editable inline at all — reading it
+ * back is capped at 100 too — so long relations are edited link by link.
+ */
+export const MAX_RELATION_IDS = 100;
+
 const MEMBERSHIP_OPERATORS: readonly FilterOperator[] = ["in", "not_in"];
+
+/** {@link WriteOptions} plus the optimistic-lock version, for record updates. */
+export type VersionedWriteOptions = WriteOptions & { version?: number };
+
+function versionedOptions(
+  options: number | VersionedWriteOptions,
+): VersionedWriteOptions {
+  return typeof options === "number" ? { version: options } : options;
+}
+
+/** Per-call escape hatch from the client's environment mode. */
+export interface WriteOptions {
+  /**
+   * `true` validates everything and rolls back; `false` writes for real even
+   * in development mode. Omitted, the client's mode decides.
+   */
+  dryRun?: boolean;
+}
+
+/**
+ * A relation is written as the whole list, so the shapes that go wrong are
+ * predictable: a bare id instead of an array, `RecordDto`s instead of their
+ * ids, or a list longer than the server will take. All three are 400s worth
+ * catching before the round trip, with the display name the caller wrote.
+ */
+function checkRelationValue(field: FieldDto, value: unknown): void {
+  // null / absent both mean "say nothing about this relation" — never "clear".
+  if (value === null || value === undefined) return;
+  if (!Array.isArray(value)) {
+    throw new RelationValueError(
+      field.name,
+      `expected an array of record ids, got ${typeof value}`,
+    );
+  }
+  if (value.length > MAX_RELATION_IDS) {
+    throw new RelationValueError(
+      field.name,
+      `names ${value.length} records, but one write carries at most ` +
+        `${MAX_RELATION_IDS} per field — edit longer relations with ` +
+        "createLink/deleteLink instead",
+    );
+  }
+  for (const id of value) {
+    if (typeof id === "string" && id.trim() !== "") continue;
+    throw new RelationValueError(
+      field.name,
+      id && typeof id === "object" && "id" in (id as Record<string, unknown>)
+        ? "got record objects — map them to ids first, e.g. rows.map((r) => r.id)"
+        : `"${String(id)}" is not a record id`,
+    );
+  }
+}
 
 /**
  * `in`/`not_in` are the only operators whose value has a shape, and getting it
@@ -63,14 +127,41 @@ export class ObjectHandle {
   private readonly byKey = new Map<string, FieldDto>();
   private readonly byName = new Map<string, FieldDto>();
 
+  /**
+   * `options.dryRun` is the handle's default for every record write —
+   * `ErpClient` sets it from the environment mode. Individual calls still
+   * override it.
+   */
   constructor(
     private readonly http: Http,
     readonly meta: ObjectDto,
     readonly fields: FieldDto[],
+    private readonly options: { dryRun?: boolean } = {},
   ) {
     for (const field of fields) {
       this.index(field);
     }
+  }
+
+  /** Whether writes through this handle are dry runs unless told otherwise. */
+  get dryRun(): boolean {
+    return this.options.dryRun ?? false;
+  }
+
+  private dryRunFor(options: WriteOptions): boolean {
+    return options.dryRun ?? this.dryRun;
+  }
+
+  /**
+   * `dryRun: false` is never sent — its absence is what the server reads as a
+   * real write, and sending the key would be noise in every request body.
+   */
+  private writeFlag(options: WriteOptions): { dryRun?: true } {
+    return this.dryRunFor(options) ? { dryRun: true } : {};
+  }
+
+  private refuseDryRun(operation: string, options: WriteOptions): void {
+    if (this.dryRunFor(options)) throw new DryRunUnsupportedError(operation);
   }
 
   private index(field: FieldDto): void {
@@ -122,7 +213,9 @@ export class ObjectHandle {
   private resolveData(data: Row): Row {
     const resolved: Row = {};
     for (const [key, value] of Object.entries(data)) {
-      resolved[this.fieldKey(key)] = value;
+      const field = this.field(key);
+      if (field.type === "relation") checkRelationValue(field, value);
+      resolved[field.key] = value;
     }
     return resolved;
   }
@@ -184,19 +277,27 @@ export class ObjectHandle {
     return new RecordQuery(this.http, this);
   }
 
-  async create(data: Row): Promise<RecordDto> {
+  /**
+   * Writes one record. A `relation` field takes the complete array of related
+   * record ids and is saved in the same transaction as the rest of the row —
+   * no follow-up `createLink` calls, nothing half-written if one id is wrong.
+   */
+  async create(data: Row, options: WriteOptions = {}): Promise<RecordDto> {
     return this.http.request<RecordDto>(
       "POST",
       `/objects/${this.id}/records`,
-      { body: { data: this.resolveData(data) } },
+      { body: { data: this.resolveData(data), ...this.writeFlag(options) } },
     );
   }
 
   async createMany(
     rows: Row[],
-    options: { chunkSize?: number } = {},
+    options: { chunkSize?: number } & WriteOptions = {},
   ): Promise<BulkCreateRecordsResult> {
-    if (rows.length === 0) return { created: 0, records: [] };
+    const dryRun = this.dryRunFor(options);
+    if (rows.length === 0) {
+      return { created: 0, records: [], ...(dryRun ? { dryRun } : {}) };
+    }
     const chunkSize = Math.min(options.chunkSize ?? MAX_BULK_CREATE, MAX_BULK_CREATE);
     const result: BulkCreateRecordsResult = { created: 0, records: [] };
 
@@ -205,23 +306,38 @@ export class ObjectHandle {
       const page = await this.http.request<BulkCreateRecordsResult>(
         "POST",
         `/objects/${this.id}/records/bulk`,
-        { body: { records: chunk.map((row) => ({ data: this.resolveData(row) })) } },
+        {
+          body: {
+            records: chunk.map((row) => ({ data: this.resolveData(row) })),
+            ...this.writeFlag(options),
+          },
+        },
       );
       result.created += page.created;
       result.records.push(...page.records);
     }
+    // Chunking is ours, not the server's: one rolled-back chunk says nothing
+    // about the next one, so report the mode we asked for, not a per-chunk flag.
+    if (dryRun) result.dryRun = true;
     return result;
   }
 
   async updateWhere(
     filters: RecordFilter[],
     data: Row,
-    options: { limit?: number } = {},
+    options: { limit?: number } & WriteOptions = {},
   ): Promise<BulkUpdateRecordsResult> {
     return this.http.request<BulkUpdateRecordsResult>(
       "POST",
       `/objects/${this.id}/records/bulk-update`,
-      { body: { filters, data: this.resolveData(data), limit: options.limit } },
+      {
+        body: {
+          filters,
+          data: this.resolveData(data),
+          limit: options.limit,
+          ...this.writeFlag(options),
+        },
+      },
     );
   }
 
@@ -263,17 +379,39 @@ export class ObjectHandle {
       .filter((record): record is RecordDto => record !== undefined);
   }
 
-  async update(recordId: string, data: Row, version?: number): Promise<RecordDto> {
-    const currentVersion = version ?? (await this.get(recordId)).version;
+  /**
+   * The third argument is either the version (as before) or an options object,
+   * so `update(id, data, rec.version)` keeps working while
+   * `update(id, data, { dryRun: true })` is available.
+   */
+  async update(
+    recordId: string,
+    data: Row,
+    options: number | VersionedWriteOptions = {},
+  ): Promise<RecordDto> {
+    const opts = versionedOptions(options);
+    const currentVersion = opts.version ?? (await this.get(recordId)).version;
     return this.http.request<RecordDto>(
       "PUT",
       `/objects/${this.id}/records/${recordId}`,
-      { body: { data: this.resolveData(data), version: currentVersion } },
+      {
+        body: {
+          data: this.resolveData(data),
+          version: currentVersion,
+          ...this.writeFlag(opts),
+        },
+      },
     );
   }
 
-  async delete(recordId: string, version?: number): Promise<void> {
-    const currentVersion = version ?? (await this.get(recordId)).version;
+  /** Soft delete. The server has no dry run for it — see {@link DryRunUnsupportedError}. */
+  async delete(
+    recordId: string,
+    options: number | VersionedWriteOptions = {},
+  ): Promise<void> {
+    const opts = versionedOptions(options);
+    this.refuseDryRun("delete", opts);
+    const currentVersion = opts.version ?? (await this.get(recordId)).version;
     await this.http.request<unknown>(
       "DELETE",
       `/objects/${this.id}/records/${recordId}`,
@@ -281,7 +419,12 @@ export class ObjectHandle {
     );
   }
 
-  async restore(recordId: string, version: number): Promise<RecordDto> {
+  async restore(
+    recordId: string,
+    version: number,
+    options: WriteOptions = {},
+  ): Promise<RecordDto> {
+    this.refuseDryRun("restore", options);
     return this.http.request<RecordDto>(
       "POST",
       `/objects/${this.id}/records/${recordId}/restore`,
@@ -302,12 +445,19 @@ export class ObjectHandle {
     );
   }
 
+  /**
+   * Adds one link without restating the list. Only needed past
+   * {@link MAX_RELATION_IDS} — below that, write the whole array in `data`
+   * through `create`/`update` and get one transaction instead of 1 + N.
+   */
   async createLink(
     recordId: string,
     fieldNameOrKey: string,
     targetRecordId: string,
     position = 0,
+    options: WriteOptions = {},
   ): Promise<unknown> {
+    this.refuseDryRun("createLink", options);
     const field = this.field(fieldNameOrKey);
     return this.http.request<unknown>(
       "POST",
@@ -320,12 +470,24 @@ export class ObjectHandle {
     recordId: string,
     fieldNameOrKey: string,
     targetRecordId: string,
+    options: WriteOptions = {},
   ): Promise<void> {
+    this.refuseDryRun("deleteLink", options);
     const field = this.field(fieldNameOrKey);
     await this.http.request<unknown>(
       "DELETE",
       `/objects/${this.id}/records/${recordId}/links/${field.id}/${targetRecordId}`,
     );
+  }
+
+  /**
+   * The ids a relation field holds on a record, straight out of `data` — the
+   * list to edit and send back. Empty for a record fetched by
+   * `get(id)`, which does not carry relations; query or `preload` instead.
+   */
+  linkedIds(record: RecordDto, fieldNameOrKey: string): string[] {
+    const value = record.data[this.fieldKey(fieldNameOrKey)];
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
   }
 
   related(record: RecordDto, field: string | FieldDto): RecordDto[] {
@@ -458,12 +620,19 @@ export class RecordQuery {
     };
   }
 
+  /**
+   * One patch applied to every matching record. With a relation field in
+   * `data` that means *every* match ends up with exactly that list — `[]`
+   * strips the links off up to 5 000 records in one call. `{ dryRun: true }`
+   * returns the real `matched` first.
+   */
   async update(
     data: Row,
-    options: { limit?: number } = {},
+    options: { limit?: number } & WriteOptions = {},
   ): Promise<BulkUpdateRecordsResult> {
     return this.object.updateWhere(this.filters, data, {
       limit: options.limit ?? this.limitValue,
+      dryRun: options.dryRun,
     });
   }
 

@@ -32,7 +32,7 @@ CLI có sẵn khi cài `erp-sdk`:
 ```bash
 BASE=https://github.com/Coconut-ERP/erp-sdk/releases/download
 
-npm install "$BASE/v0.3.1/erp-sdk.tgz"   # trong project: ghim version
+npm install "$BASE/v0.3.2/erp-sdk.tgz"   # trong project: ghim version
 npx erp help
 
 npm install -g "$BASE/latest/erp-sdk.tgz"   # global: URL không bao giờ phải sửa
@@ -40,7 +40,7 @@ erp help
 ```
 
 Tag `latest` được trỏ lại sau mỗi lần phát hành nên hợp với máy mới và CLI
-global; còn dependency của app thì ghim `v0.3.1` — package manager khoá theo URL,
+global; còn dependency của app thì ghim `v0.3.2` — package manager khoá theo URL,
 URL chạy được mãi thì cài lại không còn tái lập được.
 
 Cấu hình bằng env (hoặc flag tương ứng):
@@ -79,6 +79,7 @@ Hết. Đọc/ghi record, thêm field, tạo link, phân tích → viết script
   "checks": [
     { "name": "base-url", "status": "ok", "detail": "http://localhost:8000" },
     { "name": "credentials", "status": "ok", "detail": "API key (erp_sk_…)" },
+    { "name": "mode", "status": "ok", "detail": "production (ERP_ENV not set) — writes are real" },
     { "name": "connection", "status": "ok", "detail": "7 effective permission(s)" },
     { "name": "objects", "status": "ok", "detail": "12 object(s) visible" },
     { "name": "permission object:record:create", "status": "fail",
@@ -93,8 +94,14 @@ erp doctor --require object:record:create --require object:field:read
 
 Exit `1` khi có check hỏng → dùng thẳng trong CI hoặc script khởi động.
 
-`erp whoami` bổ sung góc nhìn còn lại: key này *là ai* và đang có **những rule
-nào** (kể cả row scope) — nơi để nhìn khi đọc ra 0 record dù bảng có dữ liệu.
+Check `mode` trả lời câu hỏi "script mình sắp chạy có ghi thật không":
+`ERP_ENV=development` thì mọi lệnh ghi record là dry run (server validate rồi
+rollback) — xem [03 — Dữ liệu](03-du-lieu.md#chạy-thử-trước-khi-ghi-thật--dryrun-và-erp_env).
+`ERP_ENV` sai chính tả cũng hiện ở đây, dưới dạng check `fail`.
+
+`erp whoami` bổ sung góc nhìn còn lại: key này *là ai*, đang chạy ở chế độ nào
+(`mode`, `dryRunWrites`) và có **những rule nào** (kể cả row scope) — nơi để
+nhìn khi đọc ra 0 record dù bảng có dữ liệu.
 
 ## Xem schema thật
 
@@ -201,8 +208,10 @@ Dựng **mini app** là chủ đề khác — bộ `docs/` này (01→09) mới 
 1. `erp doctor` — chắc chắn có kết nối và đủ quyền trước khi làm gì.
 2. `erp schema dump --out workspace.json` — nắm tên bảng/field thật.
 3. Viết script SDK, chạy `node --env-file=.env script.mjs`, đọc kết quả.
-4. Script có ghi: chạy `.count()` trước, in thử payload, chỉ ghi thật sau khi
-   người dùng xác nhận.
+4. Script có ghi: chạy `.count()` trước, chạy cả script một lượt với
+   `ERP_ENV=development` (mọi lệnh ghi thành dry run, server validate y như
+   thật rồi rollback), báo con số `matched`/`created` cho người dùng, chỉ chạy
+   lại không có `ERP_ENV` sau khi họ xác nhận.
 
 ### Ranh giới an toàn
 
@@ -213,4 +222,8 @@ Dựng **mini app** là chủ đề khác — bộ `docs/` này (01→09) mới 
 - Xóa record qua SDK là **soft delete** (`handle.restore(id, version)` để hoàn
   tác); xóa object thì mất cả record — service account `member` không làm được
   việc đó, và cũng không nên làm hộ người dùng.
-- Bulk update chạm tới hàng nghìn dòng trong một request: đếm trước, hỏi trước.
+- Bulk update chạm tới hàng nghìn dòng trong một request: đếm trước, chạy thử
+  bằng `ERP_ENV=development` (hoặc `{ dryRun: true }`), hỏi trước.
+- `delete` **không có** dry run: ở chế độ development nó ném
+  `DryRunUnsupportedError` chứ không xoá — đừng "sửa" bằng cách thêm
+  `{ dryRun: false }` nếu người dùng chưa đồng ý xoá thật.

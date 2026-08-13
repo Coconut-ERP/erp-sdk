@@ -1,5 +1,6 @@
 import type { ErpClient } from "../client";
 import { ErpApiError } from "../errors";
+import { ERP_ENV_VAR, resolveMode } from "../mode";
 import type { ObjectHandle } from "../objects";
 import { SCHEMA_FILE } from "../schema";
 import type { FieldDto } from "../types";
@@ -91,6 +92,8 @@ export const COMMANDS: CommandSpec[] = [
       ctx.out({
         baseUrl: flagString(ctx.args, "base-url") ?? ctx.env.ERP_BASE_URL ?? null,
         auth: apiKey ? "api-key" : "access-token",
+        mode: client.mode,
+        dryRunWrites: client.dryRun,
         user,
         userError,
         permissions: permissions.map((p) => ({
@@ -157,8 +160,35 @@ export const COMMANDS: CommandSpec[] = [
             },
       );
 
+      // Decided before the mode check so a bad ERP_ENV still gets diagnosed
+      // alongside connectivity instead of hiding it.
+      const canConnect = checks.every((check) => check.status === "ok");
+
+      try {
+        const mode = resolveMode(ctx.env);
+        checks.push({
+          name: "mode",
+          status: "ok",
+          detail:
+            mode === "development"
+              ? `${ERP_ENV_VAR}=development — record writes run as dry runs and roll back`
+              : `production${ctx.env[ERP_ENV_VAR] ? "" : ` (${ERP_ENV_VAR} not set)`} — writes are real`,
+          hint:
+            mode === "development"
+              ? "Set ERP_ENV=production (or pass { dryRun: false }) to write for real"
+              : undefined,
+        });
+      } catch (error) {
+        checks.push({
+          name: "mode",
+          status: "fail",
+          detail: (error as Error).message,
+          hint: `${ERP_ENV_VAR} takes "production" or "development"`,
+        });
+      }
+
       let client: ErpClient | undefined;
-      if (checks.every((check) => check.status === "ok")) {
+      if (canConnect) {
         try {
           client = await ctx.client();
           const permissions = await client.myPermissions();

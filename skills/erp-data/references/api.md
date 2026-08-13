@@ -7,7 +7,8 @@ Không có dependency runtime nào ngoài lodash.
 
 ```ts
 createMiniApp(config): Promise<ErpClient>
-// config: { baseUrl, apiKey?, accessToken?, workspaceId?, permissions?, fetch? }
+// config: { baseUrl, apiKey?, accessToken?, workspaceId?, permissions?,
+//           mode?, env?, fetch? }
 ```
 
 Cần `apiKey` (`erp_sk_…` service account, hoặc `erp_uk_…` user key) **hoặc**
@@ -22,10 +23,34 @@ hàm này.
 
 `fetch` truyền vào được → test không cần mạng.
 
+## Chế độ chạy (`ERP_ENV`)
+
+```ts
+type ErpMode = "production" | "development";
+resolveMode(env?): ErpMode        // đọc ERP_ENV; không đặt → "production"
+isDryRunMode(mode): boolean
+ERP_ENV_VAR                        // "ERP_ENV"
+```
+
+`ERP_ENV=development` (alias: `dev`, `dry-run`) làm **mọi lệnh ghi record** mặc
+định `dryRun: true`; `production` (alias `prod`, `live`) hoặc không đặt thì ghi
+thật. Giá trị lạ → ném lỗi, không đoán. `NODE_ENV` cố tình **không** được đọc.
+`config.mode` đè lên env; `config.env` chỉ định nơi đọc biến (tiện cho test).
+
+Server chạy đúng lệnh thật rồi rollback: sai vẫn lỗi y hệt, đúng thì không để
+lại record/link/event nào và `version` không tăng. **Id trả về từ dry-run create
+là id giả, chưa từng lưu.**
+
+Dry run chỉ có ở `create`, `createMany`, `update`, `updateWhere`. `delete`,
+`restore`, `createLink`, `deleteLink` ném `DryRunUnsupportedError` khi client
+đang ở development; đổi cấu trúc bảng thì luôn chạy thật.
+
 ## ErpClient
 
 | Method | Ghi chú |
 | --- | --- |
+| `mode` · `dryRun` | Chế độ hiện tại và ghi có phải dry run không (thuộc tính) |
+| `production()` · `development()` · `withMode(mode)` | Cùng credential, chế độ khác — cache riêng nên đọc lại object/field |
 | `objects(refresh?)` | `ObjectDto[]` — id, name, position (có cache) |
 | `object(nameOrId)` | `ObjectHandle`; resolve theo id → tên chính xác → tên không phân biệt hoa thường, cache theo cả hai khóa |
 | `hasObject(nameOrId)` | boolean, không ném lỗi |
@@ -57,15 +82,16 @@ Thuộc tính: `id`, `name`, `meta` (`ObjectDto`), `fields` (`FieldDto[]`).
 | `records()` | `RecordQuery` mới |
 | `get(id)` | `RecordDto` |
 | `getMany(ids, { chunkSize? })` | 1 request/200 id, giữ thứ tự đầu vào; id bị row scope chặn hoặc đã xóa thì vắng mặt (không lỗi) |
-| `create(data)` | Key theo tên hiển thị **hoặc** field key |
-| `createMany(rows, { chunkSize? })` | Bulk insert, tự chia lô ≤ 500; mỗi lô 1 transaction all-or-nothing |
-| `update(id, data, version?)` | Không truyền version thì `get` trước để lấy; lệch version → 409 |
-| `updateWhere(filters, data, { limit? })` | Bulk update theo filter (dùng key nội bộ) |
-| `delete(id, version?)` | Soft delete |
-| `restore(id, version)` | Khôi phục |
+| `create(data, { dryRun? })` | Key theo tên hiển thị **hoặc** field key |
+| `createMany(rows, { chunkSize?, dryRun? })` | Bulk insert, tự chia lô ≤ 500; mỗi lô 1 transaction all-or-nothing |
+| `update(id, data, version \| { version?, dryRun? })` | Không truyền version thì `get` trước để lấy; lệch version → 409 |
+| `updateWhere(filters, data, { limit?, dryRun? })` | Bulk update theo filter (dùng key nội bộ) |
+| `delete(id, version \| { version?, dryRun? })` | Soft delete — không dry run được |
+| `restore(id, version)` | Khôi phục — không dry run được |
 | `related(record, field)` | Record đã `preload` → `RecordDto[]` |
+| `linkedIds(record, field)` | Mảng id trong `data` của field `relation` (record phải lấy bằng query, không phải `get`) |
 | `rowFromRecord(record, by?)` | `RecordDto` → dòng phẳng; `by = "name"` (mặc định) hoặc `"key"` |
-| `listLinks` · `createLink` · `deleteLink` | Thao tác link tường minh của field `relation` |
+| `listLinks` · `createLink` · `deleteLink` | Sửa từng link — chỉ cần khi quan hệ > 100 id |
 | `addField` · `updateField` · `rename` | **Key admin** — sửa cấu trúc bảng |
 
 Field types: `text`, `long_text`, `number`, `currency`, `percent`, `checkbox`,
@@ -74,6 +100,29 @@ Field types: `text`, `long_text`, `number`, `currency`, `percent`, `checkbox`,
 
 `rowFromRecord` trả `id`, `version`, `createdAt`, `updatedAt` cộng mọi giá trị
 trong `data` + `computedData`, cột đặt theo tên hiển thị.
+
+### Field `relation` trong `data`
+
+Ghi như field thường, giá trị là **mảng record id** theo thứ tự muốn hiển thị —
+cùng transaction với cả dòng, không cần `createLink` sau đó.
+
+| Gửi | Nghĩa |
+| --- | --- |
+| không có key | link giữ nguyên |
+| `null` | **giống hệt không gửi key** — link giữ nguyên (khác field thường: ở đó `null` là xoá giá trị) |
+| `[a, b]` | link **đúng** a, b; link cũ khác biến mất |
+| `[]` | xoá sạch link của field đó |
+
+Tối đa `MAX_RELATION_IDS` = **100 id / field / record** (cả đọc lẫn ghi), 20 000
+link / request. Dài hơn 100 thì không sửa inline được — dùng
+`createLink`/`deleteLink`. SDK ném `RelationValueError` trước khi gọi mạng khi
+mảng quá 100, phần tử không phải id (ví dụ truyền nguyên `RecordDto`), hoặc giá
+trị không phải mảng. Một id sai (không tồn tại, sai bảng đích, tự link chính nó)
+làm hỏng **cả request**, kể cả bulk.
+
+Đọc: `POST /records/query` trả **mọi** relation field outgoing dưới dạng mảng id
+(rỗng nếu không có link); create/update chỉ trả những field vừa ghi; `get(id)`
+**không** trả relation.
 
 ## RecordQuery (chainable, có trạng thái)
 
@@ -91,7 +140,7 @@ await .fetch()                        // { records, nextCursor, hasMore, total? 
 await .fetchAll({ max? })             // tự đi hết cursor, mỗi trang 100
 await .first()                        // set limit(1)
 await .count()                        // set limit(1).withTotal()
-await .update(data, { limit? })       // bulk update mọi dòng khớp filter
+await .update(data, { limit?, dryRun? })  // bulk update mọi dòng khớp filter
 await .toFrame({ by?, max? })         // fetchAll + rowFromRecord → DataFrame
 ```
 
@@ -108,8 +157,11 @@ record chưa có giá trị (giống server).
 `FieldDto` của bảng khác trỏ về bảng này (1-n) — chiều tự suy ra, đọc kết quả
 bằng `handle.related(record, field)`.
 
-Bulk update: ≤ 5 000 dòng/lần, trả `{ matched, updated, hasMore }`; field
-`unique` không set được bằng bulk; computed field do worker tính lại.
+Bulk update: ≤ 5 000 dòng/lần, trả `{ matched, updated, hasMore, dryRun? }`;
+field `unique` không set được bằng bulk; computed field do worker tính lại. Patch
+áp cho **mọi** dòng khớp, nên relation trong patch ghi đè list của từng dòng —
+`{ "Chi tiết": [] }` gỡ link của tối đa 5 000 record trong một lệnh. Chạy
+`{ dryRun: true }` để lấy `matched` thật trước khi làm.
 
 ## DataFrame
 
@@ -178,6 +230,8 @@ cần endpoint SDK chưa bọc.
 | `UnknownObjectError` | `.object` |
 | `UnknownFieldError` | `.field`, `.objectName`, `.known` |
 | `FilterValueError` | `.field`, `.operator` |
+| `RelationValueError` | `.field`, `.reason` |
+| `DryRunUnsupportedError` | `.operation` |
 | `SchemaMismatchError` | `.missing`, `.conflicts` (`{ object, field?, type?, currentType? }`) |
 | `ErpApiError` | `.status`, `.trace`, `.details` |
 

@@ -10,7 +10,7 @@ workspace. Cần: Node 18+, một tài khoản ERP có quyền admin trong works
 ```bash
 mkdir hello-miniapp && cd hello-miniapp
 npm init -y
-npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz express
+npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz express
 ```
 
 SDK không nằm trên npm registry — nó là tarball trong GitHub Release, cài bằng
@@ -90,6 +90,12 @@ Local chưa có ENV do ERP inject, nên tự cấp một API key để dev:
 ERP_BASE_URL=http://localhost:8000 ERP_API_KEY=erp_sk_... PORT=4567 npm start
 # → mở http://localhost:4567
 ```
+
+Local đang đụng vào **dữ liệu thật** của workspace. Muốn thử luồng ghi mà không
+để lại gì, thêm `ERP_ENV=development`: mọi lệnh ghi record chạy y như thật rồi
+được rollback ([03 — Dữ liệu](03-du-lieu.md#chạy-thử-trước-khi-ghi-thật--dryrun-và-erp_env)).
+Không đặt biến này thì app ghi thật — kể cả khi `NODE_ENV=development`, vì SDK
+cố ý không đọc `NODE_ENV`.
 
 Nếu boot ném `MissingPermissionsError`: gắn IAM rule cấp các quyền còn thiếu
 cho service account (hoặc tạo SA với role admin khi dev cho nhanh — nhưng nhớ

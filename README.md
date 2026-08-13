@@ -18,10 +18,10 @@ attached to a [GitHub Release](https://github.com/Coconut-ERP/erp-sdk/releases) 
 install it by URL with any package manager:
 
 ```bash
-npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
-bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
-pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
-yarn add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
+npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz
+bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz
+pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz
+yarn add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz
 ```
 
 In a `package.json` dependency list that reads:
@@ -29,7 +29,7 @@ In a `package.json` dependency list that reads:
 ```json
 {
   "dependencies": {
-    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz"
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz"
   }
 }
 ```
@@ -47,7 +47,7 @@ npm install -g https://github.com/Coconut-ERP/erp-sdk/releases/download/latest/e
 Use that for a global CLI install or a throwaway script. **Do not put it in an
 app's `package.json`**: package managers cache and lock by URL, so a moving URL
 installs whatever was cached and stops being reproducible. Dependencies get the
-pinned `v0.3.1` URL above.
+pinned `v0.3.2` URL above.
 
 Installing straight from the repo also works, **but only with npm, pnpm or yarn**:
 
@@ -215,11 +215,44 @@ await invoices.update(created.id, { "Trạng thái": "approved" }, created.versi
 
 await invoices.delete(created.id);            // soft delete
 await invoices.restore(created.id, version);  // undo
+```
 
+A **relation field is written like any other field**, with the complete array of
+related record ids in the order they should appear — same request, same
+transaction as the rest of the row:
+
+```ts
+const order = await orders.create({
+  "Mã đơn": "DH-001",
+  "Chi tiết": [lineId1, lineId2],
+});
+```
+
+The value replaces the whole list, so the four cases are worth memorising:
+omitting the key leaves the links alone, `null` means the same thing (**not**
+"clear it" — the opposite of an ordinary field), `[a, b]` makes the record link
+exactly `a` and `b`, and `[]` removes every link. To add one link to a record
+that has three, send all four ids:
+
+```ts
+const current = orders.linkedIds(record, "Chi tiết"); // ids straight out of data
+await orders.update(record.id, { "Chi tiết": [...current, lineId3] });
+```
+
+`linkedIds` reads `data`, which carries relations on `records().…` queries but
+not on `get(id)`. One write names at most `MAX_RELATION_IDS` (100) ids per field
+per record — and a query returns at most 100 too, so a longer relation cannot be
+edited inline at all and needs the explicit link API:
+
+```ts
 await invoices.createLink(recordId, "Khách hàng", customerRecordId);
 await invoices.listLinks(recordId, "Khách hàng");
 await invoices.deleteLink(recordId, "Khách hàng", customerRecordId);
 ```
+
+A bad shape (a bare id, `RecordDto`s instead of ids, more than 100) throws
+`RelationValueError` before the request goes out; a bad id (missing, wrong
+target object, self-link) fails the entire request server-side, bulk included.
 
 ### Writing many records at once
 
@@ -251,11 +284,65 @@ rows collides with itself) though it can be cleared, and computed fields
 (`formula`/`lookup`/`rollup`) are left stale for the worker to recompute rather
 than evaluated inside the write.
 
+Each row of a bulk insert carries its own relation arrays, so an import links
+itself as it goes. A bulk **update** is the dangerous mirror of that: one patch
+applied to every match means `{ "Chi tiết": [] }` strips the links off up to
+5 000 records in a single call — worth a dry run (below) and a confirmation
+first.
+
+### Dry runs: rehearsing a write
+
+Every record write can be sent as a dry run. The backend runs the real
+statement — field validation, unique checks, version checks, relation ids,
+rules, computed fields — inside a transaction it then rolls back. A request that
+would fail fails identically, with the same status and message; a request that
+would succeed leaves nothing behind: no record, no link, no event, and `version`
+does not move.
+
+```ts
+const check = await invoices
+  .records()
+  .where("Trạng thái", "equals", "draft")
+  .update({ "Trạng thái": "overdue" }, { dryRun: true });
+// { matched: 128, updated: 128, hasMore: false, dryRun: true } — nothing written
+```
+
+Rather than threading that flag through a script, set the environment:
+**`ERP_ENV=development` makes every record write a dry run**, so the same code
+can be rehearsed and then run for real without editing a line.
+
+```bash
+ERP_ENV=development node import.mjs   # validates everything, writes nothing
+node import.mjs                        # ERP_ENV unset ⇒ production ⇒ real
+```
+
+```ts
+app.mode          // "production" | "development" — from ERP_ENV or config.mode
+app.dryRun        // whether writes default to a dry run
+app.production()  // same credentials, other mode (fresh caches)
+
+await invoices.create(row, { dryRun: false }); // real, even in development
+await invoices.create(row, { dryRun: true });  // rehearsal, even in production
+```
+
+`NODE_ENV` is deliberately ignored — a mini app in local development still
+usually means its writes — and an `ERP_ENV` value the SDK doesn't recognise
+throws instead of quietly falling back to production.
+
+Two things to hold on to. The **id a dry-run create returns is fake**: it was
+generated and never saved, so it must not be cached, navigated to, or used as a
+key. And dry runs only exist for the four record-write endpoints — `delete`,
+`restore`, `createLink` and `deleteLink` have none, so in development mode they
+throw `DryRunUnsupportedError` rather than deleting for real or pretending to;
+pass `{ dryRun: false }` when you mean it. Schema changes (`createObject`,
+`addField`) always run for real.
+
 ### Preloading relations (the 1-n problem)
 
-A relation lives in the link table, not in a record's `data`, so showing a list
-with its related records used to mean one `listLinks` call per row. `preload`
-resolves them for the whole page in a fixed number of queries instead.
+A record query returns each outgoing relation as an array of ids, which is
+enough to fetch the other side with `getMany` but still means a second round
+trip. `preload` resolves the related **records** for the whole page in a fixed
+number of queries instead.
 
 ```ts
 const invoices = await app.object("Hóa đơn bán hàng");
@@ -514,6 +601,8 @@ source of truth; the SDK check is a fast preflight.
 | `SchemaMismatchError` | `assertSchema` found the workspace missing (or retyping) something `schema.json` declares (`.missing`, `.conflicts`) |
 | `UnknownObjectError` | `app.object(name)` doesn't match any object in the workspace |
 | `UnknownFieldError` | a filter/sort/data key doesn't match any field (`.known` lists fields) |
+| `RelationValueError` | a relation was written as something other than ≤ 100 record ids (`.field`, `.reason`) |
+| `DryRunUnsupportedError` | a delete/restore/link call while the client is in development mode (`.operation`) |
 
 ## Issuing a key for a mini app
 

@@ -30,6 +30,11 @@ hợp lệ khi:
 
 Cộng thêm các biến tự khai trong `env` lúc cài/sửa app (`PUT /mini-apps/:id`).
 
+⚠️ Trong đó có `ERP_ENV`: **đừng khai `ERP_ENV=development` cho app đã cài**.
+Biến đó biến mọi lệnh ghi record của SDK thành dry run — app chạy không lỗi
+nhưng không có gì được lưu, một kiểu hỏng rất khó nhìn ra. Không khai gì là
+đúng ([03 — Dữ liệu](03-du-lieu.md#chạy-thử-trước-khi-ghi-thật--dryrun-và-erp_env)).
+
 ## Ba nguồn source
 
 | Nguồn | Cách cài | Ship version mới |

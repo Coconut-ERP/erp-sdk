@@ -176,8 +176,31 @@ describe("doctor", () => {
     expect(code).toBe(1);
     const report = cli.json();
     expect(report.ok).toBe(false);
-    expect(report.checks.map((c: { name: string }) => c.name)).toEqual(["base-url", "credentials"]);
+    expect(report.checks.map((c: { name: string }) => c.name)).toEqual([
+      "base-url",
+      "credentials",
+      "mode",
+    ]);
     expect(report.checks[0].hint).toContain("ERP_BASE_URL");
+  });
+
+  it("reports the write mode, and fails on an ERP_ENV it does not know", async () => {
+    const cli = harness({
+      "GET /api/v1/iam/me/permissions": [],
+      "GET /api/v1/objects": OBJECTS,
+    });
+    await cli.run(["doctor"], { ERP_ENV: "development" });
+    const dev = (cli.json().checks as { name: string; detail: string }[]).find(
+      (check) => check.name === "mode",
+    );
+    expect(dev?.detail).toContain("dry runs");
+
+    const bad = harness({});
+    expect(await bad.run(["doctor"], { ERP_ENV: "prodution" })).toBe(1);
+    const check = (bad.json().checks as { name: string; status: string }[]).find(
+      (c) => c.name === "mode",
+    );
+    expect(check?.status).toBe("fail");
   });
 
   it("checks required permissions", async () => {

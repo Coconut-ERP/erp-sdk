@@ -1,8 +1,10 @@
 import { createMiniApp, type ErpClient } from "../client";
 import {
+  DryRunUnsupportedError,
   ErpApiError,
   FilterValueError,
   MissingPermissionsError,
+  RelationValueError,
   SchemaMismatchError,
   UnknownFieldError,
   UnknownObjectError,
@@ -61,6 +63,22 @@ function serializeError(error: unknown): Record<string, unknown> {
       field: error.field,
       operator: error.operator,
       hint: "in/not_in take an array of 1..200 values: .whereIn(field, [a, b])",
+    };
+  }
+  if (error instanceof RelationValueError) {
+    return {
+      type: "RelationValueError",
+      message: error.message,
+      field: error.field,
+      hint: "Write the whole list: data[\"Chi tiết\"] = [id1, id2]; null keeps it, [] clears it",
+    };
+  }
+  if (error instanceof DryRunUnsupportedError) {
+    return {
+      type: "DryRunUnsupportedError",
+      message: error.message,
+      operation: error.operation,
+      hint: "ERP_ENV=development makes writes dry runs; deletes have no dry run",
     };
   }
   if (error instanceof UnknownFieldError) {
@@ -233,6 +251,8 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         apiKey,
         accessToken,
         workspaceId: flagString(args, "workspace") ?? env.ERP_WORKSPACE_ID,
+        // So ERP_ENV out of --env-file counts the same as a real env var.
+        env,
         fetch: io.fetch,
       });
       return cached;

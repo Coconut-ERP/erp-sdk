@@ -17,6 +17,8 @@ interface MiniAppConfig {
   workspaceId?: string;               // cần khi dùng accessToken và user không có default workspace;
                                       // bị bỏ qua khi dùng apiKey (key tự pin workspace)
   permissions?: RequiredPermission[]; // quyền app cần — verify ngay, thiếu → MissingPermissionsError
+  mode?: "production" | "development";// đè lên ERP_ENV; development = mọi lệnh ghi record là dry run
+  env?: Record<string, string | undefined>; // nơi đọc ERP_ENV (mặc định process.env)
   fetch?: typeof fetch;               // custom fetch (test/proxy)
 }
 ```
@@ -25,6 +27,20 @@ Throw nếu không có `apiKey` lẫn `accessToken`. SDK không kiểm tra prefi
 key — key sai/hết hạn sẽ lộ ra ở request đầu tiên dưới dạng `ErpApiError` 401.
 (`API_KEY_PREFIX = "erp_sk_"` vẫn export để tham chiếu, không còn dùng để
 validate.)
+
+## Chế độ chạy — `ERP_ENV`
+
+```ts
+type ErpMode = "production" | "development";
+function resolveMode(env?: Record<string, string | undefined>): ErpMode;
+function isDryRunMode(mode: ErpMode): boolean;
+const ERP_ENV_VAR = "ERP_ENV";
+```
+
+Không đặt `ERP_ENV` → `production`, ghi thật. `development` (alias `dev`,
+`dry-run`) → **mọi lệnh ghi record mặc định `dryRun: true`**: server chạy đúng
+câu lệnh thật rồi rollback. Giá trị lạ → throw, không đoán. `NODE_ENV` cố ý
+không được đọc. Chi tiết và các bẫy: [03 — Dữ liệu](03-du-lieu.md).
 
 ## ErpClient
 
@@ -46,6 +62,9 @@ validate.)
 | `can(resource, action)` | `boolean` — deny thắng allow, `*` wildcard |
 | `assertPermissions(extra?)` | Verify quyền khai lúc tạo + `extra`; thiếu → `MissingPermissionsError` |
 | `invalidate()` | Xoá mọi cache (permissions, objects, me, handles) |
+| `mode` | `"production" \| "development"` — từ `config.mode` hoặc `ERP_ENV` (thuộc tính) |
+| `dryRun` | `boolean` — ghi mặc định có phải dry run không (thuộc tính) |
+| `withMode(mode)` · `production()` · `development()` | Cùng credential, chế độ khác. Cache riêng nên đọc lại object/field |
 | `http` | `Http` — gọi endpoint tuỳ ý: `app.http.request<T>("GET", "/users/me")` |
 
 ## ObjectHandle
@@ -67,25 +86,29 @@ Thuộc tính: `id`, `name`, `meta: ObjectDto`, `fields: FieldDto[]`.
 
 | Method | Mô tả |
 | --- | --- |
-| `create(data)` | Tạo record → `RecordDto` |
-| `createMany(rows, { chunkSize? })` | Bulk insert → `{ created, records }`. Một transaction, all-or-nothing; batch > 500 tự chia |
+| `create(data, { dryRun? })` | Tạo record → `RecordDto`. Field `relation` nhận **mảng record id** |
+| `createMany(rows, { chunkSize?, dryRun? })` | Bulk insert → `{ created, records, dryRun? }`. Một transaction, all-or-nothing; batch > 500 tự chia |
 | `get(recordId)` | Lấy một record |
 | `getMany(ids, { chunkSize? })` | Lấy nhiều record theo id — mỗi 200 id một request (`id in`), khử trùng lặp, giữ đúng thứ tự đã hỏi; id không đọc được thì vắng mặt |
-| `update(recordId, data, version?)` | Sửa; không truyền `version` thì tự GET lấy (thêm 1 request). Version lệch → 409 |
-| `updateWhere(filters, data, { limit? })` | Bulk update theo filter thô → `{ matched, updated, hasMore }`. Thường dùng dạng `records().where(...).update(...)` |
-| `delete(recordId, version?)` | Soft delete |
-| `restore(recordId, version)` | Khôi phục |
+| `update(recordId, data, version \| { version?, dryRun? })` | Sửa; không truyền `version` thì tự GET lấy (thêm 1 request). Version lệch → 409 |
+| `updateWhere(filters, data, { limit?, dryRun? })` | Bulk update theo filter thô → `{ matched, updated, hasMore, dryRun? }`. Thường dùng dạng `records().where(...).update(...)` |
+| `delete(recordId, version \| { version?, dryRun? })` | Soft delete — **không dry run được** |
+| `restore(recordId, version)` | Khôi phục — **không dry run được** |
 | `records()` | Mở `RecordQuery` |
 | `related(record, field)` | Record đã `preload` → `RecordDto[]`; `field` là tên/key của bảng này, hoặc `FieldDto` của bảng khác |
+| `linkedIds(record, field)` | Mảng id trong `data` của một field `relation` (record phải lấy bằng query, không phải `get`) |
 | `rowFromRecord(record, by = "name")` | Record → object phẳng theo tên/key field, kèm `id`, `version`, `createdAt`, `updatedAt`, merge `computedData` |
 
-**Links (field `relation`):**
+**Links (field `relation`):** cách chính là ghi mảng id thẳng trong `data` của
+`create`/`update` (thay cả list; `null` giữ nguyên, `[]` gỡ hết; tối đa
+`MAX_RELATION_IDS` = 100 id/field/record). Ba hàm dưới đây dành cho quan hệ dài
+hơn 100 — sửa từng link mà không phải khai lại cả list:
 
 | Method | Mô tả |
 | --- | --- |
-| `createLink(recordId, field, targetRecordId, position = 0)` | Nối record |
+| `createLink(recordId, field, targetRecordId, position = 0, { dryRun? })` | Nối record — không dry run được |
 | `listLinks(recordId, field, direction = "outgoing")` | Liệt kê (`"outgoing"` \| `"incoming"`) |
-| `deleteLink(recordId, field, targetRecordId)` | Gỡ nối |
+| `deleteLink(recordId, field, targetRecordId, { dryRun? })` | Gỡ nối — không dry run được |
 
 ## schema.json helpers
 
@@ -143,7 +166,7 @@ q.where(field, operator, value?)   // AND; tối đa 20 (server)
 | `fetchAll({ max? })` | `RecordDto[]` — tự lặp cursor (100/trang) đến hết hoặc `max` |
 | `first()` | `RecordDto \| undefined` |
 | `count()` | `number` (dùng `withTotal` ngầm) |
-| `update(data, { limit? })` | Bulk update mọi dòng khớp filter → `{ matched, updated, hasMore }`; `null` xoá field, tối đa 5 000 dòng/lần |
+| `update(data, { limit?, dryRun? })` | Bulk update mọi dòng khớp filter → `{ matched, updated, hasMore, dryRun? }`; `null` xoá field, tối đa 5 000 dòng/lần |
 | `toFrame({ by?, max? })` | `DataFrame<Row>` — cột theo `"name"` (mặc định) hoặc `"key"` |
 | `build()` | `QueryRecordsRequest` thô (tự gọi API) |
 
@@ -206,6 +229,8 @@ dùng độc lập được.
 | `UnknownObjectError` | `object(name)` không khớp | `object` |
 | `UnknownFieldError` | Tên field không khớp | `field`, `objectName`, `known: string[]` |
 | `FilterValueError` | `in`/`not_in` nhận giá trị server sẽ từ chối (không phải mảng, rỗng, > 200) | `field`, `operator`, `reason` |
+| `RelationValueError` | Field `relation` nhận thứ không phải mảng ≤ 100 record id | `field`, `reason` |
+| `DryRunUnsupportedError` | Gọi `delete`/`restore`/`createLink`/`deleteLink` khi client đang ở chế độ development | `operation` |
 
 Mã lỗi hay gặp trong `ErpApiError.status`: 401 (key/token/initData sai hoặc
 hết hạn), 403 (thiếu permission RBAC), 404 (không tồn tại *hoặc* bị ACL ẩn),
@@ -234,7 +259,8 @@ string tuỳ ý) · `Action` (`"create" | "read" | "update" | "delete" | "manage
 `FieldDto` · `RecordDto` · `RecordPage` · `RecordFilter` · `RecordSort` ·
 `RecordPreload` · `QueryRecordsRequest` · `BulkCreateRecordsRequest` ·
 `BulkCreateRecordsResult` · `BulkUpdateRecordsRequest` ·
-`BulkUpdateRecordsResult` · `LinkDirection` · `UserDto` · `MiniAppInitData` ·
+`BulkUpdateRecordsResult` · `CreateRecordRequest` · `UpdateRecordRequest` ·
+`ErpMode` · `WriteOptions` · `VersionedWriteOptions` · `LinkDirection` · `UserDto` · `MiniAppInitData` ·
 `MiniAppSessionDto` · `EnsureFieldSpec` · `Row` · `AggSpec` · `MiniAppSchema` ·
 `SchemaObjectSpec` · `SchemaFieldSpec` · `SchemaStatus` · `SchemaAction` ·
 `SchemaObjectPlan` · `SchemaFieldPlan` · `MiniAppSchemaPlan` (body của

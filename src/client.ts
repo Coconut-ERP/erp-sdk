@@ -6,6 +6,7 @@ import {
   UnknownObjectError,
 } from "./errors";
 import { FetchHttp, type Http } from "./http";
+import { type ErpMode, isDryRunMode, resolveMode } from "./mode";
 import { ObjectHandle } from "./objects";
 import { isAllowed, missingPermissions } from "./permissions";
 import {
@@ -35,6 +36,13 @@ export interface MiniAppConfig {
   workspaceId?: string;
   /** Permissions the mini app needs. Verified against the key on connect. */
   permissions?: RequiredPermission[];
+  /**
+   * Overrides the environment mode. Left out, `ERP_ENV` decides and anything
+   * but `development` means `production` — see {@link resolveMode}.
+   */
+  mode?: ErpMode;
+  /** Where to read `ERP_ENV` from. Defaults to `process.env`; handy in tests. */
+  env?: Record<string, string | undefined>;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -44,11 +52,52 @@ export class ErpClient {
   private meCache?: UserDto;
   private readonly handleCache = new Map<string, ObjectHandle>();
 
+  /**
+   * `production` or `development`, from `config.mode` or `ERP_ENV`. In
+   * `development` every record write defaults to a server-side dry run.
+   */
+  readonly mode: ErpMode;
+
   constructor(
     readonly http: Http,
     private readonly required: RequiredPermission[] = [],
     private readonly config?: MiniAppConfig,
-  ) {}
+    modeOverride?: ErpMode,
+  ) {
+    this.mode = modeOverride ?? config?.mode ?? resolveMode(config?.env);
+  }
+
+  /** Whether record writes through this client are dry runs by default. */
+  get dryRun(): boolean {
+    return isDryRunMode(this.mode);
+  }
+
+  /**
+   * The same credentials in the other mode — for a script that rehearses its
+   * writes and then commits them without being restarted:
+   *
+   * ```ts
+   * const plan = await erp.object("Đơn hàng");              // ERP_ENV=development
+   * await plan.createMany(rows);                            // rolled back
+   * await (await erp.production().object("Đơn hàng")).createMany(rows);
+   * ```
+   *
+   * Caches are not shared, so the new client re-reads objects and fields.
+   */
+  withMode(mode: ErpMode): ErpClient {
+    if (mode === this.mode) return this;
+    return new ErpClient(this.http, this.required, this.config, mode);
+  }
+
+  /** `withMode("production")` — writes land for real. */
+  production(): ErpClient {
+    return this.withMode("production");
+  }
+
+  /** `withMode("development")` — writes are validated and rolled back. */
+  development(): ErpClient {
+    return this.withMode("development");
+  }
 
   async me(refresh = false): Promise<UserDto> {
     if (!this.meCache || refresh) {
@@ -72,12 +121,17 @@ export class ErpClient {
       workspaceId: workspaceId ?? this.config.workspaceId,
       fetch: this.config.fetch,
     });
-    return new ErpClient(http, [], {
-      ...this.config,
-      apiKey: undefined,
-      accessToken,
-      workspaceId: workspaceId ?? this.config.workspaceId,
-    });
+    return new ErpClient(
+      http,
+      [],
+      {
+        ...this.config,
+        apiKey: undefined,
+        accessToken,
+        workspaceId: workspaceId ?? this.config.workspaceId,
+      },
+      this.mode,
+    );
   }
 
   async myPermissions(refresh = false): Promise<PermissionDto[]> {
@@ -123,7 +177,9 @@ export class ErpClient {
       "GET",
       `/objects/${meta.id}/fields`,
     );
-    const handle = new ObjectHandle(this.http, meta, fields ?? []);
+    const handle = new ObjectHandle(this.http, meta, fields ?? [], {
+      dryRun: this.dryRun,
+    });
     this.handleCache.set(nameOrId, handle);
     this.handleCache.set(meta.id, handle);
     return handle;
@@ -209,6 +265,9 @@ export class ErpClient {
    * Creates an object. Mini apps cannot do this any more (their service
    * account is a `member`) — it is for tooling run with an admin key, such as
    * preparing a workspace before installing an app.
+   *
+   * Structure changes have no dry run on the server, so this writes for real
+   * in `development` mode too. Dry runs cover record writes only.
    */
   async createObject(
     name: string,
@@ -218,7 +277,7 @@ export class ErpClient {
       body: { name, position: options.position ?? 0 },
     });
     this.objectsCache = undefined;
-    const handle = new ObjectHandle(this.http, meta, []);
+    const handle = new ObjectHandle(this.http, meta, [], { dryRun: this.dryRun });
     this.handleCache.set(meta.id, handle);
     this.handleCache.set(meta.name, handle);
     return handle;

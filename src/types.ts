@@ -80,6 +80,11 @@ export interface FieldDto {
 export interface RecordDto {
   id: string;
   objectId: string;
+  /**
+   * Field key → value. A `relation` field appears as an array of record ids —
+   * always on `POST /records/query`, and on a create/update response for the
+   * relation fields that request wrote.
+   */
   data: Record<string, unknown>;
   computedData: Record<string, unknown> | null;
   computeStatus: string;
@@ -92,6 +97,8 @@ export interface RecordDto {
   createdAt: string;
   updatedAt: string;
   related?: Record<string, RecordDto[]>;
+  /** Present and `true` only when the write was a dry run — nothing was saved. */
+  dryRun?: boolean;
 }
 
 export interface RecordPage {
@@ -151,25 +158,44 @@ export interface QueryRecordsRequest {
   includeTotal?: boolean;
 }
 
+export interface CreateRecordRequest {
+  data: Record<string, unknown>;
+  /** Validate and roll back instead of saving. Turns the 201 into a 200. */
+  dryRun?: boolean;
+}
+
+export interface UpdateRecordRequest {
+  data: Record<string, unknown>;
+  version: number;
+  dryRun?: boolean;
+}
+
 export interface BulkCreateRecordsRequest {
   records: Array<{ data: Record<string, unknown> }>;
+  /** Request-level only — a `dryRun` inside a `records[]` entry is ignored. */
+  dryRun?: boolean;
 }
 
 export interface BulkCreateRecordsResult {
   created: number;
   records: RecordDto[];
+  /** `true` when nothing was saved; the returned ids were never persisted. */
+  dryRun?: boolean;
 }
 
 export interface BulkUpdateRecordsRequest {
   filters?: RecordFilter[];
   data: Record<string, unknown>;
   limit?: number;
+  dryRun?: boolean;
 }
 
 export interface BulkUpdateRecordsResult {
   matched: number;
   updated: number;
   hasMore: boolean;
+  /** `true` when the transaction was rolled back — `matched` is still real. */
+  dryRun?: boolean;
 }
 
 export interface UserDto {

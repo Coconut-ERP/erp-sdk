@@ -26,7 +26,7 @@ pi). CLI **không làm CRUD dữ liệu** — đọc/ghi/phân tích đều vi�
 
 | Tài liệu | Nội dung |
 | --- | --- |
-| [03 — Làm việc với dữ liệu](03-du-lieu.md) | Object, field, record: CRUD, query (filter/sort/phân trang), link giữa các bảng, khai báo schema (`schema.json` + `assertSchema`) |
+| [03 — Làm việc với dữ liệu](03-du-lieu.md) | Object, field, record: CRUD, query (filter/sort/phân trang), link giữa các bảng (mảng id ghi thẳng trong `data`), chạy thử bằng `dryRun`/`ERP_ENV`, khai báo schema (`schema.json` + `assertSchema`) |
 | [04 — DataFrame](04-dataframe.md) | Phân tích dữ liệu kiểu pandas: `groupBy`, `agg`, `leftJoin`, `sum/avg`… |
 | [05 — Danh tính người dùng (initData)](05-danh-tinh-nguoi-dung.md) | Biết ai đang dùng app: luồng initData kiểu Telegram, `session()`, bridge với app chủ, 2 mô hình quyền |
 | [06 — Phân quyền](06-phan-quyen.md) | Service account, khai báo permission, `can()`/`assertPermissions()`, các tầng IAM |
@@ -72,9 +72,9 @@ SDK **không publish lên npm**. Mỗi bản phát hành là một tarball đã 
 — cài bằng URL, package manager nào cũng được:
 
 ```bash
-npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
-bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
-pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz
+npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz
+bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz
+pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz
 ```
 
 Trong `package.json` của mini app:
@@ -82,7 +82,7 @@ Trong `package.json` của mini app:
 ```json
 {
   "dependencies": {
-    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.1/erp-sdk.tgz"
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz"
   }
 }
 ```
@@ -100,7 +100,7 @@ npm install -g https://github.com/Coconut-ERP/erp-sdk/releases/download/latest/e
 Dùng URL đó khi cài CLI global hoặc script dùng một lần. **Đừng đưa vào
 `package.json` của app**: package manager khoá lockfile theo URL, URL chạy được
 mãi nghĩa là cài lại có thể ra bản khác (hoặc lấy từ cache) — dependency thì
-ghim URL `v0.3.1` ở trên.
+ghim URL `v0.3.2` ở trên.
 
 Cài thẳng từ repo cũng được, **nhưng chỉ với npm, pnpm hoặc yarn**:
 

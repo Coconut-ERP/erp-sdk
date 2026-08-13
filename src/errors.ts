@@ -86,6 +86,41 @@ export class FilterValueError extends Error {
   }
 }
 
+/**
+ * A relation value the server would refuse anyway. A relation field is written
+ * as **the whole list** of related record ids; `null` (or omitting the key)
+ * leaves the existing links alone and `[]` clears them.
+ */
+export class RelationValueError extends Error {
+  constructor(
+    readonly field: string,
+    readonly reason: string,
+  ) {
+    super(
+      `Relation field "${field}": ${reason}. A relation takes the complete ` +
+        "array of related record ids (at most 100); null or an absent key " +
+        "leaves its links unchanged, [] removes them all.",
+    );
+    this.name = "RelationValueError";
+  }
+}
+
+/**
+ * A mutation the backend has no dry run for, attempted while the client is in
+ * dry-run mode (`ERP_ENV=development`). Refusing is the point: pretending to
+ * delete and deleting for real are both wrong answers here.
+ */
+export class DryRunUnsupportedError extends Error {
+  constructor(readonly operation: string) {
+    super(
+      `${operation} cannot be dry-run — the server has no dryRun for it, and ` +
+        "this client is in development mode. Pass { dryRun: false } to run it " +
+        `for real, or set ERP_ENV=production.`,
+    );
+    this.name = "DryRunUnsupportedError";
+  }
+}
+
 export class UnknownFieldError extends Error {
   constructor(
     readonly field: string,

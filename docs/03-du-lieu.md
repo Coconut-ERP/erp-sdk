@@ -306,8 +306,102 @@ Những điều cần nhớ:
 - **Rule** vẫn chạy cho từng record như khi ghi lẻ. Bảng không có rule nào thì
   chỉ tốn đúng một câu đếm cho cả batch.
 - Row scope vẫn áp: bulk update chỉ chạm được những dòng actor có quyền sửa.
+- Mỗi dòng của bulk insert mang link của riêng nó (xem phần `relation` bên
+  dưới). Ngược lại, bulk **update** áp một patch cho mọi dòng khớp, nên
+  `{ "Chi tiết": [] }` gỡ link của tối đa 5 000 record trong một lệnh — chạy
+  `dryRun` xem `matched` trước khi bấm.
+
+## Chạy thử trước khi ghi thật — `dryRun` và `ERP_ENV`
+
+Mọi lệnh ghi record nhận `dryRun`. Backend chạy **đúng câu lệnh thật** —
+validate field, kiểm unique, kiểm version, kiểm id relation, chạy rule, tính
+computed field — rồi **rollback** transaction. Request sai thì hỏng y hệt, cùng
+status cùng message; request đúng thì không để lại dấu vết nào: không record,
+không link, không event, `version` không tăng.
+
+```ts
+const thu = await invoices
+  .records()
+  .where("Trạng thái", "equals", "draft")
+  .update({ "Trạng thái": "overdue" }, { dryRun: true });
+// { matched: 128, updated: 128, hasMore: false, dryRun: true } — chưa ghi gì
+```
+
+Thay vì rải cờ đó khắp script, đặt biến môi trường: **`ERP_ENV=development` biến
+mọi lệnh ghi record thành dry run**, nên cùng một đoạn code chạy thử rồi chạy
+thật mà không sửa dòng nào.
+
+```bash
+ERP_ENV=development node import.mjs   # validate đủ, không ghi
+node import.mjs                        # không đặt ERP_ENV ⇒ production ⇒ ghi thật
+```
+
+```ts
+app.mode          // "production" | "development" — từ ERP_ENV hoặc config.mode
+app.dryRun        // ghi mặc định có phải dry run không
+app.production()  // cùng credential, chế độ kia (cache riêng, đọc lại schema)
+
+await invoices.create(row, { dryRun: false });  // ghi thật dù đang development
+await invoices.create(row, { dryRun: true });   // thử dù đang production
+await invoices.update(id, patch, { version: 3, dryRun: true });
+```
+
+`NODE_ENV` **không** được đọc — app chạy local vẫn thường phải ghi thật, để
+`NODE_ENV` quyết định thì mọi lệnh ghi lúc dev sẽ im lặng biến mất. Giá trị
+`ERP_ENV` lạ thì SDK ném lỗi chứ không đoán về `production`.
+
+Hai điều phải nhớ:
+
+- **`id` trả về từ dry-run create là id giả** — sinh ra rồi vứt, chưa bao giờ
+  được lưu. Đừng cache, đừng điều hướng theo nó, đừng dùng làm khoá cho bước sau.
+- Dry run chỉ có ở 4 endpoint ghi record. `delete`, `restore`, `createLink`,
+  `deleteLink` **không có** — ở chế độ development chúng ném
+  `DryRunUnsupportedError` (không xoá lén, cũng không giả vờ đã xoá); muốn xoá
+  thật thì `{ dryRun: false }`. Đổi cấu trúc bảng (`createObject`, `addField`)
+  cũng luôn chạy thật.
+
+Kiểm tra đang ở chế độ nào: `npx erp doctor` (check `mode`) hoặc `npx erp whoami`.
 
 ## Link giữa các bảng (field `relation`)
+
+Field `relation` ghi **thẳng trong `data`** như mọi field khác, giá trị là mảng
+record id của bên kia theo đúng thứ tự muốn hiển thị. Cùng một request, cùng một
+transaction với phần còn lại của dòng:
+
+```ts
+await orders.create({
+  "Mã đơn": "DH-001",
+  "Chi tiết": [lineId1, lineId2],
+});
+```
+
+**Ngữ nghĩa là thay cả list**, không phải thêm/bớt — và `null` khác `[]`:
+
+| Gửi gì | Kết quả |
+| --- | --- |
+| không có key trong `data` | link giữ nguyên |
+| `"Chi tiết": null` | **giống hệt không gửi key** — link giữ nguyên |
+| `"Chi tiết": [a, b]` | record link **đúng** a, b; link cũ khác biến mất |
+| `"Chi tiết": []` | xoá sạch link của field đó |
+
+Bất đối xứng đó là cố ý: hai giá trị mà form hay lỡ gửi ra nhất là `null` và
+`[]`, nên cái an toàn được chọn làm nghĩa của `null`. Với field thường thì
+ngược lại — `null` là *xoá giá trị*. Muốn thêm một link vào record đang có ba
+link thì gửi cả bốn id:
+
+```ts
+const rec = await orders.records().whereIds([id]).first();
+const dangCo = orders.linkedIds(rec, "Chi tiết");   // mảng id đọc từ data
+await orders.update(id, { "Chi tiết": [...dangCo, lineId3] });
+```
+
+`linkedIds` đọc từ `data`: query (`POST /records/query`) trả **mọi** relation
+outgoing dưới dạng mảng id, create/update trả những field vừa ghi, còn
+`get(id)` **không** trả relation.
+
+Trần là **100 id / field / record**, cho cả đọc lẫn ghi (và 20 000 link cho cả
+request). Quan hệ dài hơn 100 không sửa inline được — đọc không đủ id để khai
+lại cả list — nên phải dùng API link từng cái:
 
 ```ts
 await invoices.createLink(invoiceId, "Khách hàng", customerRecordId);
@@ -316,12 +410,20 @@ await invoices.listLinks(invoiceId, "Khách hàng", "incoming");
 await invoices.deleteLink(invoiceId, "Khách hàng", customerRecordId);
 ```
 
+SDK ném `RelationValueError` **trước khi gọi mạng** khi giá trị không phải mảng,
+quá 100 phần tử, hoặc phần tử không phải id (ví dụ truyền nguyên `RecordDto` —
+map sang `r.id` trước). Id sai (không tồn tại, không thuộc bảng đích, tự link
+chính nó) thì server từ chối **cả request**, kể cả bulk.
+
+Chỉ ghi được relation **của chính bảng đang ghi** (chiều outgoing). Chiều
+incoming của 1-n không phải field của bảng này → `UnknownFieldError` / 400; muốn
+sửa thì ghi ở phía bảng sở hữu field.
+
 ### `preload` — tránh vấn đề 1-n
 
-Quan hệ nằm ở bảng link chứ không nằm trong `data` của record, nên hiển thị
-một danh sách kèm dòng con trước đây phải gọi `listLinks` một lần cho **mỗi**
-record. `preload` giải quyết cả trang trong số câu query cố định — 10 record
-hay 1 000 record thì số query như nhau.
+Query trả về mảng **id** của quan hệ, muốn có dữ liệu của bên kia thì vẫn phải
+đi thêm một lượt (`getMany`). `preload` giải quyết cả trang trong số câu query
+cố định — 10 record hay 1 000 record thì số query như nhau.
 
 ```ts
 const invoices = await app.object("Hóa đơn bán hàng");
