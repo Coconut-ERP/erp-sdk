@@ -284,6 +284,27 @@ describe("ensureObject", () => {
     expect(handle.id).toBe("obj-1");
     expect(http.calls.every((c) => c.method === "GET")).toBe(true);
   });
+
+  it("answers hasObject/hasField without throwing, by name or key", async () => {
+    const http = new FakeHttp({
+      "GET /objects": [[meta]],
+      "GET /objects/obj-1/fields": [fields],
+    });
+    const client = new ErpClient(http);
+
+    expect(await client.hasObject("Hóa đơn bán hàng")).toBe(true);
+    expect(await client.hasObject("hóa đơn bán hàng")).toBe(true);
+    expect(await client.hasObject("obj-1")).toBe(true);
+    expect(await client.hasObject("Không có")).toBe(false);
+
+    const handle = await client.object("obj-1");
+    expect(handle.hasField("Trạng thái")).toBe(true);
+    expect(handle.hasField("trạng thái")).toBe(true);
+    expect(handle.hasField("status")).toBe(true); // internal key
+    expect(handle.hasField("Không có")).toBe(false);
+    // The throwing sibling still throws — hasField is not a silent alias.
+    expect(() => handle.field("Không có")).toThrow();
+  });
 });
 
 describe("ErpClient", () => {

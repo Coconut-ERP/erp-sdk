@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { ErpClient } from "../src/client";
 import {
+  assertQueryParams,
   assertSelectStatement,
   DashboardsApi,
+  MAX_QUERY_PARAMS,
   QueryResult,
   quoteIdentifier,
 } from "../src/dashboards";
@@ -85,6 +87,19 @@ describe("SQL guards", () => {
     expect(quoteIdentifier("Đơn hàng")).toBe('"Đơn hàng"');
     expect(quoteIdentifier('a"b')).toBe('"a""b"');
   });
+
+  it("refuses more declared params than the server stores", () => {
+    const params = Array.from({ length: MAX_QUERY_PARAMS + 1 }, (_, i) => ({
+      name: `p${i}`,
+      type: "text" as const,
+    }));
+    expect(() => assertQueryParams(params)).toThrow(SqlQueryError);
+    expect(() => assertQueryParams(params)).toThrow(/at most 20/);
+    expect(() =>
+      assertQueryParams(params.slice(0, MAX_QUERY_PARAMS)),
+    ).not.toThrow();
+    expect(() => assertQueryParams([])).not.toThrow();
+  });
 });
 
 describe("ad-hoc SQL", () => {
@@ -119,6 +134,18 @@ describe("ad-hoc SQL", () => {
     const http = new FakeHttp({});
     await expect(
       new DashboardsApi(http).sql('DROP TABLE "PO"'),
+    ).rejects.toBeInstanceOf(SqlQueryError);
+    expect(http.calls).toHaveLength(0);
+  });
+
+  it("never sends more params than the endpoint accepts", async () => {
+    const http = new FakeHttp({});
+    const params = Array.from({ length: MAX_QUERY_PARAMS + 1 }, (_, i) => ({
+      name: `p${i}`,
+      type: "text" as const,
+    }));
+    await expect(
+      new DashboardsApi(http).sql("SELECT 1", { params }),
     ).rejects.toBeInstanceOf(SqlQueryError);
     expect(http.calls).toHaveLength(0);
   });
@@ -214,6 +241,21 @@ describe("DashboardHandle", () => {
       dash.addQuery({ name: "x", sql: 'UPDATE "PO" SET a = 1' }),
     ).rejects.toBeInstanceOf(SqlQueryError);
     expect(http.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
+  it("checks a saved query's param count too, on create and on update", async () => {
+    const { http, dash } = await handle();
+    const params = Array.from({ length: MAX_QUERY_PARAMS + 1 }, (_, i) => ({
+      name: `p${i}`,
+      type: "text" as const,
+    }));
+    await expect(
+      dash.addQuery({ name: "x", sql: "SELECT 1", params }),
+    ).rejects.toBeInstanceOf(SqlQueryError);
+    await expect(
+      dash.updateQuery("Sản lượng theo chuyền", { params }),
+    ).rejects.toBeInstanceOf(SqlQueryError);
+    expect(http.calls.filter((c) => c.method !== "GET")).toHaveLength(0);
   });
 
   it("re-reads queries after one is added", async () => {

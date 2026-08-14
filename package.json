@@ -27,6 +27,7 @@
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
+    "coverage": "vitest run --coverage --coverage.include=src/**",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
@@ -40,6 +41,7 @@
     "@biomejs/biome": "2.5.8",
     "@types/lodash": "^4.17.7",
     "@types/node": "^26.1.2",
+    "@vitest/coverage-v8": "2.1.9",
     "tsup": "^8.2.4",
     "typescript": "^5.5.4",
     "vitest": "^2.0.5"
