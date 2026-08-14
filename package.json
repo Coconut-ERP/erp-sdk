@@ -1,6 +1,6 @@
 {
   "name": "erp-sdk",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "TypeScript SDK for the 1kk ERP backend — mini apps use the ERP as their core engine",
   "type": "module",
   "main": "./dist/index.cjs",
