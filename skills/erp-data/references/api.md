@@ -185,6 +185,57 @@ thành `0`), nên cột tiền/số phải sạch trước khi `sum`.
 `where` trên frame dùng cùng bộ toán tử với server (`matchesOperator` cũng được
 export nếu cần dùng riêng).
 
+## SQL & dashboard
+
+```ts
+erp.sql(sql, { params?, values? }): Promise<QueryResult>   // = erp.dashboards.sql(...)
+```
+
+`QueryResult`: `columns`, `rows`, `rowCount`, `truncated`, `compiledSql?`,
+`toArray()`, `toFrame()`, `column(name)`, `value(column?)`.
+
+| Export | Ghi chú |
+| --- | --- |
+| `erp.dashboards.list({ page?, perPage? })` | `{ dashboards, meta }`; `meta.totalItems` tính cả cái bị ẩn |
+| `erp.dashboards.listAll({ perPage? })` | Đi hết theo `meta.totalPages` — dùng cái này |
+| `erp.dashboards.create({ name, description? })` · `erp.dashboard(nameOrId)` | Tạo / resolve theo tên |
+| `dash.queries(refresh?)` · `dash.query(nameOrId)` | Query đã lưu; sai tên → `UnknownQueryError.known` |
+| `dash.run(nameOrId, params?)` · `dash.toFrame(nameOrId, params?)` | Chạy query đã lưu |
+| `dash.addQuery({ name, sql, params?, chartType?, chartConfig? })` | `chartType` ∈ `CHART_TYPES` (14 kiểu) |
+| `dash.updateQuery(nameOrId, changes)` · `dash.deleteQuery(nameOrId)` | |
+| `dash.update({ name?, description? })` · `dash.delete()` | Xoá dashboard = xoá mọi query |
+| `dash.sharing()` · `dash.setSharing(visibility, entries?)` | `"workspace" \| "restricted"` |
+| `assertSelectStatement(sql)` · `quoteIdentifier(name)` | Kiểm SQL / bọc tên hiển thị |
+| `MAX_QUERY_ROWS` (1000) · `MAX_QUERY_PARAMS` (20) · `QUERY_SYSTEM_COLUMNS` · `WORKSPACE_ID_PARAM` | Giới hạn & hằng số |
+
+Tham số: `params: [{ name, type: "text"|"number"|"boolean"|"date"|"datetime",
+label?, default? }]`, giá trị truyền qua `values` (ad-hoc) hoặc đối số thứ hai
+của `dash.run` (query đã lưu). Chi tiết cú pháp: `references/sql.md`.
+
+## Workflow
+
+| Export | Ghi chú |
+| --- | --- |
+| `erp.workflows.list({ limit?, offset? })` · `listAll()` | Không kèm `code` |
+| `erp.workflows.create({ name, code, trigger, description?, env? })` | Trả handle ở **draft** |
+| `erp.workflow(nameOrId)` | Resolve theo tên, đã nạp `code` |
+| `wf.id` · `name` · `version` · `status` · `isPublished` · `trigger` · `code` · `envNames` · `meta` | Thuộc tính |
+| `wf.update({ name?, description?, trigger?, code?, version? })` | Đưa về **draft** |
+| `wf.publish(version?)` · `wf.refresh()` · `wf.delete(version?)` | `version` mặc định lấy của handle |
+| `wf.setEnv(env)` | **Thay cả map**; `WORKFLOW_ENV_KEEP` = `"[KEEP]"` giữ giá trị cũ; ≤ 50 |
+| `wf.run(input?, { dryRun? })` | Ném `DryRunUnsupportedError` khi `ERP_ENV=development` |
+| `wf.waitForRun(runId, { timeoutMs?, intervalMs?, throwOnError? })` | Mặc định 120s / 1s / throw |
+| `wf.runAndWait(input?, options?)` · `wf.runs({ limit?, offset? })` · `wf.getRun(runId)` | |
+| `wf.sharing()` · `wf.setSharing(visibility, entries?)` | |
+| `runOutput(run)` · `runResult(run)` · `runLogs(run)` | `run.output` là **chuỗi JSON** |
+| `isRunFinished(status)` · `WORKFLOW_RUN_PENDING_STATUSES` | `ENQUEUED`/`PENDING` chưa xong |
+| `WORKFLOW_TRIGGER_TYPES` | Chỉ `manual` và `cron` |
+| `assertWorkflowTrigger` · `assertWorkflowCode` · `assertWorkflowEnv` | → `WorkflowDefinitionError` |
+
+Cron: **6 trường có giây** + timezone IANA — `{ type: "cron", config:
+{ schedule: "0 0 9 * * *", timezone: "Asia/Ho_Chi_Minh" } }`. `@daily`,
+`@every 1h` được; `"0 9 * * *"` (5 trường) bị từ chối.
+
 ## schema.json (thuần hàm, không gọi mạng)
 
 ```ts
@@ -220,7 +271,8 @@ không suy ra hành động nào khác.
 `FetchHttp` tự thêm `/api/v1`, set `X-API-Key` hoặc `Authorization: Bearer`, bóc
 vỏ `{ success, data, message, trace }` và ném `ErpApiError` khi không 2xx.
 Truy cập trực tiếp qua `client.http.request(method, path, { body, query })` khi
-cần endpoint SDK chưa bọc.
+cần endpoint SDK chưa bọc; `requestPaged(...)` trả `{ data, meta }` khi cần cả
+`meta` phân trang.
 
 ## Error
 
@@ -233,6 +285,12 @@ cần endpoint SDK chưa bọc.
 | `RelationValueError` | `.field`, `.reason` |
 | `DryRunUnsupportedError` | `.operation` |
 | `SchemaMismatchError` | `.missing`, `.conflicts` (`{ object, field?, type?, currentType? }`) |
+| `SqlQueryError` | `.reason` |
+| `UnknownWorkflowError` · `UnknownDashboardError` | `.workflow` / `.dashboard`, `.known` |
+| `UnknownQueryError` | `.query`, `.dashboard`, `.known` |
+| `WorkflowDefinitionError` | `.field` (`trigger`\|`code`\|`env`), `.reason` |
+| `WorkflowRunFailedError` | `.workflow`, `.run.error` |
+| `WorkflowRunTimeoutError` | `.workflow`, `.run`, `.timeoutMs` — run **vẫn chạy** |
 | `ErpApiError` | `.status`, `.trace`, `.details` |
 
 ## Bridge initData (browser, chỉ dùng cho mini app)

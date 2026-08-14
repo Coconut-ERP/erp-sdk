@@ -6,8 +6,15 @@ import {
   MissingPermissionsError,
   RelationValueError,
   SchemaMismatchError,
+  SqlQueryError,
+  UnknownDashboardError,
   UnknownFieldError,
   UnknownObjectError,
+  UnknownQueryError,
+  UnknownWorkflowError,
+  WorkflowDefinitionError,
+  WorkflowRunFailedError,
+  WorkflowRunTimeoutError,
 } from "../errors";
 import { flagBool, flagString, parseArgv, UsageError, type ParsedArgs } from "./args";
 import { COMMANDS, ExitCode, matchCommand, type CliContext, type CommandSpec } from "./commands";
@@ -79,6 +86,69 @@ function serializeError(error: unknown): Record<string, unknown> {
       message: error.message,
       operation: error.operation,
       hint: "ERP_ENV=development makes writes dry runs; deletes have no dry run",
+    };
+  }
+  if (error instanceof UnknownWorkflowError) {
+    return {
+      type: "UnknownWorkflowError",
+      message: error.message,
+      workflow: error.workflow,
+      known: error.known,
+      hint: "Names are the address here — list them with erp.workflows.list()",
+    };
+  }
+  if (error instanceof UnknownDashboardError) {
+    return {
+      type: "UnknownDashboardError",
+      message: error.message,
+      dashboard: error.dashboard,
+      known: error.known,
+      hint: "Names are the address here — list them with erp.dashboards.listAll()",
+    };
+  }
+  if (error instanceof UnknownQueryError) {
+    return {
+      type: "UnknownQueryError",
+      message: error.message,
+      query: error.query,
+      dashboard: error.dashboard,
+      known: error.known,
+    };
+  }
+  if (error instanceof WorkflowDefinitionError) {
+    return {
+      type: "WorkflowDefinitionError",
+      message: error.message,
+      field: error.field,
+      reason: error.reason,
+      hint: 'Triggers are manual|cron; cron wants a 6-field schedule ("0 0 9 * * *") plus a timezone',
+    };
+  }
+  if (error instanceof WorkflowRunFailedError) {
+    return {
+      type: "WorkflowRunFailedError",
+      message: error.message,
+      workflow: error.workflow,
+      run: error.run,
+      hint: "run.error carries what the script threw, with its console.log lines appended",
+    };
+  }
+  if (error instanceof WorkflowRunTimeoutError) {
+    return {
+      type: "WorkflowRunTimeoutError",
+      message: error.message,
+      workflow: error.workflow,
+      run: error.run,
+      timeoutMs: error.timeoutMs,
+      hint: "The run was not cancelled — poll getRun(runId), or raise { timeoutMs }",
+    };
+  }
+  if (error instanceof SqlQueryError) {
+    return {
+      type: "SqlQueryError",
+      message: error.message,
+      reason: error.reason,
+      hint: 'One read-only SELECT over display names: SELECT "Tổng tiền" FROM "Đơn hàng"',
     };
   }
   if (error instanceof UnknownFieldError) {

@@ -50,6 +50,11 @@ không được đọc. Chi tiết và các bẫy: [03 — Dữ liệu](03-du-li
 | `asUser(accessToken, workspaceId?)` | Client mới hành động dưới quyền user (JWT). Chỉ dùng được trên client tạo bởi `createMiniApp` |
 | `session(initData)` | Đổi initData → `{ user: UserDto, client: ErpClient, expiresIn: number }`. `client` mang quyền user |
 | `issueInitData(serviceAccountId)` | (Phía app chủ) mint initData cho user hiện tại → `{ initData, expiresIn }` |
+| `sql(sql, { params?, values? })` | Chạy một `SELECT` read-only trên tên bảng/cột hiển thị → `QueryResult`. Chi tiết: [11](11-truy-van-sql-dashboard.md) |
+| `dashboards` | `DashboardsApi` (thuộc tính) — dashboard và query đã lưu |
+| `dashboard(nameOrId)` | `DashboardHandle` kèm query của nó; không thấy → `UnknownDashboardError` |
+| `workflows` | `WorkflowsApi` (thuộc tính) — script chạy trên server |
+| `workflow(nameOrId)` | `WorkflowHandle` (đã nạp `code`); không thấy → `UnknownWorkflowError`. Không cache: version đổi sau mỗi lần ghi |
 | `objects(refresh?)` | `ObjectDto[]` mọi object trong workspace. Cache |
 | `object(nameOrId)` | `ObjectHandle` — resolve theo id, tên, tên không phân biệt hoa thường. Không thấy → `UnknownObjectError`. Cache |
 | `hasObject(nameOrId)` | `boolean` |
@@ -208,6 +213,78 @@ giữ nguyên row; cột trùng tên không ghi đè.
 Helper: `matchesOperator(value, operator, target?)` — cùng logic filter,
 dùng độc lập được.
 
+## Dashboard & SQL
+
+Chi tiết và các bẫy: [11 — Truy vấn SQL & dashboard](11-truy-van-sql-dashboard.md).
+
+**`DashboardsApi`** (`erp.dashboards`)
+
+| Method | Mô tả |
+| --- | --- |
+| `sql(sql, { params?, values? })` | Chạy SQL không lưu (`POST /dashboards/queries/preview`) → `QueryResult`. Cũng là `erp.sql(...)` |
+| `list({ page?, perPage? })` | `{ dashboards, meta }` — `meta` = `PageMeta`; server phân trang **trước** khi lọc quyền nên trang ngắn ≠ hết |
+| `listAll({ perPage? })` | `DashboardDto[]` — đi hết theo `meta.totalPages` |
+| `get(id)` · `create({ name, description? })` · `handle(nameOrId)` | Lấy/tạo/resolve theo tên (id → tên → tên không phân biệt hoa thường) |
+
+**`DashboardHandle`** — `id`, `name`, `meta`
+
+| Method | Mô tả |
+| --- | --- |
+| `queries(refresh?)` · `query(nameOrId)` | Query đã lưu; sai tên → `UnknownQueryError.known` |
+| `run(nameOrId, params?)` | Chạy query đã lưu → `QueryResult`; tham số thiếu thì dùng `default` |
+| `toFrame(nameOrId, params?)` | `run` rồi `.toFrame()` |
+| `addQuery(spec)` · `updateQuery(nameOrId, changes)` · `deleteQuery(nameOrId)` | `spec` = `{ name, sql, params?, chartType?, chartConfig? }` |
+| `update({ name?, description? })` · `delete()` · `refresh()` | Xoá dashboard là xoá mọi query trong đó |
+| `sharing()` · `setSharing(visibility, entries?)` | `"workspace" \| "restricted"`; entries chỉ nhận khi `restricted` |
+
+**`QueryResult`** — `columns`, `rows`, `rowCount`, `truncated`, `compiledSql?`,
+`toArray()`, `toFrame()`, `column(name)`, `value(column?)`.
+
+| Export | Mô tả |
+| --- | --- |
+| `assertSelectStatement(sql)` | Một câu, bắt đầu bằng `SELECT`/`WITH` — sai → `SqlQueryError` (SDK tự gọi trước mỗi request) |
+| `quoteIdentifier(name)` | `Đơn hàng` → `"Đơn hàng"` |
+| `MAX_QUERY_ROWS` · `MAX_QUERY_PARAMS` | 1 000 · 20 |
+| `QUERY_SYSTEM_COLUMNS` · `WORKSPACE_ID_PARAM` | `id`/`created_at`/`updated_at` · `@workspace_id` |
+| `CHART_TYPES` | 14 kiểu biểu đồ của query đã lưu |
+
+## Workflow
+
+Chi tiết: [12 — Workflow](12-workflow.md).
+
+**`WorkflowsApi`** (`erp.workflows`)
+
+| Method | Mô tả |
+| --- | --- |
+| `list({ limit?, offset? })` | `WorkflowDto[]`, mới nhất trước — **không kèm `code`** |
+| `listAll({ pageSize?, maxPages? })` | Đi hết offset cho tới trang ngắn/rỗng |
+| `get(id)` | Định nghĩa đầy đủ kèm `code` |
+| `create(spec)` | `{ name, code, trigger, description?, env? }` → `WorkflowHandle` ở trạng thái **draft** |
+| `handle(nameOrId)` | Resolve theo tên như object → `WorkflowHandle` |
+
+**`WorkflowHandle`** — `id`, `name`, `version`, `status`, `isPublished`,
+`trigger`, `code`, `envNames`, `meta`
+
+| Method | Mô tả |
+| --- | --- |
+| `update(changes)` | `{ name?, description?, trigger?, code?, version? }`; thiếu `version` thì lấy của handle. Mọi thay đổi đưa workflow **về draft** |
+| `publish(version?)` | Draft → active |
+| `setEnv(env)` | **Thay cả map**; `WORKFLOW_ENV_KEEP` (`"[KEEP]"`) giữ giá trị không đọc lại được; ≤ 50 entry |
+| `run(input?, { dryRun? })` | Đưa vào hàng đợi → `WorkflowRunDto` (`ENQUEUED`). Ở chế độ development ném `DryRunUnsupportedError` |
+| `waitForRun(runId, { timeoutMs?, intervalMs?, throwOnError? })` | Poll đến khi xong; `ERROR` → `WorkflowRunFailedError`, hết giờ → `WorkflowRunTimeoutError` (run **vẫn chạy**) |
+| `runAndWait(input?, options?)` | `run` + `waitForRun` |
+| `runs({ limit?, offset? })` · `getRun(runId)` | Lịch sử run |
+| `sharing()` · `setSharing(visibility, entries?)` · `delete(version?)` · `refresh()` | |
+
+| Export | Mô tả |
+| --- | --- |
+| `runOutput(run)` | Parse `run.output` (chuỗi JSON) → `{ workflowId, version, result, logs, durationMs }` |
+| `runResult(run)` · `runLogs(run)` | Lối tắt lấy giá trị `main()` trả về / các dòng log |
+| `isRunFinished(status)` · `WORKFLOW_RUN_PENDING_STATUSES` | `ENQUEUED` · `PENDING` là chưa xong; `SUCCESS` · `ERROR` là xong |
+| `WORKFLOW_TRIGGER_TYPES` | `manual`, `cron` — chỉ có hai |
+| `assertWorkflowTrigger` · `assertWorkflowCode` · `assertWorkflowEnv` | Kiểm phía client → `WorkflowDefinitionError` |
+| `WORKFLOW_ENV_KEEP` · `MAX_WORKFLOW_ENV_ENTRIES` | `"[KEEP]"` · 50 |
+
 ## Web app helpers (browser)
 
 | Export | Mô tả |
@@ -230,7 +307,13 @@ dùng độc lập được.
 | `UnknownFieldError` | Tên field không khớp | `field`, `objectName`, `known: string[]` |
 | `FilterValueError` | `in`/`not_in` nhận giá trị server sẽ từ chối (không phải mảng, rỗng, > 200) | `field`, `operator`, `reason` |
 | `RelationValueError` | Field `relation` nhận thứ không phải mảng ≤ 100 record id | `field`, `reason` |
-| `DryRunUnsupportedError` | Gọi `delete`/`restore`/`createLink`/`deleteLink` khi client đang ở chế độ development | `operation` |
+| `DryRunUnsupportedError` | Gọi `delete`/`restore`/`createLink`/`deleteLink`/`workflow.run()` khi client đang ở chế độ development | `operation` |
+| `UnknownWorkflowError` · `UnknownDashboardError` | Tên/id không khớp | `workflow` / `dashboard`, `known: string[]` |
+| `UnknownQueryError` | Query đã lưu không có trên dashboard đó | `query`, `dashboard`, `known` |
+| `WorkflowDefinitionError` | Trigger lạ, cron thiếu giây/timezone, code không có `main()`, tên env sai | `field: "trigger" \| "code" \| "env"`, `reason` |
+| `WorkflowRunFailedError` | Run kết thúc ở `ERROR` | `workflow`, `run` (`run.error` = message script throw + log) |
+| `WorkflowRunTimeoutError` | Hết `timeoutMs` mà run chưa xong — **run không bị huỷ** | `workflow`, `run`, `timeoutMs` |
+| `SqlQueryError` | SQL không phải một câu `SELECT` duy nhất | `reason` |
 
 Mã lỗi hay gặp trong `ErpApiError.status`: 401 (key/token/initData sai hoặc
 hết hạn), 403 (thiếu permission RBAC), 404 (không tồn tại *hoặc* bị ACL ẩn),
@@ -249,7 +332,10 @@ await http.request<T>(method, path, { body?, query? });
   `Authorization: Bearer`, `X-Workspace-Id` nếu có, `Content-Type: application/json`.
 - Response envelope `{ success, message, statusCode, data, trace? }` được
   bóc sẵn — trả thẳng `data`; non-2xx → `ErpApiError`.
-- Interface `Http { request<T>(...) }` — implement để mock trong test.
+- `requestPaged<T>(...)` trả `{ data, meta }`, giữ lại `meta` của envelope
+  (`PageMeta`) cho các endpoint phân trang theo số trang.
+- Interface `Http { request<T>(...); requestPaged?<T>(...) }` — chỉ `request`
+  là bắt buộc, nên mock trong test không phải đụng tới.
 
 ## Types chính
 
@@ -265,7 +351,13 @@ string tuỳ ý) · `Action` (`"create" | "read" | "update" | "delete" | "manage
 `SchemaObjectSpec` · `SchemaFieldSpec` · `SchemaStatus` · `SchemaAction` ·
 `SchemaObjectPlan` · `SchemaFieldPlan` · `MiniAppSchemaPlan` (body của
 `GET /mini-apps/:id/schema`) · `WorkspaceObjectShape` · `SchemaGap` ·
-`FieldType` · `DeclarableFieldType`.
+`FieldType` · `DeclarableFieldType` · `PageMeta` · `Paged` ·
+`WorkflowDto` · `WorkflowTrigger` · `WorkflowTriggerType` · `CronTriggerConfig` ·
+`WorkflowStatus` · `WorkflowRunDto` · `WorkflowRunStatus` · `WorkflowRunOutput` ·
+`WorkflowSpec` · `WorkflowChanges` · `WaitForRunOptions` · `DashboardDto` ·
+`DashboardQueryDto` · `QueryResultDto` · `QueryParamSpec` · `QueryParamType` ·
+`QuerySpec` · `QueryChanges` · `SqlOptions` · `ChartType` · `SharingDto` ·
+`SharingEntry` · `SharingVisibility` · `SharingAccess` · `SharingSubjectType`.
 
 Chi tiết từng field: xem `src/types.ts` (được ship kèm `.d.ts`).
 

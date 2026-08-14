@@ -121,6 +121,110 @@ export class DryRunUnsupportedError extends Error {
   }
 }
 
+/**
+ * Something addressed by display name that the workspace does not hold. The
+ * message lists what does exist, because the name *is* the address and a typo
+ * is the likeliest cause.
+ */
+class UnknownByNameError extends Error {
+  constructor(
+    kind: string,
+    /** What was asked for. Never called `name` — that is the error's own class. */
+    readonly wanted: string,
+    readonly known: string[],
+  ) {
+    super(
+      `${kind} not found: "${wanted}"` +
+        (known.length > 0 ? `. Known: ${known.join(", ")}` : ""),
+    );
+  }
+}
+
+export class UnknownWorkflowError extends UnknownByNameError {
+  constructor(
+    readonly workflow: string,
+    known: string[] = [],
+  ) {
+    super("Workflow", workflow, known);
+    this.name = "UnknownWorkflowError";
+  }
+}
+
+export class UnknownDashboardError extends UnknownByNameError {
+  constructor(
+    readonly dashboard: string,
+    known: string[] = [],
+  ) {
+    super("Dashboard", dashboard, known);
+    this.name = "UnknownDashboardError";
+  }
+}
+
+export class UnknownQueryError extends UnknownByNameError {
+  constructor(
+    readonly query: string,
+    readonly dashboard: string,
+    known: string[] = [],
+  ) {
+    super(`Query on dashboard "${dashboard}"`, query, known);
+    this.name = "UnknownQueryError";
+  }
+}
+
+/**
+ * A workflow definition the server would refuse anyway — wrong trigger, code
+ * without an `async function main()`, or an env name it will not store. Caught
+ * here so the fix arrives without a round trip.
+ */
+export class WorkflowDefinitionError extends Error {
+  constructor(
+    readonly field: "trigger" | "code" | "env",
+    readonly reason: string,
+  ) {
+    super(`Workflow ${field} is invalid: ${reason}`);
+    this.name = "WorkflowDefinitionError";
+  }
+}
+
+/** A run that finished in `ERROR`. `error` carries the thrown message and logs. */
+export class WorkflowRunFailedError extends Error {
+  constructor(
+    readonly workflow: string,
+    readonly run: { id: string; status: string; error?: string },
+  ) {
+    super(`Workflow "${workflow}" run failed: ${run.error ?? run.status}`);
+    this.name = "WorkflowRunFailedError";
+  }
+}
+
+/** Waiting gave up while the run was still queued or executing. It keeps running. */
+export class WorkflowRunTimeoutError extends Error {
+  constructor(
+    readonly workflow: string,
+    readonly run: { id: string; status: string },
+    readonly timeoutMs: number,
+  ) {
+    super(
+      `Workflow "${workflow}" run ${run.id} was still "${run.status}" after ` +
+        `${timeoutMs}ms. The run itself is not cancelled — poll getRun(runId) ` +
+        "later, or raise { timeoutMs }.",
+    );
+    this.name = "WorkflowRunTimeoutError";
+  }
+}
+
+/**
+ * SQL the query endpoint would refuse: it runs **one** read-only `SELECT`
+ * (a leading `WITH` is fine) against workspace tables addressed by display
+ * name. No DML, no DDL, no second statement.
+ */
+export class SqlQueryError extends Error {
+  constructor(readonly reason: string) {
+    super(`Invalid dashboard SQL: ${reason}`);
+    this.name = "SqlQueryError";
+  }
+}
+
 export class UnknownFieldError extends Error {
   constructor(
     readonly field: string,

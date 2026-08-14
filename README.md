@@ -4,6 +4,9 @@ TypeScript SDK for the ERP backend. Built for **mini apps**: each customer
 deployment ships one or more small TypeScript apps that use this backend as
 their core engine, authenticated with a service-account API key.
 
+Records (objects → fields → records), read-only **SQL** over the same data for
+reports and dashboards, and **workflows** — scripts the ERP runs on a schedule.
+
 Requires Node 18+ (uses global `fetch`). Works in the browser too, but API keys
 belong on a server — don't ship `erp_sk_*` keys to browsers.
 
@@ -578,6 +581,106 @@ Full surface: `filter`, `where`, `map`, `select`, `rename`, `sortBy`, `unique`,
 `avg`, `min`, `max`, `countBy`, `keyBy`, `groupBy().agg()/count()/sum()/avg()`,
 `leftJoin`. Every method returns a new frame — chains never mutate.
 
+## SQL, dashboards and saved queries
+
+`RecordQuery` filters one object. When the question is a `GROUP BY`, a join or a
+ranking, run SQL instead: one read-only `SELECT`, executed in the database,
+returning only the aggregated rows.
+
+```ts
+const df = (await app.sql(`
+  SELECT "Khách hàng" AS kh, SUM("Tổng tiền")::float8 AS doanh_thu
+  FROM "Đơn hàng"
+  WHERE "Ngày đặt" >= @tu
+  GROUP BY 1 ORDER BY 2 DESC
+`, {
+  params: [{ name: "tu", type: "date" }],
+  values: { tu: "2026-01-01" },
+})).toFrame();
+```
+
+Tables are object **display names** and columns are field display names — the
+same addressing as the rest of the SDK, except SQL is **case-sensitive** and the
+names must be double-quoted (`quoteIdentifier()` helps). Every object also
+carries `id`, `created_at`, `updated_at`; `@workspace_id` is always bound.
+
+What the endpoint enforces: one statement, `SELECT`/`WITH` only, read-only, at
+most **1 000 rows** (`truncated: true` when cut, and there is no cursor — so
+aggregate in SQL), 20 declared parameters, and the caller's own row scopes.
+`assertSelectStatement` catches the first two client-side as `SqlQueryError`.
+
+One gotcha: Postgres `numeric` serializes as a **string**, so `SUM(x)` comes
+back as `"327970"`. Cast with `::float8` in SQL when you need a number
+(`DataFrame` coerces on its own when aggregating).
+
+Reusable queries live on a dashboard, where the ERP frontend can chart them:
+
+```ts
+const dash = await app.dashboard("Monitor sản xuất");        // by name or id
+await dash.run("Tổng sản lượng", { thang: "2026-08" });      // QueryResult
+await dash.toFrame("Sản lượng theo chuyền");                 // straight to DataFrame
+
+await dash.addQuery({
+  name: "Đơn theo tháng",
+  sql: `SELECT to_char("Ngày đặt", 'YYYY-MM') AS thang,
+               SUM("Tổng tiền")::float8 AS doanh_thu
+        FROM "Đơn hàng" GROUP BY 1 ORDER BY 1`,
+  chartType: "line",
+  chartConfig: { x: "thang", y: "doanh_thu" },
+});
+```
+
+`app.dashboards.list()` paginates *before* the backend filters by sharing, so a
+short page says nothing about the end — read `meta.totalPages`, or call
+`listAll()`.
+
+## Workflows — scripts that run on the ERP
+
+A workflow is one TypeScript file exposing `async function main(input)`, stored,
+versioned and executed by the ERP: no service to deploy, no cron host, and a
+place to keep secrets. The runner provides `erp`, `_` (lodash), `moment`,
+`axios` and `input` without an import; `zod`, `nodemailer`,
+`node-telegram-bot-api`, `@slack/web-api`, `yahoo-finance2`, `ai` and the
+`@ai-sdk/*` providers are importable by name. Nothing else — `node:fs` included.
+
+```ts
+const wf = await app.workflows.create({
+  name: "Nhắc đơn quá hạn",
+  code,                                     // must define async function main
+  trigger: { type: "cron", config: { schedule: "0 0 9 * * *", timezone: "Asia/Ho_Chi_Minh" } },
+  env: { SMTP_PASSWORD: "…" },              // the script reads it as process.env
+});
+await wf.publish();                          // drafts never run
+
+const done = await (await app.workflow("Nhắc đơn quá hạn")).runAndWait({ ngay: "2026-08-14" });
+runResult(done);   // whatever main() returned
+runLogs(done);     // its console.log lines
+```
+
+Four things the API makes you get right:
+
+- **Only `manual` and `cron` triggers exist** — no webhooks, no record events.
+  Cron takes a **6-field schedule (seconds first)** plus an IANA timezone;
+  `"0 9 * * *"` is rejected, `"0 0 9 * * *"`, `@daily` and `@every 1h` are not.
+- **Every change returns the workflow to draft**, so publish again or nothing
+  new runs. `version` is an optimistic lock — mismatch is a 409, `refresh()`
+  and retry.
+- **`setEnv` replaces the whole map** and stored values can never be read back.
+  Keep one by sending `WORKFLOW_ENV_KEEP` (`"[KEEP]"`) for its name.
+- **Runs are queued** (`ENQUEUED` → `PENDING` → `SUCCESS` | `ERROR`).
+  `waitForRun` throws `WorkflowRunFailedError` on `ERROR` and
+  `WorkflowRunTimeoutError` when time runs out — a timeout does **not** cancel
+  the run.
+
+Starting a run writes real data and the server has no dry run for it, so in
+development mode `run()` throws `DryRunUnsupportedError` instead. Pass
+`{ dryRun: false }` to run it anyway.
+
+One backend quirk worth knowing: a run started immediately after `publish()`
+sometimes comes back `ERROR` with the generic message `"Workflow run failed"` —
+the runner has not picked the new version up. Anything the script itself throws
+produces a specific message, so treat that one as "retry in a few seconds".
+
 ## Permissions at runtime
 
 ```ts
@@ -602,7 +705,12 @@ source of truth; the SDK check is a fast preflight.
 | `UnknownObjectError` | `app.object(name)` doesn't match any object in the workspace |
 | `UnknownFieldError` | a filter/sort/data key doesn't match any field (`.known` lists fields) |
 | `RelationValueError` | a relation was written as something other than ≤ 100 record ids (`.field`, `.reason`) |
-| `DryRunUnsupportedError` | a delete/restore/link call while the client is in development mode (`.operation`) |
+| `DryRunUnsupportedError` | a delete/restore/link call, or `workflow.run()`, while the client is in development mode (`.operation`) |
+| `SqlQueryError` | SQL that is not a single read-only `SELECT` (`.reason`) |
+| `UnknownWorkflowError` / `UnknownDashboardError` / `UnknownQueryError` | name or id doesn't match (`.known` lists what does) |
+| `WorkflowDefinitionError` | unsupported trigger, cron missing its seconds field, code without `main()`, bad env name (`.field`, `.reason`) |
+| `WorkflowRunFailedError` | a run ended in `ERROR` (`.run.error` is what the script threw, logs appended) |
+| `WorkflowRunTimeoutError` | `waitForRun` gave up; the run itself keeps going (`.run`, `.timeoutMs`) |
 
 ## Issuing a key for a mini app
 

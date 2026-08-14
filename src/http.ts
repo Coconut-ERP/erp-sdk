@@ -1,5 +1,5 @@
 import { ErpApiError } from "./errors";
-import type { Envelope } from "./types";
+import type { Envelope, PageMeta } from "./types";
 
 export const API_KEY_PREFIX = "erp_sk_";
 
@@ -8,8 +8,25 @@ export interface HttpOptions {
   query?: Record<string, string | number | boolean | undefined>;
 }
 
+/** A response body plus the envelope's `meta`, when the endpoint sends one. */
+export interface Paged<T> {
+  data: T;
+  meta?: PageMeta;
+}
+
 export interface Http {
   request<T>(method: string, path: string, options?: HttpOptions): Promise<T>;
+  /**
+   * Same call, keeping the envelope's `meta` — the page counts that
+   * `GET /dashboards` needs, because it paginates *before* it filters by
+   * sharing, so a short page does not mean the last one. Optional so a test
+   * double can implement `request` alone.
+   */
+  requestPaged?<T>(
+    method: string,
+    path: string,
+    options?: HttpOptions,
+  ): Promise<Paged<T>>;
 }
 
 export interface HttpConfig {
@@ -49,6 +66,14 @@ export class FetchHttp implements Http {
     path: string,
     options: HttpOptions = {},
   ): Promise<T> {
+    return (await this.requestPaged<T>(method, path, options)).data;
+  }
+
+  async requestPaged<T>(
+    method: string,
+    path: string,
+    options: HttpOptions = {},
+  ): Promise<Paged<T>> {
     const url = new URL(this.baseUrl + path);
     for (const [key, value] of Object.entries(options.query ?? {})) {
       if (value !== undefined) url.searchParams.set(key, String(value));
@@ -61,9 +86,11 @@ export class FetchHttp implements Http {
     });
 
     const text = await response.text();
-    let payload: Partial<Envelope<T>> | undefined;
+    let payload: (Partial<Envelope<T>> & { meta?: PageMeta }) | undefined;
     try {
-      payload = text ? (JSON.parse(text) as Envelope<T>) : undefined;
+      payload = text
+        ? (JSON.parse(text) as Envelope<T> & { meta?: PageMeta })
+        : undefined;
     } catch {
       payload = undefined;
     }
@@ -77,6 +104,6 @@ export class FetchHttp implements Http {
       );
     }
 
-    return payload?.data as T;
+    return { data: payload?.data as T, meta: payload?.meta };
   }
 }

@@ -105,6 +105,8 @@ write the app's `schema.json` and validate its format with `validateSchema`.
 | `src/http.ts` | `FetchHttp` — appends `/api/v1`, sets `X-API-Key` or `Bearer`, unwraps the `{success, data, message, trace}` envelope, throws `ErpApiError` on non-2xx |
 | `src/client.ts` | `createMiniApp`, `ErpClient` — permission preflight, object resolution + caching, `assertSchema`, `issueInitData`/`session`, admin-only `createObject`/`ensureObject` |
 | `src/objects.ts` | `ObjectHandle` (CRUD, fields, links) and `RecordQuery` (chainable filter/sort/paginate over `POST /records/query`) |
+| `src/dashboards.ts` | `DashboardsApi`/`DashboardHandle` and `QueryResult` — read-only SQL (`client.sql`) plus saved queries, their params and chart config |
+| `src/workflows.ts` | `WorkflowsApi`/`WorkflowHandle` — server-side scripts: versions, publish, write-only env, queued runs and the helpers that unpack a run's output |
 | `src/schema.ts` | The `schema.json` model plus the backend's validation and diff rules as **pure functions** (`validateSchema`, `planSchema`, `schemaConflicts`, `unresolvedRelations`) — no I/O, so the CLI, the SDK and build scripts all share one source of truth |
 | `src/frame.ts` | `DataFrame`/`GroupedFrame` — immutable pandas-style analysis over fetched records; every method returns a new frame |
 | `src/permissions.ts` | `isAllowed`/`missingPermissions`, mirroring the backend enforcer (deny beats allow, `*` wildcards, `manage` implies nothing) |
@@ -137,9 +139,21 @@ internal key.
 developed app still means its writes). `development` makes the four record-write
 endpoints send `dryRun: true`, which the backend runs for real and rolls back; every
 write method takes `{ dryRun }` to override per call. What has no dry run on the server
-— `delete`, `restore`, the link endpoints, anything structural — throws
-`DryRunUnsupportedError` in that mode rather than silently doing the real thing. A new
-write path must decide which of those two it is.
+— `delete`, `restore`, the link endpoints, **starting a workflow run**, anything
+structural — throws `DryRunUnsupportedError` in that mode rather than silently doing
+the real thing. A new write path must decide which of those two it is. Workflow and
+dashboard *definitions* are structural, so they write for real in either mode, the
+same as `createObject`.
+
+**Names are the address beyond records too.** `client.workflow()`,
+`client.dashboard()` and `DashboardHandle.query()` resolve id → exact name →
+case-insensitive name, exactly like `client.object()`, and their errors carry the
+`known` list. Dashboard SQL goes further: the backend compiles each object into a CTE
+named after its **display name**, with fields as columns — so `SELECT "Tổng tiền" FROM
+"Đơn hàng"` is the real query surface, it is case-sensitive, and `numeric` columns
+come back as JSON strings. Two list endpoints paginate *before* filtering by sharing
+(`/dashboards` has `meta`, `/workflows` has nothing) — hence `Http.requestPaged` and
+the `listAll` helpers; a short page is not the end.
 
 **Two authority modes** in a mini app, worth keeping straight when touching
 `client.ts` or the docs:

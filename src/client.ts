@@ -5,9 +5,16 @@ import {
   UnknownFieldError,
   UnknownObjectError,
 } from "./errors";
+import {
+  DashboardHandle,
+  DashboardsApi,
+  type QueryResult,
+  type SqlOptions,
+} from "./dashboards";
 import { FetchHttp, type Http } from "./http";
 import { type ErpMode, isDryRunMode, resolveMode } from "./mode";
 import { ObjectHandle } from "./objects";
+import { WorkflowHandle, WorkflowsApi } from "./workflows";
 import { isAllowed, missingPermissions } from "./permissions";
 import {
   type MiniAppSchema,
@@ -58,6 +65,12 @@ export class ErpClient {
    */
   readonly mode: ErpMode;
 
+  /** Automation scripts: create, publish, run, read runs. */
+  readonly workflows: WorkflowsApi;
+
+  /** Saved SQL and ad-hoc SQL over the workspace — see {@link sql}. */
+  readonly dashboards: DashboardsApi;
+
   constructor(
     readonly http: Http,
     private readonly required: RequiredPermission[] = [],
@@ -65,6 +78,8 @@ export class ErpClient {
     modeOverride?: ErpMode,
   ) {
     this.mode = modeOverride ?? config?.mode ?? resolveMode(config?.env);
+    this.workflows = new WorkflowsApi(http, { dryRun: this.dryRun });
+    this.dashboards = new DashboardsApi(http);
   }
 
   /** Whether record writes through this client are dry runs by default. */
@@ -183,6 +198,39 @@ export class ErpClient {
     this.handleCache.set(nameOrId, handle);
     this.handleCache.set(meta.id, handle);
     return handle;
+  }
+
+  /**
+   * A workflow by name or id — same resolution order as {@link object}.
+   * Not cached: a workflow carries a version that every mutation bumps, so a
+   * stale handle would fail its next write.
+   */
+  async workflow(nameOrId: string): Promise<WorkflowHandle> {
+    return this.workflows.handle(nameOrId);
+  }
+
+  /** A dashboard by name or id, with its saved queries. */
+  async dashboard(nameOrId: string): Promise<DashboardHandle> {
+    return this.dashboards.handle(nameOrId);
+  }
+
+  /**
+   * Runs one read-only `SELECT` over the workspace and returns columns + rows.
+   *
+   * Tables are object **display names** and columns are field display names
+   * (`SELECT "Tổng tiền" FROM "Đơn hàng"`), plus `id`, `created_at` and
+   * `updated_at` on every object. Rows are row-scoped by the caller's record
+   * permissions and capped at 1 000 — aggregate in SQL rather than paginating.
+   *
+   * ```ts
+   * const df = (await erp.sql(`
+   *   SELECT "Khách hàng" AS kh, SUM("Tổng tiền") AS doanh_thu
+   *   FROM "Đơn hàng" GROUP BY 1 ORDER BY 2 DESC
+   * `)).toFrame();
+   * ```
+   */
+  async sql(sql: string, options: SqlOptions = {}): Promise<QueryResult> {
+    return this.dashboards.sql(sql, options);
   }
 
   /**

@@ -29,7 +29,10 @@ const erp = await createMiniApp({
 
 Thêm `{ resource: "object:record", action: "create" }` / `"update"` /
 `"delete"` khi script có ghi — khai đúng cái dùng, sai quyền là chết ngay lúc
-khởi tạo chứ không chết giữa chừng.
+khởi tạo chứ không chết giữa chừng. Script chạy SQL/dashboard cần thêm quyền
+trên resource `dashboard` / `dashboard:query`, script điều khiển workflow cần
+`workflow` / `workflow:run` (`npx erp whoami` xem key có gì) — và import thêm
+`runResult`, `runLogs`, `WORKFLOW_ENV_KEEP` từ `erp-sdk`.
 
 ## 1. Chụp schema thật ra file
 
@@ -297,6 +300,86 @@ const visible = await (await asUser.object("Đơn hàng")).records().count();
 Client này bị cắt theo IAM permission + row scope của user đó — dùng khi cần
 biết "user này thực sự nhìn thấy gì", không phải khi cần dữ liệu đầy đủ.
 
+## 11. Báo cáo bằng SQL rồi ghép ở client
+
+Gộp nặng để database làm, chỉ kéo về dòng đã tổng hợp:
+
+```js
+const doanhThu = (await erp.sql(`
+  SELECT to_char("Ngày đặt", 'YYYY-MM') AS thang,
+         "Khách hàng" AS khach,
+         SUM("Tổng tiền")::float8 AS tien
+  FROM "Đơn hàng"
+  WHERE "Ngày đặt" >= @tu
+  GROUP BY 1, 2
+`, { params: [{ name: "tu", type: "date" }], values: { tu: "2026-01-01" } })).toFrame();
+
+console.table(
+  doanhThu.groupBy("thang").sum("tien", "doanhThu").sortBy("thang").toArray(),
+);
+```
+
+Nhớ `::float8` — cột `numeric` về JSON là **chuỗi**. Trần 1 000 dòng, không có
+cursor: nếu `r.truncated` là `true` thì câu SQL còn thiếu `GROUP BY`.
+
+## 12. Lưu query thành dashboard cho người dùng xem
+
+```js
+const dash = await erp.dashboards.create({ name: "Vận hành", description: "Số liệu hằng ngày" });
+
+await dash.addQuery({
+  name: "Doanh thu theo tháng",
+  sql: `SELECT to_char("Ngày đặt", 'YYYY-MM') AS thang,
+               SUM("Tổng tiền")::float8 AS doanh_thu
+        FROM "Đơn hàng" GROUP BY 1 ORDER BY 1`,
+  chartType: "line",
+  chartConfig: { x: "thang", y: "doanh_thu" },
+});
+
+// chạy lại bất cứ lúc nào từ script
+const rows = await (await erp.dashboard("Vận hành")).run("Doanh thu theo tháng");
+```
+
+## 13. Workflow chạy 9h sáng mỗi ngày
+
+```js
+const code = `
+async function main(input) {
+  const orders = await erp.object("Đơn hàng");
+  const quaHan = await orders.records()
+    .where("Trạng thái", "equals", "new")
+    .where("Hạn giao", "less_than", moment().format("YYYY-MM-DD"))
+    .fetchAll({ max: 500 });
+
+  console.log("Quá hạn:", quaHan.length);
+  return { count: quaHan.length };
+}`;
+
+const wf = await erp.workflows.create({
+  name: "Nhắc đơn quá hạn",
+  code,
+  trigger: { type: "cron", config: { schedule: "0 0 9 * * *", timezone: "Asia/Ho_Chi_Minh" } },
+});
+await wf.publish();                       // ⚠ không publish thì cron không chạy code mới
+
+const run = await wf.runAndWait({});       // thử ngay một lượt
+console.log(runResult(run), runLogs(run));
+```
+
+Sửa code sau này:
+
+```js
+const wf = await erp.workflow("Nhắc đơn quá hạn");
+await wf.update({ code: codeMoi });        // → về draft
+await wf.publish();
+```
+
+Thêm secret mà không xoá secret cũ:
+
+```js
+await wf.setEnv({ SMTP_PASSWORD: WORKFLOW_ENV_KEEP, BOT_TOKEN: "token-mới" });
+```
+
 ## Bẫy đã trả giá
 
 - **`createdAt` / `updatedAt` không lọc và không sắp xếp được.** Filter chỉ nhận
@@ -323,4 +406,11 @@ biết "user này thực sự nhìn thấy gì", không phải khi cần dữ li
 - **Id trả về từ dry-run create là id giả** (`ERP_ENV=development`): đừng lưu,
   đừng dùng làm khoá cho bước sau. Muốn có id thật thì phải chạy thật.
 - **`delete` không có dry run**: ở chế độ development nó ném
-  `DryRunUnsupportedError` chứ không xoá — đó là chủ ý.
+  `DryRunUnsupportedError` chứ không xoá — đó là chủ ý. `workflow.run()` cũng
+  vậy: chạy workflow là ghi thật.
+- **SQL phân biệt hoa thường** ở tên bảng/cột, trần 1 000 dòng, không cursor —
+  và cột `numeric` trả về **chuỗi** (`::float8` để ra số).
+- **Sửa workflow xong quên `publish()`** → run vẫn chạy bản cũ. Và `setEnv` thay
+  cả map: tên nào không gửi là mất.
+- **`erp.dashboards.list()` phân trang trước khi lọc quyền** — trang ngắn không
+  có nghĩa là hết, dùng `listAll()`.

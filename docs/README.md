@@ -33,6 +33,8 @@ pi). CLI **không làm CRUD dữ liệu** — đọc/ghi/phân tích đều vi�
 | [07 — Triển khai & vận hành](07-trien-khai-van-hanh.md) | Cài app (template/repo/zip), duyệt `schema.json` khi deploy, vòng đời deploy, ENV được inject, logs, logo, lỗi thường gặp |
 | [08 — API reference](08-api-reference.md) | Toàn bộ export của SDK: chữ ký hàm, kiểu dữ liệu, error |
 | [10 — CLI `erp` & AI agent](10-cli-va-ai-agent.md) | Khám phá workspace từ terminal (`doctor`, `whoami`, `objects show`, `schema dump`), sinh app bằng `erp init`, cài skill `erp-data` cho agent |
+| [11 — Truy vấn SQL & dashboard](11-truy-van-sql-dashboard.md) | `erp.sql()` chạy `SELECT` read-only trên tên bảng/cột hiển thị, tham số `@name`, dashboard và query đã lưu, biểu đồ, chia sẻ |
+| [12 — Workflow](12-workflow.md) | Script chạy trên server ERP: trigger `manual`/`cron`, version & publish, env chứa secret, khởi chạy và chờ kết quả run |
 
 ## Bức tranh 30 giây
 
@@ -61,7 +63,9 @@ pi). CLI **không làm CRUD dữ liệu** — đọc/ghi/phân tích đều vi�
   đưa vào, đổi được thành danh tính user đã xác minh. App chủ **không bao
   giờ** đưa token của user cho mini app.
 - Dữ liệu của app nằm trong **object engine** của ERP (bảng + field + record
-  trong workspace) — app không cần database riêng.
+  trong workspace) — app không cần database riêng. Cần tổng hợp nặng thì hỏi
+  bằng **SQL read-only** ([11](11-truy-van-sql-dashboard.md)); cần việc chạy
+  định kỳ trên server thì viết **workflow** ([12](12-workflow.md)).
 - App **không tự tạo bảng**: nó khai báo trong `schema.json` ở gốc source,
   người deploy duyệt bản so sánh rồi áp dụng bằng quyền của chính họ.
 

@@ -1,19 +1,21 @@
 ---
 name: erp-data
-description: Đọc, ghi và phân tích dữ liệu trong workspace ERP 1kk bằng erp-sdk (TypeScript/JavaScript). Dùng khi task nhắc tới erp-sdk, createMiniApp, ErpClient, ObjectHandle, RecordQuery, DataFrame, ERP_API_KEY / erp_sk_, ERP_ENV / dryRun / chạy thử trước khi ghi, link–relation giữa hai bảng, object–field–record của ERP, hoặc khi người dùng muốn lấy/thống kê/nhập/sửa dữ liệu trên ERP ("lấy danh sách đơn hàng từ ERP", "báo cáo doanh thu theo tháng", "import CSV vào bảng", "cập nhật hàng loạt", "join hai bảng", "xuất Excel/CSV từ ERP").
+description: Đọc, ghi, truy vấn SQL, phân tích dữ liệu và chạy workflow trong workspace ERP 1kk bằng erp-sdk (TypeScript/JavaScript). Dùng khi task nhắc tới erp-sdk, createMiniApp, ErpClient, ObjectHandle, RecordQuery, DataFrame, erp.sql / dashboard / query đã lưu / biểu đồ, workflow / cron / publish / run trên ERP, ERP_API_KEY / erp_sk_, ERP_ENV / dryRun / chạy thử trước khi ghi, link–relation giữa hai bảng, object–field–record của ERP, hoặc khi người dùng muốn lấy/thống kê/nhập/sửa dữ liệu trên ERP ("lấy danh sách đơn hàng từ ERP", "báo cáo doanh thu theo tháng", "gộp theo tháng bằng SQL", "tạo dashboard", "chạy script định kỳ mỗi sáng", "import CSV vào bảng", "cập nhật hàng loạt", "join hai bảng", "xuất Excel/CSV từ ERP").
 ---
 
 # Khai thác dữ liệu ERP bằng erp-sdk
 
 ERP 1kk lưu dữ liệu trong **object engine**: object (bảng) → field (cột) → record
 (dòng). `erp-sdk` là lớp TypeScript trên REST API đó: resolve tên hiển thị sang
-key nội bộ, phân trang hộ, và có sẵn `DataFrame` kiểu pandas để tổng hợp.
+key nội bộ, phân trang hộ, có `DataFrame` kiểu pandas để tổng hợp, chạy được
+**SQL read-only** cho báo cáo nặng (§6) và điều khiển **workflow** — script chạy
+định kỳ trên server ERP (§9).
 
 **Cách làm việc mặc định: viết một script chạy được rồi chạy nó.** CLI `erp` chỉ
 để dựng môi trường và xem schema thật — mọi thao tác đọc/ghi/phân tích đều viết
 bằng SDK, vì logic nhiều bước (join, tổng hợp, kiểm tra trước khi ghi) không
 diễn đạt được bằng cờ dòng lệnh. Script có ghi dữ liệu thì **chạy thử bằng
-`ERP_ENV=development` trước** (§7) — cùng một đoạn code, không sửa gì.
+`ERP_ENV=development` trước** (§8) — cùng một đoạn code, không sửa gì.
 
 ## 1. Kết nối
 
@@ -123,7 +125,7 @@ thị**: `orders.rowFromRecord(record)`.
 ## 4. Quan hệ giữa các bảng — đừng N+1
 
 Field `relation` nằm trong `data` dưới dạng **mảng id** — cả khi đọc lẫn khi ghi
-(§6.1). Ba cách lấy dữ liệu liên quan, theo thứ tự nên dùng:
+(§7.1). Ba cách lấy dữ liệu liên quan, theo thứ tự nên dùng:
 
 ```ts
 // 1. preload — server nạp kèm, tối đa 10 preload/query
@@ -173,7 +175,59 @@ Có sẵn: `filter/where`, `map`, `select`, `rename`, `sortBy`, `unique/uniqueBy
 Xuất kết quả: `JSON.stringify(df.toArray())`, hoặc tự nối CSV từ `toArray()`.
 Số liệu báo cáo thì **in ra bảng gọn**, đừng đổ hàng nghìn dòng ra stdout.
 
-## 6. Ghi dữ liệu
+## 6. Tổng hợp nặng: SQL read-only
+
+`RecordQuery` chỉ lọc trên **một** bảng. `GROUP BY`, `JOIN`, xếp hạng, phân phối
+— viết SQL, chạy thẳng trong database, chỉ kéo về kết quả đã gộp:
+
+```ts
+const df = (await erp.sql(`
+  SELECT "Tên chuyền" AS chuyen, SUM("Sản lượng thực tế")::float8 AS actual
+  FROM "Sản xuất"
+  WHERE "Ngày" >= @tu
+  GROUP BY 1 ORDER BY 2 DESC
+`, {
+  params: [{ name: "tu", type: "date" }],
+  values: { tu: "2026-01-01" },
+})).toFrame();
+```
+
+**Bảng là tên object, cột là tên field — y như phần còn lại của SDK**, nhưng ở
+đây **phân biệt hoa thường** và phải để trong nháy kép: `FROM "Sản xuất"` chạy,
+`FROM "sản xuất"` là 400. Mỗi bảng còn có `id`, `created_at`, `updated_at`.
+`@workspace_id` luôn có sẵn. Lấy tên đúng bằng `npx erp objects list`.
+
+Giới hạn cần nhớ:
+
+- **Một câu `SELECT`** (`WITH` được), read-only — không INSERT/UPDATE/DELETE/DDL.
+  Ghi dữ liệu vẫn là `create`/`update` (§7).
+- **Trần 1 000 dòng**, `truncated: true` khi bị cắt, **không có cursor** → gộp
+  trong SQL, đừng dùng SQL để phân trang dữ liệu thô.
+- Row scope của người gọi vẫn áp dụng — cùng câu, hai người ra hai kết quả.
+- Cột `numeric` về JSON là **chuỗi**: `SUM(x)` → `"327970"`. Ép `::float8` trong
+  SQL nếu cần số (`DataFrame` thì tự ép khi tính).
+
+```ts
+r.value<number>();       // ô đầu tiên — query scalar
+r.column("chuyen");      // cả cột
+r.rows; r.columns; r.rowCount; r.truncated; r.compiledSql;
+r.toFrame();             // sang DataFrame để join/format/xuất
+```
+
+Query dùng lại nhiều lần thì lưu vào **dashboard** (frontend ERP vẽ được):
+
+```ts
+const dash = await erp.dashboard("Monitor sản xuất - CEO");   // theo tên
+(await dash.queries()).map((q) => q.name);
+const rows = await dash.run("Tổng sản lượng thực tế", { thang: "2026-08" });
+await dash.addQuery({ name: "Đơn theo tháng", sql, chartType: "line",
+                      chartConfig: { x: "thang", y: "doanh_thu" } });
+```
+
+`erp.dashboards.listAll()` mới là danh sách đầy đủ — `list()` phân trang **trước
+khi** lọc quyền nên một trang ngắn không có nghĩa là hết.
+
+## 7. Ghi dữ liệu
 
 ```ts
 const rec = await orders.create({ "Mã đơn": "DH-001", "Tổng tiền": 500000 });
@@ -192,7 +246,7 @@ await orders.delete(rec.id);                        // soft delete
 await orders.restore(rec.id, version);
 ```
 
-### 6.1 Link giữa các bảng ghi thẳng trong `data`
+### 7.1 Link giữa các bảng ghi thẳng trong `data`
 
 Field `relation` ghi như một field bình thường, giá trị là **mảng record id của
 bên kia**, theo đúng thứ tự muốn hiển thị. Cùng một request, cùng một
@@ -239,14 +293,14 @@ lệnh. Chạy `dryRun` xem `matched` trước.
 bằng Ctrl-Z):
 
 1. Chạy đúng filter đó với `.count()` trước, báo con số cho người dùng.
-2. Chạy thử bằng `dryRun` (§7) — server validate y như thật rồi rollback.
+2. Chạy thử bằng `dryRun` (§8) — server validate y như thật rồi rollback.
 3. Với thao tác lớn hoặc phá hủy (bulk update, xóa, đổi trạng thái hàng loạt):
    **hỏi xác nhận** rồi mới chạy.
 4. Bulk update ≤ 5 000 dòng/lần và trả `hasMore`; insert SDK tự chia lô 500.
    Field `unique` không set được bằng bulk update; computed field để worker tính.
 5. Import từ file: kiểm tra vài dòng đầu, in thử payload đã map, rồi mới chạy hết.
 
-## 7. Hai chế độ chạy: `development` (thử) và `production` (thật)
+## 8. Hai chế độ chạy: `development` (thử) và `production` (thật)
 
 SDK đọc **`ERP_ENV`** lúc tạo client. Không đặt → `production`, ghi thật.
 `ERP_ENV=development` → **mọi lệnh ghi record chạy dry run**: backend chạy đúng
@@ -290,7 +344,59 @@ Dry run chỉ có ở 4 lệnh ghi record (`create`, `createMany`, `update`,
 → chạy lại không có `ERP_ENV`. Kiểm tra đang ở chế độ nào: `npx erp doctor` (check
 `mode`) hoặc `npx erp whoami`.
 
-## 8. Quyền và ranh giới
+## 9. Workflow — script chạy trên server ERP
+
+Việc phải chạy **định kỳ** hoặc chạy **trên server** (nhắc hạn mỗi sáng, đồng bộ
+hằng đêm) không cần dựng service riêng: workflow là một file TypeScript có
+`async function main(input)`, ERP giữ code, secret và lịch chạy.
+
+Trong script có sẵn (không import): `erp`, `_` (lodash), `moment`, `axios`,
+`input`. Import theo tên được: `zod`, `nodemailer`, `node-telegram-bot-api`,
+`@slack/web-api`, `yahoo-finance2`, `ai`, `@ai-sdk/*`. Ngoài đó — kể cả
+`node:fs` — thì không.
+
+```ts
+const wf = await erp.workflows.create({
+  name: "Nhắc đơn quá hạn",
+  code,                          // chuỗi, bắt buộc có async function main
+  trigger: { type: "cron", config: { schedule: "0 0 9 * * *", timezone: "Asia/Ho_Chi_Minh" } },
+  env: { SMTP_PASSWORD: "…" },   // secret; script đọc bằng process.env
+});
+await wf.publish();              // ⚠ chưa publish thì chạy vẫn ra bản cũ
+
+const done = await (await erp.workflow("Nhắc đơn quá hạn")).runAndWait({ ngay: "2026-08-14" });
+runResult(done);                 // giá trị main() trả về
+runLogs(done);                   // các dòng console.log
+```
+
+Bốn thứ sai người ta hay mắc:
+
+1. **Chỉ có `manual` và `cron`** — không có webhook, không có trigger theo sự
+   kiện record. Cron là **6 trường (có giây)** + timezone IANA:
+   `"0 0 9 * * *"` = 9h sáng; `"0 9 * * *"` bị từ chối. `@daily`, `@every 1h`
+   cũng được.
+2. **Sửa gì cũng đưa workflow về draft** → phải `publish()` lại. `version` là
+   khoá lạc quan, lệch thì 409, `await wf.refresh()` rồi thử lại.
+3. **`setEnv` thay cả map**, và giá trị không bao giờ đọc lại được. Thêm một
+   khoá mới thì gửi kèm các tên cũ với `WORKFLOW_ENV_KEEP` (`"[KEEP]"`), nếu
+   không chúng bị xoá.
+4. **`run()` bị chặn ở chế độ development** (`DryRunUnsupportedError`): chạy
+   workflow là ghi thật, server không có dry run cho nó. Cố ý chạy thì
+   `{ dryRun: false }`.
+
+Run **ngay sau `publish()`** thỉnh thoảng trả `ERROR` với message chung
+`"Workflow run failed"` — đó là runner chưa thấy version mới, không phải script
+sai (lỗi do script throw luôn cụ thể hơn). Đợi vài giây rồi chạy lại.
+
+Run là hàng đợi: `ENQUEUED` → `PENDING` → `SUCCESS` | `ERROR`. `waitForRun` ném
+`WorkflowRunFailedError` khi `ERROR` (message chính là thứ script throw, kèm
+log) và `WorkflowRunTimeoutError` khi hết giờ — **run không bị huỷ**, đọc tiếp
+bằng `getRun(runId)`. Lịch sử: `wf.runs({ limit: 20 })`.
+
+Trước khi tự ý tạo/sửa/xoá workflow của người dùng: **hỏi**. Đó là thứ chạy
+định kỳ trên dữ liệu thật.
+
+## 10. Quyền và ranh giới
 
 - Key `erp_sk_…` là **service account**, thường ở mức `member`: đọc/ghi record
   được, **tạo bảng/field thì không** (403). Muốn tạo bảng phải dùng key admin
@@ -303,7 +409,7 @@ Dry run chỉ có ở 4 lệnh ghi record (`create`, `createMany`, `update`,
 - **API key chỉ ở server.** Không log, không commit, không ship xuống browser,
   không viết vào file kết quả.
 
-## 9. Lỗi nói thẳng cần sửa gì
+## 11. Lỗi nói thẳng cần sửa gì
 
 | Lỗi | Trường hữu ích | Việc cần làm |
 | --- | --- | --- |
@@ -314,11 +420,16 @@ Dry run chỉ có ở 4 lệnh ghi record (`create`, `createMany`, `update`,
 | `DryRunUnsupportedError` | `.operation` | lệnh này không dry run được — `{ dryRun: false }` hoặc `ERP_ENV=production` |
 | `MissingPermissionsError` | `.missing` | cấp IAM rule đúng cặp `resource:action` |
 | `SchemaMismatchError` | `.missing`, `.conflicts` | workspace chưa có bảng/field như khai báo |
+| `SqlQueryError` | `.reason` | SQL phải là **một** câu `SELECT`/`WITH` read-only |
+| `UnknownWorkflowError` · `UnknownDashboardError` · `UnknownQueryError` | `.known` | sai tên — `.known` liệt kê tên đúng |
+| `WorkflowDefinitionError` | `.field`, `.reason` | trigger lạ, cron thiếu trường giây, code không có `main()` |
+| `WorkflowRunFailedError` | `.run.error` | script throw — message kèm log của chính nó |
+| `WorkflowRunTimeoutError` | `.run` | hết giờ chờ, **run vẫn đang chạy** |
 | `ErpApiError` | `.status`, `.trace`, `.details` | 401/403 → key hoặc quyền; 409 → version cũ, đọc lại rồi update |
 
 Đọc ra 0 record dù chắc chắn có dữ liệu → row scope, không phải filter.
 
-## 10. CLI `erp` có gì
+## 12. CLI `erp` có gì
 
 Chỉ những lệnh phục vụ việc dùng SDK — không có lệnh CRUD dữ liệu:
 
@@ -339,6 +450,8 @@ Kết quả là **JSON ở stdout**, ghi chú và lỗi ở stderr; exit 0 ok, 1
 
 - `references/api.md` — toàn bộ export của SDK: chữ ký, kiểu, giới hạn.
 - `references/recipes.md` — script mẫu chạy được: báo cáo, join, import CSV,
-  đồng bộ, dọn dữ liệu.
+  đồng bộ, dọn dữ liệu, báo cáo bằng SQL, dựng workflow chạy hằng ngày.
+- `references/sql.md` — viết SQL cho ERP: tên bảng/cột, tham số, kiểu dữ liệu
+  trả về, các câu mẫu.
 - Dựng **mini app** (web app dùng ERP làm backend, `schema.json`, initData) là
   chủ đề khác — xem `docs/README.md` trong repo erp-sdk.

@@ -232,3 +232,172 @@ export interface EnsureFieldSpec {
   config?: Record<string, unknown>;
   position?: number;
 }
+
+/** Page counts from the envelope's `meta`, on the endpoints that paginate by page number. */
+export interface PageMeta {
+  page: number;
+  perPage: number;
+  totalItems: number;
+  totalPages: number;
+}
+
+/** Who a workflow or dashboard is shared with. `object` is drive-only. */
+export type SharingSubjectType = "user" | "role" | "group" | "object";
+
+export type SharingAccess = "read" | "write" | "manage";
+
+export interface SharingEntry {
+  subjectType: SharingSubjectType;
+  /** A user id, group id, role name or object id — matching `subjectType`. */
+  subjectId: string;
+  access: SharingAccess;
+}
+
+/** `workspace` = everyone in the workspace; `restricted` = only the grants. */
+export type SharingVisibility = "workspace" | "restricted";
+
+export interface SharingDto {
+  visibility: SharingVisibility;
+  entries: SharingEntry[];
+  workflowId?: string;
+  dashboardId?: string;
+}
+
+export type WorkflowTriggerType = "manual" | "cron";
+
+/**
+ * A 6-field cron expression (**with seconds**) or a descriptor such as
+ * `@daily` / `@every 1h`, plus an IANA timezone. Five-field crontab syntax is
+ * rejected by the server.
+ */
+export interface CronTriggerConfig {
+  schedule: string;
+  timezone: string;
+}
+
+export interface WorkflowTrigger {
+  type: WorkflowTriggerType | (string & {});
+  config?: Record<string, unknown>;
+}
+
+/** `draft` until published; `active` once a version is live. */
+export type WorkflowStatus = "draft" | "active" | (string & {});
+
+export interface WorkflowDto {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description: string;
+  status: WorkflowStatus;
+  visibility: SharingVisibility;
+  trigger: WorkflowTrigger;
+  /** Only on the detail endpoint — the list omits it. */
+  code?: string;
+  /** Names only: every value comes back as `***`, never readable. */
+  env: Record<string, string>;
+  /** Optimistic lock — every mutation bumps it, and update/publish/delete need it. */
+  version: number;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * `ENQUEUED` → `PENDING` (executing) → `SUCCESS` | `ERROR`. Anything else is
+ * treated as unfinished by {@link WORKFLOW_RUN_PENDING_STATUSES}.
+ */
+export type WorkflowRunStatus =
+  | "ENQUEUED"
+  | "PENDING"
+  | "SUCCESS"
+  | "ERROR"
+  | (string & {});
+
+export interface WorkflowRunDto {
+  id: string;
+  status: WorkflowRunStatus;
+  /** A JSON **string** — parse it with `runOutput(run)`. */
+  output?: string;
+  /** Present when `status` is `ERROR`: the thrown message, with logs appended. */
+  error?: string;
+  attempts: number;
+  queueName: string;
+  applicationVersion: string;
+  createdAt: string;
+  updatedAt: string;
+  /** `0001-01-01T00:00:00Z` while the run is still queued. */
+  startedAt?: string;
+}
+
+/** What the runner packs into {@link WorkflowRunDto.output}. */
+export interface WorkflowRunOutput<T = unknown> {
+  workflowId: string;
+  version: number;
+  result: T;
+  logs?: string[];
+  durationMs: number;
+}
+
+export interface DashboardDto {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description: string;
+  visibility: SharingVisibility;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  /** Only on the detail endpoint. */
+  queries?: DashboardQueryDto[];
+}
+
+export type ChartType =
+  | "table"
+  | "number"
+  | "line"
+  | "bar"
+  | "area"
+  | "pie"
+  | "composed"
+  | "scatter"
+  | "radar"
+  | "radial_bar"
+  | "funnel"
+  | "treemap"
+  | "sankey"
+  | "sunburst";
+
+export type QueryParamType = "text" | "number" | "boolean" | "date" | "datetime";
+
+/** Declares an `@name` placeholder used by the SQL. */
+export interface QueryParamSpec {
+  name: string;
+  type: QueryParamType;
+  label?: string;
+  /** Used when a run sends no value for this parameter. */
+  default?: unknown;
+}
+
+export interface DashboardQueryDto {
+  id: string;
+  dashboardId: string;
+  name: string;
+  sql: string;
+  params: QueryParamSpec[];
+  chartType?: ChartType;
+  chartConfig?: Record<string, unknown>;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QueryResultDto {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  rowCount: number;
+  /** `true` when the server cut the result at 1 000 rows. */
+  truncated: boolean;
+  /** The SQL actually executed, with every object name expanded into a CTE. */
+  compiledSql?: string;
+}
