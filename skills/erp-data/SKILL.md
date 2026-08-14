@@ -23,7 +23,7 @@ bằng SDK, vì logic nhiều bước (join, tổng hợp, đếm trước khi g
 ## 1. Kết nối
 
 ```bash
-npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz
+npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.1/erp-sdk.tgz
 npx erp doctor        # env + kết nối + quyền → {ok, checks[]}, exit 1 nếu hỏng
 ```
 
@@ -179,7 +179,11 @@ await wf.publish();          // ⚠ chưa publish thì run vẫn ra bản cũ
 
 Bốn thứ hay sai: chỉ có `manual`/`cron` (không webhook); cron **6 trường có
 giây**; **sửa gì cũng về draft** phải publish lại; `setEnv` **thay cả map**.
-Chi tiết: `references/workflows.md`.
+Chi tiết quản lý workflow: `references/workflows.md`.
+
+**Viết hoặc sửa code bên trong `main()`** — sandbox của runner, module nào import
+được, trần 60s/256KB, `check`/`test-run` để thử mà không tạo draft → dùng skill
+**`erp-workflow`**.
 
 Trước khi tạo/sửa/xoá workflow của người dùng: **hỏi**. Đó là thứ chạy định kỳ
 trên dữ liệu thật.
@@ -217,5 +221,7 @@ không viết vào file kết quả.
 - `references/sql.md` — viết SQL cho ERP: tên bảng/cột, tham số, kiểu trả về, câu mẫu.
 - `references/workflows.md` — workflow đầy đủ: trigger, version/publish, env,
   run và đọc kết quả.
+- Viết **code chạy trong workflow** (runtime, module cho phép, giới hạn,
+  `test-run`) → skill **`erp-workflow`**.
 - Dựng **mini app** (web app dùng ERP làm backend, `schema.json`, initData,
   deploy) → skill **`erp-miniapp`**.

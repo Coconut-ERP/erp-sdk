@@ -32,8 +32,10 @@ tạo (draft, version 1) ──► publish ──► version active
 Runner nạp sẵn, **không cần import**: `erp` (client SDK đã đăng nhập sẵn),
 `_` (lodash), `moment`, `axios`, `input`.
 
-Import theo tên được: `zod`, `nodemailer`, `node-telegram-bot-api`,
-`@slack/web-api`, `yahoo-finance2`, `ai` và các provider `@ai-sdk/*`. Ngoài danh
+Import theo tên được: `zod`, `decimal.js` (alias `decimal` — dùng cho **số
+tiền**), `nodemailer` (`email`), `node-telegram-bot-api` (`telegram`),
+`@slack/web-api` (`slack`), `yahoo-finance2` (`yfinance`), `ai` và các provider
+`@ai-sdk/*`, cộng `lodash`/`moment`/`axios`/`erp-sdk` bản đầy đủ. Ngoài danh
 sách đó — kể cả `node:fs`, `node:child_process` — thì không.
 
 ```ts
@@ -102,6 +104,27 @@ trigger theo sự kiện record:
 
 Sai trigger hoặc code thiếu `main()` → `WorkflowDefinitionError` ném ngay ở
 client, chưa gửi request.
+
+### Thử code trước khi lưu
+
+Hai endpoint **không lưu gì** — không workflow, không run — nên đừng tạo draft
+chỉ để xem code chạy được không. SDK chưa bọc chúng, gọi thẳng qua `erp.http`:
+
+```ts
+await erp.http.request("POST", "/workflows/check", { body: { code } });
+// → { valid: true }, hoặc ErpApiError nêu dòng/cột lỗi hoặc module ngoài registry
+
+const t = await erp.http.request("POST", "/workflows/test-run", {
+  body: { code, input: {} },
+});
+// → { ok, dryRun: true, result, logs, durationMs, error? }
+```
+
+`test-run` chạy trong đúng runner thật nhưng SDK ở chế độ `development`: mọi
+lệnh ghi record được validate rồi rollback. Nó **không** được cấp env, tối đa 1
+phút, và những gì gửi ra ngoài (mail, bot, webhook) là gửi thật. `ok: false` là
+script lỗi (đọc `error.message`/`error.line`); `503` là runner bận, gửi lại.
+Cần quyền `workflow:run:create`.
 
 ## 4. Env: nơi duy nhất cất secret
 

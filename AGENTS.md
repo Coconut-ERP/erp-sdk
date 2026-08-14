@@ -122,7 +122,7 @@ write the app's `schema.json` and validate its format with `validateSchema`.
 | `src/errors.ts` | Error classes that carry the fix, not just a message |
 | `src/mode.ts` | `ERP_ENV` → `production` \| `development`, the switch that makes every record write a server-side dry run |
 | `src/cli/` | `args` (parsing), `commands` (the registry), `index` (`runCli`), `help`, `main` (bin entry), `scaffold` (`erp init`), `skill` (`erp skill install`) |
-| `skills/` | Two agent skills shipped inside the package, split by the two jobs: `erp-miniapp/` (build an app on the ERP — `schema.json`, initData, deploy) and `erp-data/` (read, write and analyse workspace data with the SDK). Each is a lean `SKILL.md` plus `references/` loaded on demand. `erp skill install` discovers every directory holding a `SKILL.md`, copies them to `~/.agents/skills/` (tool-neutral, one copy per machine) and prints how each agent reaches them — adding a third skill needs no code change |
+| `skills/` | Three agent skills shipped inside the package, split by job: `erp-miniapp/` (build an app on the ERP — `schema.json`, initData, deploy), `erp-data/` (read, write and analyse workspace data with the SDK) and `erp-workflow/` (write the code *inside* a workflow — the runner's sandbox, its module registry, its limits, and the `check`/`test-run` loop that proves a script without saving one). Each is a lean `SKILL.md` plus `references/` loaded on demand. `erp skill install` discovers every directory holding a `SKILL.md`, copies them to `~/.agents/skills/` (tool-neutral, one copy per machine) and prints how each agent reaches them — adding a fourth skill needs no code change |
 
 Two cross-cutting ideas explain most of the code:
 

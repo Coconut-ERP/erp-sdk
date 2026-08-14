@@ -21,10 +21,10 @@ attached to a [GitHub Release](https://github.com/Coconut-ERP/erp-sdk/releases) 
 install it by URL with any package manager:
 
 ```bash
-npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz
-bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz
-pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz
-yarn add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz
+npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.1/erp-sdk.tgz
+bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.1/erp-sdk.tgz
+pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.1/erp-sdk.tgz
+yarn add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.1/erp-sdk.tgz
 ```
 
 In a `package.json` dependency list that reads:
@@ -32,7 +32,7 @@ In a `package.json` dependency list that reads:
 ```json
 {
   "dependencies": {
-    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz"
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.1/erp-sdk.tgz"
   }
 }
 ```
@@ -50,7 +50,7 @@ npm install -g https://github.com/Coconut-ERP/erp-sdk/releases/download/latest/e
 Use that for a global CLI install or a throwaway script. **Do not put it in an
 app's `package.json`**: package managers cache and lock by URL, so a moving URL
 installs whatever was cached and stops being reproducible. Dependencies get the
-pinned `v0.4.0` URL above.
+pinned `v0.4.1` URL above.
 
 Installing straight from the repo also works, **but only with npm, pnpm or yarn**:
 
@@ -91,19 +91,20 @@ Errors carry what you need to fix them — `UnknownObjectError` names the object
 ## For AI agents
 
 `erp help --json` returns the entire command surface as machine-readable JSON,
-and the package ships **two agent skills**, split by the two jobs this SDK is
-used for:
+and the package ships **three agent skills**, split by the jobs this SDK is used
+for:
 
 | Skill | Teaches |
 | --- | --- |
 | **`erp-miniapp`** | Building an app on the ERP: declaring `schema.json` and `assertSchema`, identifying users through initData, the two authority models, and the deploy contract |
 | **`erp-data`** | Working a live workspace: reading the real schema first, querying with filters/sorting/pagination, walking `relation` fields without N+1, aggregating with `DataFrame` or read-only SQL, and writing (and bulk-writing) safely behind a dry run |
+| **`erp-workflow`** | Writing the code *inside* a workflow: the runner's sandbox and its fixed module registry, the limits that shape the script (60s, no retry, 256KB result), and the `check` → `test-run` loop that proves a script without saving a draft |
 
 Each is a lean `SKILL.md` plus `references/` the agent loads only when it needs
 the detail.
 
 ```bash
-npx erp skill install                    # → ~/.agents/skills/{erp-miniapp,erp-data}
+npx erp skill install                    # → ~/.agents/skills/{erp-miniapp,erp-data,erp-workflow}
 npx erp skill install --skill erp-data   # just one
 npx erp skill path                       # or point an agent at the files in place
 ```
@@ -115,7 +116,8 @@ one that autoloads a `SKILL.md`, and only from its own directory:
 ```bash
 mkdir -p ~/.claude/skills \
   && ln -sfn ~/.agents/skills/erp-data ~/.claude/skills/erp-data \
-  && ln -sfn ~/.agents/skills/erp-miniapp ~/.claude/skills/erp-miniapp
+  && ln -sfn ~/.agents/skills/erp-miniapp ~/.claude/skills/erp-miniapp \
+  && ln -sfn ~/.agents/skills/erp-workflow ~/.claude/skills/erp-workflow
 # codex / opencode / pi — one line in AGENTS.md:
 #   ERP tasks (erp-sdk): read the SKILL.md files under ~/.agents/skills first.
 ```

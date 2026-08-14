@@ -19,7 +19,8 @@ thao tác.
 **Dùng terminal hoặc AI agent** — [CLI `erp` & AI agent](10-cli-va-ai-agent.md):
 `erp doctor` để chẩn đoán kết nối/quyền, `erp objects show` / `erp schema dump`
 để xem schema thật, `erp init` để sinh app chạy được, `erp skill install` để cài
-hai skill `erp-miniapp` (dựng app) và `erp-data` (khai thác dữ liệu) vào
+ba skill `erp-miniapp` (dựng app), `erp-data` (khai thác dữ liệu) và
+`erp-workflow` (viết code workflow) vào
 `~/.agents/skills` cho mọi agent (claude, codex, opencode, pi). CLI **không làm CRUD dữ liệu** — đọc/ghi/phân tích đều viết bằng SDK.
 
 **Tra cứu khi viết code:**
@@ -32,7 +33,7 @@ hai skill `erp-miniapp` (dựng app) và `erp-data` (khai thác dữ liệu) và
 | [06 — Phân quyền](06-phan-quyen.md) | Service account, khai báo permission, `can()`/`assertPermissions()`, các tầng IAM |
 | [07 — Triển khai & vận hành](07-trien-khai-van-hanh.md) | Cài app (template/repo/zip), duyệt `schema.json` khi deploy, vòng đời deploy, ENV được inject, logs, logo, lỗi thường gặp |
 | [08 — API reference](08-api-reference.md) | Toàn bộ export của SDK: chữ ký hàm, kiểu dữ liệu, error |
-| [10 — CLI `erp` & AI agent](10-cli-va-ai-agent.md) | Khám phá workspace từ terminal (`doctor`, `whoami`, `objects show`, `schema dump`), sinh app bằng `erp init`, cài skill `erp-miniapp` + `erp-data` cho agent |
+| [10 — CLI `erp` & AI agent](10-cli-va-ai-agent.md) | Khám phá workspace từ terminal (`doctor`, `whoami`, `objects show`, `schema dump`), sinh app bằng `erp init`, cài skill `erp-miniapp` + `erp-data` + `erp-workflow` cho agent |
 | [11 — Truy vấn SQL & dashboard](11-truy-van-sql-dashboard.md) | `erp.sql()` chạy `SELECT` read-only trên tên bảng/cột hiển thị, tham số `@name`, dashboard và query đã lưu, biểu đồ, chia sẻ |
 | [12 — Workflow](12-workflow.md) | Script chạy trên server ERP: trigger `manual`/`cron`, version & publish, env chứa secret, khởi chạy và chờ kết quả run |
 
@@ -76,9 +77,9 @@ SDK **không publish lên npm**. Mỗi bản phát hành là một tarball đã 
 — cài bằng URL, package manager nào cũng được:
 
 ```bash
-npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz
-bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz
-pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz
+npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.1/erp-sdk.tgz
+bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.1/erp-sdk.tgz
+pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.1/erp-sdk.tgz
 ```
 
 Trong `package.json` của mini app:
@@ -86,7 +87,7 @@ Trong `package.json` của mini app:
 ```json
 {
   "dependencies": {
-    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz"
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.1/erp-sdk.tgz"
   }
 }
 ```
@@ -104,7 +105,7 @@ npm install -g https://github.com/Coconut-ERP/erp-sdk/releases/download/latest/e
 Dùng URL đó khi cài CLI global hoặc script dùng một lần. **Đừng đưa vào
 `package.json` của app**: package manager khoá lockfile theo URL, URL chạy được
 mãi nghĩa là cài lại có thể ra bản khác (hoặc lấy từ cache) — dependency thì
-ghim URL `v0.4.0` ở trên.
+ghim URL `v0.4.1` ở trên.
 
 Cài thẳng từ repo cũng được, **nhưng chỉ với npm, pnpm hoặc yarn**:
 

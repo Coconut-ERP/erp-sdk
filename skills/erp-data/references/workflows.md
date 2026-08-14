@@ -9,12 +9,17 @@ kỳ (nhắc hạn mỗi sáng, đồng bộ hằng đêm, tổng hợp cuối t
 Có sẵn, **không cần import**: `erp` (client đã xác thực), `_` (lodash),
 `moment`, `axios`, `input`.
 
-Import theo tên được: `zod`, `nodemailer`, `node-telegram-bot-api`,
-`@slack/web-api`, `yahoo-finance2`, `ai`, `@ai-sdk/*`.
+Import theo tên được: `zod`, `decimal.js` (alias `decimal`), `nodemailer`
+(`email`), `node-telegram-bot-api` (`telegram`), `@slack/web-api` (`slack`),
+`yahoo-finance2` (`yfinance`), `ai`, `@ai-sdk/*`, cộng bản đầy đủ của các global
+(`lodash`, `moment`, `axios`, `erp-sdk`).
 
 Ngoài danh sách đó — **kể cả `node:fs`** — thì không.
 
 Secret đọc bằng `process.env.TÊN` (đã set qua `setEnv`).
+
+Viết/sửa chính đoạn code đó (runtime, giới hạn, `check`/`test-run`) → skill
+**`erp-workflow`**.
 
 ## Vòng đời
 

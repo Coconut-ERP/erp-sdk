@@ -33,7 +33,7 @@ CLI có sẵn khi cài `erp-sdk`:
 ```bash
 BASE=https://github.com/Coconut-ERP/erp-sdk/releases/download
 
-npm install "$BASE/v0.4.0/erp-sdk.tgz"   # trong project: ghim version
+npm install "$BASE/v0.4.1/erp-sdk.tgz"   # trong project: ghim version
 npx erp help
 
 npm install -g "$BASE/latest/erp-sdk.tgz"   # global: URL không bao giờ phải sửa
@@ -41,7 +41,7 @@ erp help
 ```
 
 Tag `latest` được trỏ lại sau mỗi lần phát hành nên hợp với máy mới và CLI
-global; còn dependency của app thì ghim `v0.4.0` — package manager khoá theo URL,
+global; còn dependency của app thì ghim `v0.4.1` — package manager khoá theo URL,
 URL chạy được mãi thì cài lại không còn tái lập được.
 
 Cấu hình bằng env (hoặc flag tương ứng):
@@ -171,7 +171,7 @@ erp init don-xin-nghi --sdk "file:../erp-sdk"
 ### Cài skill
 
 ```bash
-erp skill install                        # → ~/.agents/skills/{erp-miniapp,erp-data}
+erp skill install                        # → ~/.agents/skills/{erp-miniapp,erp-data,erp-workflow}
 erp skill install --skill erp-data       # chỉ một cái
 erp skill install --dir .claude/skills   # hoặc bó gọn trong một repo
 erp skill path                           # chỉ in đường dẫn để agent tự đọc
@@ -185,30 +185,33 @@ và chỉ nạp từ thư mục của nó — nên mỗi skill cần một symli
 ```bash
 mkdir -p ~/.claude/skills \
   && ln -sfn ~/.agents/skills/erp-data ~/.claude/skills/erp-data \
-  && ln -sfn ~/.agents/skills/erp-miniapp ~/.claude/skills/erp-miniapp
+  && ln -sfn ~/.agents/skills/erp-miniapp ~/.claude/skills/erp-miniapp \
+  && ln -sfn ~/.agents/skills/erp-workflow ~/.claude/skills/erp-workflow
 ```
 
 ```markdown
 <!-- AGENTS.md ở gốc repo (hoặc ~/.codex/AGENTS.md cho mọi repo) — codex, opencode, pi -->
 ERP tasks (erp-sdk): read the SKILL.md files under ~/.agents/skills first —
-erp-miniapp (dựng app), erp-data (khai thác dữ liệu).
+erp-miniapp (dựng app), erp-data (khai thác dữ liệu), erp-workflow (viết code
+workflow chạy trên server ERP).
 ```
 
 Một bản duy nhất nên `erp skill install --force` sau khi nâng SDK là mọi agent
 cùng thấy bản mới; không có chuyện bốn bản chép rời nhau rồi lệch dần.
 
-### Hai skill, hai việc
+### Ba skill, ba việc
 
 | Skill | Dạy agent |
 | --- | --- |
 | **`erp-miniapp`** | Dựng app trên nền ERP: khai báo `schema.json` + `assertSchema`, nhận diện người dùng qua initData, hai mô hình quyền, hợp đồng runtime khi deploy. References: `schema.md`, `identity.md`, `deploy.md` |
 | **`erp-data`** | Khai thác workspace có sẵn: đọc schema thật, query có filter/sort/phân trang, tránh N+1 qua `relation`, tổng hợp bằng `DataFrame` hoặc SQL read-only, ghi và ghi hàng loạt an toàn sau dry run. References: `api.md`, `recipes.md`, `sql.md`, `workflows.md` |
+| **`erp-workflow`** | Viết code **bên trong** workflow: sandbox của runner, registry module cố định (`node:fs` bị chặn), các trần định hình cách viết (60s, không retry, result 256KB), và vòng lặp `check` → `test-run` để chứng minh script mà không để lại draft. References: `runtime.md`, `authoring.md`, `testing.md` |
 
 Mỗi skill là một `SKILL.md` gọn cộng `references/` — agent chỉ nạp phần chi tiết
 khi thật sự cần, thay vì nuốt cả nghìn dòng mỗi lần.
 
 `erp skill install` tự phát hiện mọi thư mục có `SKILL.md` trong gói, nên thêm
-skill thứ ba về sau không phải sửa CLI.
+skill thứ tư về sau không phải sửa CLI.
 
 Bộ `docs/` này (01→09) vẫn là nguồn đầy đủ nhất cho người đọc; skill
 `erp-miniapp` là bản chắt lọc cho agent.
