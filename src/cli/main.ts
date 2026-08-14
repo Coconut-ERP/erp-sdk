@@ -10,7 +10,9 @@ runCli(process.argv.slice(2), {
     process.exitCode = code;
   },
   (error: unknown) => {
-    process.stderr.write(`${JSON.stringify({ error: { type: "Error", message: String(error) } })}\n`);
+    process.stderr.write(
+      `${JSON.stringify({ error: { type: "Error", message: String(error) } })}\n`,
+    );
     process.exitCode = 1;
   },
 );

@@ -1,14 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { ErpClient } from "../src/client";
 import {
+  assertSelectStatement,
   DashboardsApi,
   QueryResult,
-  assertSelectStatement,
   quoteIdentifier,
 } from "../src/dashboards";
-import { SqlQueryError, UnknownDashboardError, UnknownQueryError } from "../src/errors";
-import type { Http, HttpOptions, Paged } from "../src/http";
-import type { DashboardDto, DashboardQueryDto, QueryResultDto } from "../src/types";
+import {
+  SqlQueryError,
+  UnknownDashboardError,
+  UnknownQueryError,
+} from "../src/errors";
+import type {
+  DashboardDto,
+  DashboardQueryDto,
+  QueryResultDto,
+} from "../src/types";
+import { FakeHttp } from "./helpers/http";
 
 function dashboard(overrides: Partial<DashboardDto> = {}): DashboardDto {
   return {
@@ -50,48 +58,22 @@ const result: QueryResultDto = {
   truncated: false,
 };
 
-interface Call {
-  method: string;
-  path: string;
-  options?: HttpOptions;
-}
-
-class FakeHttp implements Http {
-  calls: Call[] = [];
-  constructor(
-    private readonly responses: Record<string, unknown[]>,
-    private readonly meta?: Record<string, unknown>,
-  ) {}
-
-  async request<T>(method: string, path: string, options?: HttpOptions): Promise<T> {
-    this.calls.push({ method, path, options });
-    const queue = this.responses[`${method} ${path}`];
-    if (!queue || queue.length === 0) {
-      throw new Error(`Unexpected request: ${method} ${path}`);
-    }
-    return queue.shift() as T;
-  }
-
-  async requestPaged<T>(
-    method: string,
-    path: string,
-    options?: HttpOptions,
-  ): Promise<Paged<T>> {
-    const data = await this.request<T>(method, path, options);
-    return { data, meta: this.meta as Paged<T>["meta"] };
-  }
-}
-
 describe("SQL guards", () => {
   it("rejects anything that is not a single SELECT", () => {
-    expect(() => assertSelectStatement('DELETE FROM "PO"')).toThrow(SqlQueryError);
-    expect(() => assertSelectStatement("SELECT 1; SELECT 2")).toThrow(/one statement/);
+    expect(() => assertSelectStatement('DELETE FROM "PO"')).toThrow(
+      SqlQueryError,
+    );
+    expect(() => assertSelectStatement("SELECT 1; SELECT 2")).toThrow(
+      /one statement/,
+    );
     expect(() => assertSelectStatement("   ")).toThrow(SqlQueryError);
   });
 
   it("allows a leading WITH, comments and a trailing semicolon", () => {
     expect(() =>
-      assertSelectStatement("-- báo cáo\nWITH t AS (SELECT 1 AS a) SELECT * FROM t;"),
+      assertSelectStatement(
+        "-- báo cáo\nWITH t AS (SELECT 1 AS a) SELECT * FROM t;",
+      ),
     ).not.toThrow();
   });
 
@@ -111,7 +93,7 @@ describe("ad-hoc SQL", () => {
     const client = new ErpClient(http);
     const rows = await client.sql('SELECT * FROM "Sản xuất"');
 
-    expect(http.calls[0]?.options?.body).toMatchObject({
+    expect(http.body(0)).toMatchObject({
       sql: 'SELECT * FROM "Sản xuất"',
     });
     expect(rows.rowCount).toBe(2);
@@ -126,7 +108,7 @@ describe("ad-hoc SQL", () => {
       params: [{ name: "tu", type: "date" }],
       values: { tu: "2026-01-01" },
     });
-    expect(http.calls[0]?.options?.body).toEqual({
+    expect(http.body(0)).toEqual({
       sql: "SELECT @tu AS d",
       params: [{ name: "tu", type: "date" }],
       values: { tu: "2026-01-01" },
@@ -135,14 +117,18 @@ describe("ad-hoc SQL", () => {
 
   it("never sends SQL the endpoint would refuse", async () => {
     const http = new FakeHttp({});
-    await expect(new DashboardsApi(http).sql('DROP TABLE "PO"')).rejects.toBeInstanceOf(
-      SqlQueryError,
-    );
+    await expect(
+      new DashboardsApi(http).sql('DROP TABLE "PO"'),
+    ).rejects.toBeInstanceOf(SqlQueryError);
     expect(http.calls).toHaveLength(0);
   });
 
   it("flags a truncated result instead of hiding it", () => {
-    const capped = QueryResult.from({ ...result, rowCount: 1000, truncated: true });
+    const capped = QueryResult.from({
+      ...result,
+      rowCount: 1000,
+      truncated: true,
+    });
     expect(capped.truncated).toBe(true);
   });
 });
@@ -150,7 +136,9 @@ describe("ad-hoc SQL", () => {
 describe("DashboardsApi", () => {
   it("keeps paging while meta says there are more pages", async () => {
     const http = new FakeHttp(
-      { "GET /dashboards": [[dashboard({ id: "a" })], [dashboard({ id: "b" })]] },
+      {
+        "GET /dashboards": [[dashboard({ id: "a" })], [dashboard({ id: "b" })]],
+      },
       { page: 1, perPage: 100, totalItems: 12, totalPages: 2 },
     );
     const all = await new DashboardsApi(http).listAll();
@@ -202,7 +190,7 @@ describe("DashboardHandle", () => {
     const rows = await dash.run("sản lượng theo chuyền", { thang: "2026-01" });
 
     const last = http.calls[http.calls.length - 1];
-    expect(last?.options?.body).toEqual({ params: { thang: "2026-01" } });
+    expect(last?.options.body).toEqual({ params: { thang: "2026-01" } });
     expect(rows.columns).toEqual(["chuyen", "actual"]);
   });
 
@@ -215,7 +203,9 @@ describe("DashboardHandle", () => {
 
   it("says which queries exist when the name is wrong", async () => {
     const { dash } = await handle();
-    await expect(dash.run("Không có")).rejects.toBeInstanceOf(UnknownQueryError);
+    await expect(dash.run("Không có")).rejects.toBeInstanceOf(
+      UnknownQueryError,
+    );
   });
 
   it("checks a saved query's SQL before creating it", async () => {
@@ -229,10 +219,18 @@ describe("DashboardHandle", () => {
   it("re-reads queries after one is added", async () => {
     const { http, dash } = await handle({
       "POST /dashboards/dash-1/queries": [query({ id: "q-2", name: "Mới" })],
-      "GET /dashboards/dash-1/queries": [[query(), query({ id: "q-2", name: "Mới" })]],
+      "GET /dashboards/dash-1/queries": [
+        [query(), query({ id: "q-2", name: "Mới" })],
+      ],
     });
-    await dash.addQuery({ name: "Mới", sql: "SELECT 1 AS a", chartType: "number" });
+    await dash.addQuery({
+      name: "Mới",
+      sql: "SELECT 1 AS a",
+      chartType: "number",
+    });
     expect(await dash.queries()).toHaveLength(2);
-    expect(http.calls.some((c) => c.path === "/dashboards/dash-1/queries")).toBe(true);
+    expect(
+      http.calls.some((c) => c.path === "/dashboards/dash-1/queries"),
+    ).toBe(true);
   });
 });

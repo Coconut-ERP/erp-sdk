@@ -6,8 +6,9 @@ tên bảng, tên field rồi chết lúc runtime.
 
 - `erp` — CLI đi kèm gói `erp-sdk`: dựng môi trường, kiểm kết nối/quyền, in
   schema thật. **Không có lệnh CRUD dữ liệu.**
-- Skill `erp-data` — gói hướng dẫn cài vào Claude Code (hoặc agent khác đọc được
-  thư mục skill) để agent biết dùng SDK đọc/ghi/phân tích dữ liệu ERP.
+- Hai skill `erp-miniapp` và `erp-data` — gói hướng dẫn cài vào Claude Code
+  (hoặc agent khác đọc được thư mục skill) để agent biết dựng mini app và biết
+  dùng SDK đọc/ghi/phân tích dữ liệu ERP.
 
 ## Vì sao CLI không làm CRUD
 
@@ -62,7 +63,7 @@ erp objects list [--fields]
 erp objects show <object>
 erp schema dump [--out file]
 erp init [dir] [--name x] [--object x] [--sdk spec] [--force]
-erp skill install [--dir path] [--force] | erp skill path
+erp skill install [--dir path] [--skill name] [--force] | erp skill path
 erp help [command] [--json]
 ```
 
@@ -170,38 +171,47 @@ erp init don-xin-nghi --sdk "file:../erp-sdk"
 ### Cài skill
 
 ```bash
-erp skill install                        # → ~/.agents/skills/erp-data
+erp skill install                        # → ~/.agents/skills/{erp-miniapp,erp-data}
+erp skill install --skill erp-data       # chỉ một cái
 erp skill install --dir .claude/skills   # hoặc bó gọn trong một repo
 erp skill path                           # chỉ in đường dẫn để agent tự đọc
 ```
 
 Mặc định cài **một bản cho cả máy**, ở thư mục không thuộc riêng tool nào, rồi in
 sẵn cách nối cho từng agent. Claude Code là công cụ duy nhất tự nạp `SKILL.md`,
-và chỉ nạp từ thư mục của nó — nên nó cần symlink; các tool còn lại đọc
-`AGENTS.md` nên chỉ cần một dòng trỏ tới đúng file đó:
+và chỉ nạp từ thư mục của nó — nên mỗi skill cần một symlink; các tool còn lại
+đọc `AGENTS.md` nên chỉ cần một dòng trỏ tới đúng thư mục đó:
 
 ```bash
-mkdir -p ~/.claude/skills
-ln -sfn ~/.agents/skills/erp-data ~/.claude/skills/erp-data     # claude
+mkdir -p ~/.claude/skills \
+  && ln -sfn ~/.agents/skills/erp-data ~/.claude/skills/erp-data \
+  && ln -sfn ~/.agents/skills/erp-miniapp ~/.claude/skills/erp-miniapp
 ```
 
 ```markdown
 <!-- AGENTS.md ở gốc repo (hoặc ~/.codex/AGENTS.md cho mọi repo) — codex, opencode, pi -->
-ERP data tasks (erp-sdk, object/field/record, ERP_API_KEY):
-read ~/.agents/skills/erp-data/SKILL.md first.
+ERP tasks (erp-sdk): read the SKILL.md files under ~/.agents/skills first —
+erp-miniapp (dựng app), erp-data (khai thác dữ liệu).
 ```
 
 Một bản duy nhất nên `erp skill install --force` sau khi nâng SDK là mọi agent
 cùng thấy bản mới; không có chuyện bốn bản chép rời nhau rồi lệch dần.
 
-Skill `erp-data` dạy agent **dùng SDK khai thác dữ liệu**: kết nối, đọc schema
-thật, query có filter/sort/phân trang, tránh N+1 khi đi qua `relation`, tổng hợp
-bằng `DataFrame`, ghi và ghi hàng loạt an toàn, đọc lỗi để tự sửa. Gồm `SKILL.md`
-+ `references/api.md` (bề mặt SDK) + `references/recipes.md` (script chạy được:
-báo cáo, join, import CSV, dọn dữ liệu).
+### Hai skill, hai việc
 
-Dựng **mini app** là chủ đề khác — bộ `docs/` này (01→09) mới là nguồn cho việc
-đó; chỉ cho agent đọc `docs/` khi task đúng là làm mini app.
+| Skill | Dạy agent |
+| --- | --- |
+| **`erp-miniapp`** | Dựng app trên nền ERP: khai báo `schema.json` + `assertSchema`, nhận diện người dùng qua initData, hai mô hình quyền, hợp đồng runtime khi deploy. References: `schema.md`, `identity.md`, `deploy.md` |
+| **`erp-data`** | Khai thác workspace có sẵn: đọc schema thật, query có filter/sort/phân trang, tránh N+1 qua `relation`, tổng hợp bằng `DataFrame` hoặc SQL read-only, ghi và ghi hàng loạt an toàn sau dry run. References: `api.md`, `recipes.md`, `sql.md`, `workflows.md` |
+
+Mỗi skill là một `SKILL.md` gọn cộng `references/` — agent chỉ nạp phần chi tiết
+khi thật sự cần, thay vì nuốt cả nghìn dòng mỗi lần.
+
+`erp skill install` tự phát hiện mọi thư mục có `SKILL.md` trong gói, nên thêm
+skill thứ ba về sau không phải sửa CLI.
+
+Bộ `docs/` này (01→09) vẫn là nguồn đầy đủ nhất cho người đọc; skill
+`erp-miniapp` là bản chắt lọc cho agent.
 
 ### Quy trình gợi ý cho agent
 

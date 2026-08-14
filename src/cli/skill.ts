@@ -4,8 +4,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { UsageError } from "./args";
 
-export const SKILL_NAME = "erp-data";
-
 /**
  * One copy per machine, in a directory that belongs to no single tool — Claude
  * Code, Codex, opencode and pi each get pointed at it rather than each holding
@@ -26,24 +24,52 @@ async function exists(path: string): Promise<boolean> {
   );
 }
 
+/** Directories under `root` that actually carry a `SKILL.md`, alphabetically. */
+async function listSkillNames(root: string): Promise<string[]> {
+  const names: string[] = [];
+  try {
+    for (const entry of await readdir(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (await exists(join(root, entry.name, "SKILL.md"))) {
+        names.push(entry.name);
+      }
+    }
+  } catch {
+    return [];
+  }
+  return names.sort();
+}
+
 /**
- * The skill ships inside the package (`skills/`). Resolve it relative to this
- * module so it works from `dist/cli.js`, from `src/` in development, and from
- * `node_modules/erp-sdk` alike.
+ * The skills ship inside the package (`skills/`). Resolve that directory
+ * relative to this module so it works from `dist/cli.js`, from `src/` in
+ * development, and from `node_modules/erp-sdk` alike.
  */
-export async function skillSource(): Promise<string> {
+export async function skillsSource(): Promise<string> {
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    resolve(here, "../skills", SKILL_NAME),
-    resolve(here, "../../skills", SKILL_NAME),
-    resolve(here, "../../../skills", SKILL_NAME),
+    resolve(here, "../skills"),
+    resolve(here, "../../skills"),
+    resolve(here, "../../../skills"),
   ];
   for (const candidate of candidates) {
-    if (await exists(join(candidate, "SKILL.md"))) return candidate;
+    if ((await listSkillNames(candidate)).length > 0) return candidate;
   }
   throw new Error(
-    `Cannot locate the bundled "${SKILL_NAME}" skill (looked in: ${candidates.join(", ")})`,
+    `Cannot locate the bundled skills (looked in: ${candidates.join(", ")})`,
   );
+}
+
+/** Every skill this package ships, with where it lives and its entry point. */
+export async function bundledSkills(): Promise<
+  { skill: string; dir: string; entry: string }[]
+> {
+  const root = await skillsSource();
+  return (await listSkillNames(root)).map((skill) => ({
+    skill,
+    dir: join(root, skill),
+    entry: join(root, skill, "SKILL.md"),
+  }));
 }
 
 async function copyTree(from: string, to: string): Promise<string[]> {
@@ -66,53 +92,95 @@ export interface InstallSkillOptions {
   cwd: string;
   dir?: string;
   force?: boolean;
+  /** Install just this one. Omitted, every bundled skill is installed. */
+  skill?: string;
 }
 
-export interface InstallSkillResult {
+export interface InstalledSkill {
   skill: string;
   dir: string;
   entry: string;
   files: string[];
+}
+
+export interface InstallSkillResult {
+  root: string;
+  skills: InstalledSkill[];
   wiring: { agent: string; how: string }[];
 }
 
 /**
- * How each agent is told the skill exists. Only Claude Code loads a `SKILL.md`
- * on its own, and only from its own directory — hence the symlink. The rest
- * read `AGENTS.md`, so they get one line pointing at the same file.
+ * How each agent is told the skills exist. Only Claude Code loads a `SKILL.md`
+ * on its own, and only from its own directory — hence the symlinks. The rest
+ * read `AGENTS.md`, so they get one line pointing at the same files.
  */
-function wiring(entry: string, dir: string): { agent: string; how: string }[] {
+function wiring(
+  installed: InstalledSkill[],
+  root: string,
+): { agent: string; how: string }[] {
   const home = homedir();
-  const short = (path: string) => (path.startsWith(home) ? `~${path.slice(home.length)}` : path);
+  const short = (path: string) =>
+    path.startsWith(home) ? `~${path.slice(home.length)}` : path;
+  const links = installed
+    .map((item) => `ln -sfn ${short(item.dir)} ~/.claude/skills/${item.skill}`)
+    .join(" && ");
+  const names = installed.map((item) => item.skill).join(", ");
   return [
-    {
-      agent: "claude",
-      how: `mkdir -p ~/.claude/skills && ln -sfn ${short(dir)} ~/.claude/skills/${SKILL_NAME}`,
-    },
+    { agent: "claude", how: `mkdir -p ~/.claude/skills && ${links}` },
     {
       agent: "codex / opencode / pi",
       how:
-        `add one line to AGENTS.md (repo root, or ~/.codex/AGENTS.md for all repos): ` +
-        `"ERP data tasks (erp-sdk, object/field/record, ERP_API_KEY): read ${short(entry)} first."`,
+        "add one line to AGENTS.md (repo root, or ~/.codex/AGENTS.md for all " +
+        `repos): "ERP tasks (erp-sdk): read the SKILL.md files under ` +
+        `${short(root)} first — ${names}."`,
     },
   ];
 }
 
-export async function installSkill(options: InstallSkillOptions): Promise<InstallSkillResult> {
-  const source = await skillSource();
+export async function installSkill(
+  options: InstallSkillOptions,
+): Promise<InstallSkillResult> {
+  const available = await bundledSkills();
+  const wanted = options.skill
+    ? available.filter((item) => item.skill === options.skill)
+    : available;
+  if (wanted.length === 0) {
+    throw new UsageError(
+      `Unknown skill "${options.skill}". Bundled: ${available
+        .map((item) => item.skill)
+        .join(", ")}`,
+    );
+  }
+
   const root = options.dir
     ? resolve(options.cwd, expandHome(options.dir))
     : DEFAULT_SKILLS_DIR;
-  const target = join(root, SKILL_NAME);
+  const targets = wanted.map((item) => ({
+    ...item,
+    target: join(root, item.skill),
+  }));
 
-  if (await exists(target)) {
+  // Every collision is resolved before anything is written, so a refused
+  // install never leaves half the skills replaced and half stale.
+  for (const item of targets) {
+    if (!(await exists(item.target))) continue;
     if (!options.force) {
-      throw new UsageError(`${target} already exists — pass --force to overwrite`);
+      throw new UsageError(
+        `${item.target} already exists — pass --force to overwrite`,
+      );
     }
-    await rm(target, { recursive: true, force: true });
+    await rm(item.target, { recursive: true, force: true });
   }
 
-  const files = await copyTree(source, target);
-  const entry = join(target, "SKILL.md");
-  return { skill: SKILL_NAME, dir: target, entry, files, wiring: wiring(entry, target) };
+  const skills: InstalledSkill[] = [];
+  for (const item of targets) {
+    const files = await copyTree(item.dir, item.target);
+    skills.push({
+      skill: item.skill,
+      dir: item.target,
+      entry: join(item.target, "SKILL.md"),
+      files,
+    });
+  }
+  return { root, skills, wiring: wiring(skills, root) };
 }

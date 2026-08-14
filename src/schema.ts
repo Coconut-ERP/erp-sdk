@@ -1,10 +1,11 @@
 /**
  * `schema.json` — what a mini app declares it needs from the workspace.
  *
- * A mini app cannot create objects or fields any more: it ships a `schema.json`
- * at the root of its source, and whoever deploys it reviews the declaration and
- * applies it under *their own* authority. Everything here mirrors the backend
- * rules so a developer can catch a bad declaration before uploading the zip.
+ * A mini app has no authority to create objects or fields: it ships a
+ * `schema.json` at the root of its source, and whoever deploys it reviews the
+ * declaration and applies it under *their own* authority. Everything here
+ * mirrors the backend rules so a developer can catch a bad declaration before
+ * uploading the zip.
  */
 
 /** File name the backend looks for at the root of the uploaded source. */
@@ -74,7 +75,7 @@ export interface MiniAppSchema {
 
 /** Where an app stands with its declaration — mirrors `MiniApp.schemaStatus`. */
 export type SchemaStatus =
-  /** The source carries no `schema.json`; the app deploys as before. */
+  /** The source carries no `schema.json`; the app deploys without a review. */
   | "none"
   /** Waiting for a review — the backend queued no build. */
   | "pending"
@@ -145,12 +146,18 @@ function checkName(value: unknown, where: string, problems: string[]): string {
   }
   const name = value.trim();
   if (name.length > MAX_NAME_LENGTH) {
-    problems.push(`${where}: name is longer than ${MAX_NAME_LENGTH} characters`);
+    problems.push(
+      `${where}: name is longer than ${MAX_NAME_LENGTH} characters`,
+    );
   }
   return name;
 }
 
-function checkPosition(value: unknown, where: string, problems: string[]): void {
+function checkPosition(
+  value: unknown,
+  where: string,
+  problems: string[],
+): void {
   if (value === undefined) return;
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     problems.push(`${where}: "position" must be an integer >= 0`);

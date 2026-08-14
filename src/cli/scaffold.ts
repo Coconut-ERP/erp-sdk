@@ -28,7 +28,8 @@ export interface ScaffoldResult {
 }
 
 function packageName(appName: string, dir: string): string {
-  const source = dir === "." ? appName : dir.split("/").filter(Boolean).pop() ?? appName;
+  const source =
+    dir === "." ? appName : (dir.split("/").filter(Boolean).pop() ?? appName);
   const slug = source
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -40,7 +41,9 @@ function packageName(appName: string, dir: string): string {
   return slug || "erp-mini-app";
 }
 
-export async function scaffoldMiniApp(options: ScaffoldOptions): Promise<ScaffoldResult> {
+export async function scaffoldMiniApp(
+  options: ScaffoldOptions,
+): Promise<ScaffoldResult> {
   const target = resolve(options.cwd, options.dir);
   const dirName = target.split("/").filter(Boolean).pop() ?? "mini-app";
   const appName = options.appName ?? dirName;
@@ -62,7 +65,9 @@ export async function scaffoldMiniApp(options: ScaffoldOptions): Promise<Scaffol
         () => false,
       );
       if (exists) {
-        throw new UsageError(`${full} already exists — pass --force to overwrite`);
+        throw new UsageError(
+          `${full} already exists — pass --force to overwrite`,
+        );
       }
     }
   }

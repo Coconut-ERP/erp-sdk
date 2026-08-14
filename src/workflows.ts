@@ -7,6 +7,7 @@ import {
 } from "./errors";
 import type { Http } from "./http";
 import type { WriteOptions } from "./objects";
+import { resolveByName } from "./resolve";
 import type {
   CronTriggerConfig,
   SharingDto,
@@ -101,16 +102,17 @@ export function assertWorkflowTrigger(trigger: WorkflowTrigger): void {
   if (!config.schedule || !config.timezone) {
     throw new WorkflowDefinitionError(
       "trigger",
-      'a cron trigger needs config.schedule and config.timezone, e.g. ' +
+      "a cron trigger needs config.schedule and config.timezone, e.g. " +
         '{ schedule: "0 0 9 * * *", timezone: "Asia/Ho_Chi_Minh" }',
     );
   }
   const schedule = config.schedule.trim();
   if (schedule.startsWith("@")) return;
-  if (schedule.split(/\s+/).length !== 6) {
+  const fields = schedule.split(/\s+/).length;
+  if (fields !== 6) {
     throw new WorkflowDefinitionError(
       "trigger",
-      `cron schedule "${schedule}" has ${schedule.split(/\s+/).length} fields — ` +
+      `cron schedule "${schedule}" has ${fields} fields — ` +
         'this scheduler wants 6 (seconds first): "0 0 9 * * *" is 09:00 daily. ' +
         "Descriptors (@daily, @every 1h) work too",
     );
@@ -163,7 +165,8 @@ export interface WorkflowChanges {
   version?: number;
 }
 
-export interface ListWorkflowsOptions {
+/** Offset pagination, shared by the workflow list and a workflow's run list. */
+export interface OffsetPageOptions {
   limit?: number;
   offset?: number;
 }
@@ -187,11 +190,11 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export class WorkflowsApi {
   constructor(
     private readonly http: Http,
-    private readonly options: { dryRun?: boolean } = {},
+    private readonly options: WriteOptions = {},
   ) {}
 
   /** One page, newest first. The list omits each workflow's `code`. */
-  async list(options: ListWorkflowsOptions = {}): Promise<WorkflowDto[]> {
+  async list(options: OffsetPageOptions = {}): Promise<WorkflowDto[]> {
     return (
       (await this.http.request<WorkflowDto[]>("GET", "/workflows", {
         query: { limit: options.limit, offset: options.offset },
@@ -211,7 +214,10 @@ export class WorkflowsApi {
     const maxPages = options.maxPages ?? 50;
     const all: WorkflowDto[] = [];
     for (let page = 0; page < maxPages; page++) {
-      const batch = await this.list({ limit: pageSize, offset: page * pageSize });
+      const batch = await this.list({
+        limit: pageSize,
+        offset: page * pageSize,
+      });
       if (batch.length === 0) return all;
       all.push(...batch);
       if (batch.length < pageSize) return all;
@@ -252,17 +258,18 @@ export class WorkflowsApi {
    */
   async handle(nameOrId: string): Promise<WorkflowHandle> {
     const workflows = await this.listAll();
-    const found =
-      workflows.find((w) => w.id === nameOrId) ??
-      workflows.find((w) => w.name === nameOrId) ??
-      workflows.find((w) => w.name.toLowerCase() === nameOrId.toLowerCase());
+    const found = resolveByName(workflows, nameOrId);
     if (!found) {
       throw new UnknownWorkflowError(
         nameOrId,
         workflows.map((w) => w.name),
       );
     }
-    return new WorkflowHandle(this.http, await this.get(found.id), this.options);
+    return new WorkflowHandle(
+      this.http,
+      await this.get(found.id),
+      this.options,
+    );
   }
 }
 
@@ -271,7 +278,7 @@ export class WorkflowHandle {
   constructor(
     private readonly http: Http,
     private dto: WorkflowDto,
-    private readonly options: { dryRun?: boolean } = {},
+    private readonly options: WriteOptions = {},
   ) {}
 
   get id(): string {
@@ -315,7 +322,10 @@ export class WorkflowHandle {
   }
 
   async refresh(): Promise<WorkflowDto> {
-    this.dto = await this.http.request<WorkflowDto>("GET", `/workflows/${this.id}`);
+    this.dto = await this.http.request<WorkflowDto>(
+      "GET",
+      `/workflows/${this.id}`,
+    );
     return this.dto;
   }
 
@@ -326,9 +336,13 @@ export class WorkflowHandle {
   async update(changes: WorkflowChanges): Promise<WorkflowDto> {
     if (changes.trigger) assertWorkflowTrigger(changes.trigger);
     if (changes.code !== undefined) assertWorkflowCode(changes.code);
-    this.dto = await this.http.request<WorkflowDto>("PUT", `/workflows/${this.id}`, {
-      body: { ...changes, version: changes.version ?? this.version },
-    });
+    this.dto = await this.http.request<WorkflowDto>(
+      "PUT",
+      `/workflows/${this.id}`,
+      {
+        body: { ...changes, version: changes.version ?? this.version },
+      },
+    );
     return this.dto;
   }
 
@@ -394,12 +408,16 @@ export class WorkflowHandle {
     if (options.dryRun ?? this.options.dryRun ?? false) {
       throw new DryRunUnsupportedError(`workflow run (${this.name})`);
     }
-    return this.http.request<WorkflowRunDto>("POST", `/workflows/${this.id}/runs`, {
-      body: { input },
-    });
+    return this.http.request<WorkflowRunDto>(
+      "POST",
+      `/workflows/${this.id}/runs`,
+      {
+        body: { input },
+      },
+    );
   }
 
-  async runs(options: ListWorkflowsOptions = {}): Promise<WorkflowRunDto[]> {
+  async runs(options: OffsetPageOptions = {}): Promise<WorkflowRunDto[]> {
     return (
       (await this.http.request<WorkflowRunDto[]>(
         "GET",

@@ -60,8 +60,8 @@ Dry run chỉ có ở `create`, `createMany`, `update`, `updateWhere`. `delete`,
 | `assertPermissions(extra?)` | Ném `MissingPermissionsError` nếu thiếu (refresh cache trước) |
 | `asUser(accessToken, workspaceId?)` | Client mới chạy theo quyền + row scope của user đó |
 | `session(initData)` | Đổi initData đã ký → `{ user, client, expiresIn }` |
-| `issueInitData(serviceAccountId)` | Phía app chủ: phát chuỗi initData cho một mini app |
-| `assertSchema(schema, { refresh? })` | Khớp `schema.json` → `Record<tên bảng, ObjectHandle>`; lệch → `SchemaMismatchError` |
+| `issueInitData(serviceAccountId)` | Phía app chủ: phát chuỗi initData (→ skill `erp-miniapp`) |
+| `assertSchema(schema, { refresh? })` | Khớp `schema.json` → `Record<tên bảng, ObjectHandle>` (→ skill `erp-miniapp`) |
 | `schemaPlan(schema, { refresh? })` | Diff như màn duyệt, không ném lỗi → `SchemaObjectPlan[]` |
 | `createObject(name, { position? })` | **Cần key admin** — service account `member` nhận 403 |
 | `ensureObject(name, fields[])` | Idempotent tạo bảng + field còn thiếu (key admin) |
@@ -78,6 +78,7 @@ Thuộc tính: `id`, `name`, `meta` (`ObjectDto`), `fields` (`FieldDto[]`).
 | Method | Ghi chú |
 | --- | --- |
 | `field(nameOrKey)` | `FieldDto`; sai → `UnknownFieldError` kèm `.known` |
+| `hasField(nameOrKey)` | boolean, không ném lỗi |
 | `fieldKey(nameOrKey)` | Key nội bộ của field |
 | `records()` | `RecordQuery` mới |
 | `get(id)` | `RecordDto` |
@@ -205,7 +206,7 @@ erp.sql(sql, { params?, values? }): Promise<QueryResult>   // = erp.dashboards.s
 | `dash.updateQuery(nameOrId, changes)` · `dash.deleteQuery(nameOrId)` | |
 | `dash.update({ name?, description? })` · `dash.delete()` | Xoá dashboard = xoá mọi query |
 | `dash.sharing()` · `dash.setSharing(visibility, entries?)` | `"workspace" \| "restricted"` |
-| `assertSelectStatement(sql)` · `quoteIdentifier(name)` | Kiểm SQL / bọc tên hiển thị |
+| `assertSelectStatement(sql)` · `assertQueryParams(params)` · `quoteIdentifier(name)` | Kiểm SQL / kiểm số tham số / bọc tên hiển thị |
 | `MAX_QUERY_ROWS` (1000) · `MAX_QUERY_PARAMS` (20) · `QUERY_SYSTEM_COLUMNS` · `WORKSPACE_ID_PARAM` | Giới hạn & hằng số |
 
 Tham số: `params: [{ name, type: "text"|"number"|"boolean"|"date"|"datetime",
@@ -214,47 +215,9 @@ của `dash.run` (query đã lưu). Chi tiết cú pháp: `references/sql.md`.
 
 ## Workflow
 
-| Export | Ghi chú |
-| --- | --- |
-| `erp.workflows.list({ limit?, offset? })` · `listAll()` | Không kèm `code` |
-| `erp.workflows.create({ name, code, trigger, description?, env? })` | Trả handle ở **draft** |
-| `erp.workflow(nameOrId)` | Resolve theo tên, đã nạp `code` |
-| `wf.id` · `name` · `version` · `status` · `isPublished` · `trigger` · `code` · `envNames` · `meta` | Thuộc tính |
-| `wf.update({ name?, description?, trigger?, code?, version? })` | Đưa về **draft** |
-| `wf.publish(version?)` · `wf.refresh()` · `wf.delete(version?)` | `version` mặc định lấy của handle |
-| `wf.setEnv(env)` | **Thay cả map**; `WORKFLOW_ENV_KEEP` = `"[KEEP]"` giữ giá trị cũ; ≤ 50 |
-| `wf.run(input?, { dryRun? })` | Ném `DryRunUnsupportedError` khi `ERP_ENV=development` |
-| `wf.waitForRun(runId, { timeoutMs?, intervalMs?, throwOnError? })` | Mặc định 120s / 1s / throw |
-| `wf.runAndWait(input?, options?)` · `wf.runs({ limit?, offset? })` · `wf.getRun(runId)` | |
-| `wf.sharing()` · `wf.setSharing(visibility, entries?)` | |
-| `runOutput(run)` · `runResult(run)` · `runLogs(run)` | `run.output` là **chuỗi JSON** |
-| `isRunFinished(status)` · `WORKFLOW_RUN_PENDING_STATUSES` | `ENQUEUED`/`PENDING` chưa xong |
-| `WORKFLOW_TRIGGER_TYPES` | Chỉ `manual` và `cron` |
-| `assertWorkflowTrigger` · `assertWorkflowCode` · `assertWorkflowEnv` | → `WorkflowDefinitionError` |
-
-Cron: **6 trường có giây** + timezone IANA — `{ type: "cron", config:
-{ schedule: "0 0 9 * * *", timezone: "Asia/Ho_Chi_Minh" } }`. `@daily`,
-`@every 1h` được; `"0 9 * * *"` (5 trường) bị từ chối.
-
-## schema.json (thuần hàm, không gọi mạng)
-
-```ts
-interface MiniAppSchema { objects: { name: string; position?: number;
-  fields?: { name: string; type: string; config?: object; position?: number }[] }[] }
-```
-
-| Export | Ghi chú |
-| --- | --- |
-| `validateSchema(value)` | `string[]` mọi lỗi backend bắt lúc upload; rỗng = hợp lệ |
-| `planSchema(schema, workspace)` | Diff offline; `workspace`: `{ name, fields: [{ name, type }] }[]` — chính là output của `erp schema dump` |
-| `schemaSettled(plans)` · `schemaConflicts(plans)` | Không còn gì để duyệt / danh sách xung đột kiểu |
-| `unresolvedRelations(schema, workspace)` | Relation trỏ bảng không tồn tại |
-| `schemaSize` · `relationTarget` · `defineSchema` | Tiện ích |
-| `SCHEMA_FILE` · `FIELD_TYPES` · `DECLARABLE_FIELD_TYPES` · `COMPUTED_FIELD_TYPES` | Hằng số |
-| `MAX_SCHEMA_BYTES` (256KB) · `MAX_SCHEMA_OBJECTS` (50) · `MAX_SCHEMA_FIELDS` (200) · `MAX_NAME_LENGTH` (255) | Giới hạn |
-
-`formula`, `lookup`, `rollup` **không khai báo được** — config của chúng trỏ tới
-field khác bằng key nội bộ, phải tạo tay trong workspace.
+`erp.workflows` / `erp.workflow(nameOrId)` — script chạy trên server ERP theo
+`manual` hoặc `cron`. Bề mặt đầy đủ, vòng đời draft/publish, env write-only và
+cách đọc kết quả run: **`references/workflows.md`**.
 
 ## Quyền
 
@@ -293,9 +256,12 @@ cần endpoint SDK chưa bọc; `requestPaged(...)` trả `{ data, meta }` khi c
 | `WorkflowRunTimeoutError` | `.workflow`, `.run`, `.timeoutMs` — run **vẫn chạy** |
 | `ErpApiError` | `.status`, `.trace`, `.details` |
 
-## Bridge initData (browser, chỉ dùng cho mini app)
+## Không nằm trong skill này
 
-`readInitDataFromLocation()`, `receiveInitData({ allowedOrigins, timeoutMs? })`,
-`sendInitDataToFrame(target, initData, targetOrigin)`, `parseInitData(initData)`
-(**chưa xác minh** — chỉ để hiển thị), `INIT_DATA_MESSAGE_TYPE`,
-`INIT_DATA_URL_PARAM`. `"*"` bị từ chối ở cả hai chiều.
+`schema.json` (`validateSchema`, `planSchema`, `assertSchema`, `schemaConflicts`,
+`unresolvedRelations`…) và bridge initData phía browser (`readInitDataFromLocation`,
+`receiveInitData`, `parseInitData`, `sendInitDataToFrame`) phục vụ việc **dựng
+mini app** — xem skill **`erp-miniapp`**.
+
+`erp.asUser(accessToken)` và `erp.session(initData)` thì vẫn dùng được từ đây khi
+cần chạy theo quyền của một user cụ thể (xem bảng `ErpClient` ở trên).

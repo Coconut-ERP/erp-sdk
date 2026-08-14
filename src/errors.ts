@@ -129,7 +129,7 @@ export class DryRunUnsupportedError extends Error {
 class UnknownByNameError extends Error {
   constructor(
     kind: string,
-    /** What was asked for. Never called `name` — that is the error's own class. */
+    /** The name or id that was asked for. */
     readonly wanted: string,
     readonly known: string[],
   ) {

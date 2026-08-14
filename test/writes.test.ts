@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ErpClient } from "../src/client";
 import { DryRunUnsupportedError, RelationValueError } from "../src/errors";
-import type { Http, HttpOptions } from "../src/http";
+import type { Http } from "../src/http";
 import { ERP_ENV_VAR, resolveMode } from "../src/mode";
 import { MAX_RELATION_IDS, ObjectHandle } from "../src/objects";
 import type { FieldDto, ObjectDto, RecordDto } from "../src/types";
+import { FakeHttp } from "./helpers/http";
 
 const meta: ObjectDto = {
   id: "obj-1",
@@ -50,24 +51,6 @@ function record(id: string, data: Record<string, unknown>): RecordDto {
   };
 }
 
-class FakeHttp implements Http {
-  calls: { method: string; path: string; options?: HttpOptions }[] = [];
-  constructor(private readonly responses: Record<string, unknown[]> = {}) {}
-
-  async request<T>(method: string, path: string, options?: HttpOptions): Promise<T> {
-    this.calls.push({ method, path, options });
-    const queue = this.responses[`${method} ${path}`];
-    if (!queue || queue.length === 0) {
-      throw new Error(`Unexpected request: ${method} ${path}`);
-    }
-    return queue.shift() as T;
-  }
-
-  body(index = 0): Record<string, unknown> {
-    return this.calls[index]?.options?.body as Record<string, unknown>;
-  }
-}
-
 function devClient(http: Http): ErpClient {
   return new ErpClient(http, [], {
     baseUrl: "https://erp.example.com",
@@ -88,7 +71,9 @@ describe("resolveMode", () => {
   });
 
   it("refuses a value it does not know instead of guessing production", () => {
-    expect(() => resolveMode({ [ERP_ENV_VAR]: "devlopment" })).toThrow(/not a known environment/);
+    expect(() => resolveMode({ [ERP_ENV_VAR]: "devlopment" })).toThrow(
+      /not a known environment/,
+    );
   });
 
   it("ignores NODE_ENV — only ERP_ENV switches the mode", () => {
@@ -102,7 +87,9 @@ describe("development mode", () => {
       "GET /objects": [[meta]],
       "GET /objects/obj-1/fields": [fields],
       "POST /objects/obj-1/records": [{ ...record("r1", {}), dryRun: true }],
-      "POST /objects/obj-1/records/bulk": [{ created: 1, records: [], dryRun: true }],
+      "POST /objects/obj-1/records/bulk": [
+        { created: 1, records: [], dryRun: true },
+      ],
       "PUT /objects/obj-1/records/r1": [{ ...record("r1", {}), dryRun: true }],
       "POST /objects/obj-1/records/bulk-update": [
         { matched: 7, updated: 7, hasMore: false, dryRun: true },
@@ -120,13 +107,14 @@ describe("development mode", () => {
     const bulk = await orders.createMany([{ "Tiêu đề": "Đơn B" }]);
     expect(bulk.dryRun).toBe(true);
     await orders.update("r1", { "Tiêu đề": "Đơn A2" }, 1);
-    const mass = await orders.records().where("Tiêu đề", "equals", "x").update({ "Tiêu đề": "y" });
+    const mass = await orders
+      .records()
+      .where("Tiêu đề", "equals", "x")
+      .update({ "Tiêu đề": "y" });
     expect(mass.matched).toBe(7);
 
-    const bodies = http.calls
-      .filter((call) => call.method !== "GET")
-      .map((call) => (call.options?.body as { dryRun?: boolean }).dryRun);
-    expect(bodies).toEqual([true, true, true, true]);
+    const flags = http.writeBodies().map((body) => body.dryRun);
+    expect(flags).toEqual([true, true, true, true]);
   });
 
   it("lets a single call opt out, and production opt in", async () => {
@@ -156,27 +144,38 @@ describe("development mode", () => {
     });
     const orders = await devClient(http).object("Đơn hàng");
 
-    await expect(orders.delete("r1", 3)).rejects.toBeInstanceOf(DryRunUnsupportedError);
-    await expect(orders.createLink("r1", "Chi tiết", "r9")).rejects.toBeInstanceOf(
+    await expect(orders.delete("r1", 3)).rejects.toBeInstanceOf(
       DryRunUnsupportedError,
     );
+    await expect(
+      orders.createLink("r1", "Chi tiết", "r9"),
+    ).rejects.toBeInstanceOf(DryRunUnsupportedError);
     expect(http.calls.filter((call) => call.method !== "GET")).toHaveLength(0);
 
     await orders.delete("r1", { version: 3, dryRun: false });
-    expect(http.calls[http.calls.length - 1]?.options?.query).toEqual({ version: 3 });
+    expect(http.calls[http.calls.length - 1]?.options.query).toEqual({
+      version: 3,
+    });
   });
 });
 
 describe("relation fields in data", () => {
   it("writes the whole list of ids in the same request as the rest of the row", async () => {
     const http = new FakeHttp({
-      "POST /objects/obj-1/records": [record("r1", { title: "Đơn A", lines: ["l1", "l2"] })],
+      "POST /objects/obj-1/records": [
+        record("r1", { title: "Đơn A", lines: ["l1", "l2"] }),
+      ],
       "PUT /objects/obj-1/records/r1": [record("r1", { lines: [] })],
     });
     const handle = new ObjectHandle(http, meta, fields);
 
-    const created = await handle.create({ "Tiêu đề": "Đơn A", "Chi tiết": ["l1", "l2"] });
-    expect(http.body(0)).toEqual({ data: { title: "Đơn A", lines: ["l1", "l2"] } });
+    const created = await handle.create({
+      "Tiêu đề": "Đơn A",
+      "Chi tiết": ["l1", "l2"],
+    });
+    expect(http.body(0)).toEqual({
+      data: { title: "Đơn A", lines: ["l1", "l2"] },
+    });
     expect(handle.linkedIds(created, "Chi tiết")).toEqual(["l1", "l2"]);
 
     // null leaves the links alone, [] clears them — never the other way round.
@@ -187,25 +186,36 @@ describe("relation fields in data", () => {
   it("catches the shapes the server would reject, naming the field as written", async () => {
     const handle = new ObjectHandle(new FakeHttp({}), meta, fields);
 
-    await expect(handle.create({ "Chi tiết": "l1" })).rejects.toBeInstanceOf(RelationValueError);
-    await expect(
-      handle.create({ "Chi tiết": [{ id: "l1" }] }),
-    ).rejects.toThrow(/map them to ids/);
-    await expect(
-      handle.create({
-        "Chi tiết": Array.from({ length: MAX_RELATION_IDS + 1 }, (_, i) => `l${i}`),
-      }),
-    ).rejects.toThrow(/at most 100/);
-    await expect(handle.create({ "Chi tiết": ["l1", ""] })).rejects.toBeInstanceOf(
+    await expect(handle.create({ "Chi tiết": "l1" })).rejects.toBeInstanceOf(
       RelationValueError,
     );
+    await expect(handle.create({ "Chi tiết": [{ id: "l1" }] })).rejects.toThrow(
+      /map them to ids/,
+    );
+    await expect(
+      handle.create({
+        "Chi tiết": Array.from(
+          { length: MAX_RELATION_IDS + 1 },
+          (_, i) => `l${i}`,
+        ),
+      }),
+    ).rejects.toThrow(/at most 100/);
+    await expect(
+      handle.create({ "Chi tiết": ["l1", ""] }),
+    ).rejects.toBeInstanceOf(RelationValueError);
   });
 
   it("leaves non-relation values alone", async () => {
-    const http = new FakeHttp({ "POST /objects/obj-1/records": [record("r1", {})] });
+    const http = new FakeHttp({
+      "POST /objects/obj-1/records": [record("r1", {})],
+    });
     const handle = new ObjectHandle(http, meta, fields);
 
     await handle.create({ "Tiêu đề": ["vẫn", "là", "mảng"] });
-    expect((http.body(0).data as Record<string, unknown>).title).toEqual(["vẫn", "là", "mảng"]);
+    expect((http.body(0).data as Record<string, unknown>).title).toEqual([
+      "vẫn",
+      "là",
+      "mảng",
+    ]);
   });
 });

@@ -1,24 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ErpClient } from "../src/client";
-import type { Http, HttpOptions } from "../src/http";
 import {
   parseInitData,
   readInitDataFromLocation,
   sendInitDataToFrame,
 } from "../src/webapp";
-
-class FakeHttp implements Http {
-  calls: { method: string; path: string; options?: HttpOptions }[] = [];
-  constructor(private readonly responses: Record<string, unknown>) {}
-
-  async request<T>(method: string, path: string, options?: HttpOptions): Promise<T> {
-    this.calls.push({ method, path, options });
-    if (!(`${method} ${path}` in this.responses)) {
-      throw new Error(`Unexpected request: ${method} ${path}`);
-    }
-    return this.responses[`${method} ${path}`] as T;
-  }
-}
+import { FakeHttp } from "./helpers/http";
 
 const sampleInitData = new URLSearchParams({
   user: JSON.stringify({ id: "u-1", email: "an@corp.vn", displayName: "An" }),
@@ -31,7 +18,11 @@ const sampleInitData = new URLSearchParams({
 describe("parseInitData", () => {
   it("decodes user, workspace, and audience fields", () => {
     const parsed = parseInitData(sampleInitData);
-    expect(parsed.user).toEqual({ id: "u-1", email: "an@corp.vn", displayName: "An" });
+    expect(parsed.user).toEqual({
+      id: "u-1",
+      email: "an@corp.vn",
+      displayName: "An",
+    });
     expect(parsed.workspaceId).toBe("ws-1");
     expect(parsed.serviceAccountId).toBe("sa-1");
     expect(parsed.authDate).toBe(1753900000);
@@ -64,39 +55,49 @@ describe("sendInitDataToFrame", () => {
       message: { type: "erp-miniapp:init-data", initData: sampleInitData },
       origin: "https://miniapp.example.com",
     });
-    expect(() => sendInitDataToFrame(target, sampleInitData, "*")).toThrowError();
+    expect(() =>
+      sendInitDataToFrame(target, sampleInitData, "*"),
+    ).toThrowError();
   });
 });
 
 describe("ErpClient mini app flow", () => {
   it("issues init data for a service account", async () => {
     const http = new FakeHttp({
-      "POST /auth/miniapp/init-data": { initData: sampleInitData, expiresIn: 300 },
+      "POST /auth/miniapp/init-data": [
+        { initData: sampleInitData, expiresIn: 300 },
+      ],
     });
     const client = new ErpClient(http);
     const issued = await client.issueInitData("sa-1");
     expect(issued.initData).toBe(sampleInitData);
-    expect(http.calls[0]?.options?.body).toEqual({ serviceAccountId: "sa-1" });
+    expect(http.body(0)).toEqual({ serviceAccountId: "sa-1" });
   });
 
   it("exchanges init data for a user-scoped client", async () => {
     const http = new FakeHttp({
-      "POST /auth/miniapp/session": {
-        accessToken: "jwt-user-token",
-        tokenType: "Bearer",
-        expiresIn: 900,
-        user: { id: "u-1", email: "an@corp.vn" },
-      },
+      "POST /auth/miniapp/session": [
+        {
+          accessToken: "jwt-user-token",
+          tokenType: "Bearer",
+          expiresIn: 900,
+          user: { id: "u-1", email: "an@corp.vn" },
+        },
+      ],
     });
     const client = new ErpClient(http, [], {
       baseUrl: "https://erp.example.com",
       apiKey: "erp_sk_test",
     });
 
-    const { user, client: userClient, expiresIn } = await client.session(sampleInitData);
+    const {
+      user,
+      client: userClient,
+      expiresIn,
+    } = await client.session(sampleInitData);
     expect(user.id).toBe("u-1");
     expect(expiresIn).toBe(900);
     expect(userClient).not.toBe(client);
-    expect(http.calls[0]?.options?.body).toEqual({ initData: sampleInitData });
+    expect(http.body(0)).toEqual({ initData: sampleInitData });
   });
 });

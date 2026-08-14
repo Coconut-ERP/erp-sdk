@@ -24,11 +24,18 @@ npx vitest run test/cli.test.ts   # one file
 npx vitest run -t "schema check"  # one test by name
 npx vitest                        # watch mode
 npm run typecheck                 # tsc --noEmit (strict, noUncheckedIndexedAccess)
+npm run lint                      # biome check . — format + lint, what CI runs
+npm run format                    # biome check --write . — applies both
 npm run build                     # tsup → dist/ (ESM + CJS + d.ts, plus dist/cli.js)
 ```
 
-There is no linter configured at the repo root. The CLI must be built before it can be
-exercised end to end: `npm run build && ./dist/cli.js doctor`.
+Biome (`biome.json`) is the only formatter and linter: 2-space indent, 80 columns,
+double quotes, organised imports, the recommended rule set. `npm run lint` runs in CI
+before typecheck, so a formatting drift or an unused import fails the release the same
+way a type error does.
+
+The CLI must be built before it can be exercised end to end:
+`npm run build && ./dist/cli.js doctor`.
 
 ## Distribution
 
@@ -110,19 +117,22 @@ write the app's `schema.json` and validate its format with `validateSchema`.
 | `src/schema.ts` | The `schema.json` model plus the backend's validation and diff rules as **pure functions** (`validateSchema`, `planSchema`, `schemaConflicts`, `unresolvedRelations`) — no I/O, so the CLI, the SDK and build scripts all share one source of truth |
 | `src/frame.ts` | `DataFrame`/`GroupedFrame` — immutable pandas-style analysis over fetched records; every method returns a new frame |
 | `src/permissions.ts` | `isAllowed`/`missingPermissions`, mirroring the backend enforcer (deny beats allow, `*` wildcards, `manage` implies nothing) |
+| `src/resolve.ts` | `resolveByName` — id → exact name → case-insensitive name, the single implementation behind `client.object()`, `workflows.handle()`, `dashboards.handle()` and `DashboardHandle.query()` |
 | `src/webapp.ts` | Browser side of the initData bridge: URL param, `postMessage`, and `parseInitData` (unverified, display only) |
 | `src/errors.ts` | Error classes that carry the fix, not just a message |
 | `src/mode.ts` | `ERP_ENV` → `production` \| `development`, the switch that makes every record write a server-side dry run |
 | `src/cli/` | `args` (parsing), `commands` (the registry), `index` (`runCli`), `help`, `main` (bin entry), `scaffold` (`erp init`), `skill` (`erp skill install`) |
-| `skills/erp-data/` | Skill shipped inside the package — using the **SDK** to read, write and analyse workspace data; `erp skill install` copies it to `~/.agents/skills/` (tool-neutral, one copy per machine) and prints how each agent reaches it |
+| `skills/` | Two agent skills shipped inside the package, split by the two jobs: `erp-miniapp/` (build an app on the ERP — `schema.json`, initData, deploy) and `erp-data/` (read, write and analyse workspace data with the SDK). Each is a lean `SKILL.md` plus `references/` loaded on demand. `erp skill install` discovers every directory holding a `SKILL.md`, copies them to `~/.agents/skills/` (tool-neutral, one copy per machine) and prints how each agent reaches them — adding a third skill needs no code change |
 
 Two cross-cutting ideas explain most of the code:
 
-**Names, not ids.** `ErpClient.object()` resolves an object by id, exact name, then
-case-insensitive name, and caches the handle under both keys. `ObjectHandle` does the
-same for fields and translates display names ↔ field keys on every read and write, so
-callers never see internal keys (`toFrame({ by: "key" })` opts out). Mutations must call
-`invalidate()`/`objects(true)` or the caches go stale.
+**Names, not ids.** `resolveByName` (`src/resolve.ts`) is the one implementation of
+id → exact name → case-insensitive name; `ErpClient.object()` uses it and caches the
+handle under both keys. `ObjectHandle` does the same for fields through its own
+`lookup`, and translates display names ↔ field keys on every read and write, so callers
+never see internal keys (`toFrame({ by: "key" })` opts out). Mutations must call
+`invalidate()`/`objects(true)` or the caches go stale. Anything new addressed by name
+resolves through `resolveByName` too — do not hand-roll a fourth copy.
 
 **A mini app has no schema authority.** Its service account joins the workspace as
 `member`, so it cannot create objects or fields. It declares what it needs in a
@@ -168,7 +178,7 @@ the `listAll` helpers; a short page is not the end.
 - **The CLI's scope is closed: setup, diagnosis, discovery.** `doctor`, `whoami`,
   `objects list/show`, `schema dump`, `init`, `skill install/path` — and nothing that
   reads, writes or analyses records. New capability belongs in the SDK (and in the
-  `erp-data` skill that teaches it), not in a new command; a command that only wraps one
+  skill that teaches it), not in a new command; a command that only wraps one
   SDK call in flags is exactly what was removed. If a command genuinely is setup work, it
   is one entry in `COMMANDS` (`src/cli/commands.ts`) with summary, args, flags and
   examples — the same spec renders `erp help` and `erp help --json`, and unknown flags are
@@ -180,8 +190,10 @@ the `listAll` helpers; a short page is not the end.
   `SchemaMismatchError.missing`/`.conflicts` name the gap. New errors should follow this,
   and be serialized with a `hint` in `serializeError` (`src/cli/index.ts`).
 - Anything new that is part of the public surface must be re-exported from `src/index.ts`.
-- Tests are unit tests with no network: SDK tests inject a fake `Http`, CLI tests inject a
-  fake `fetch` plus captured stdout/stderr into `runCli` (`harness()` in `test/cli.test.ts`).
-  Keep it that way — no live workspace in the suite.
+- Tests are unit tests with no network: SDK tests inject the shared `FakeHttp`
+  (`test/helpers/http.ts` — one queue of responses per `"METHOD /path"`, the last one
+  repeating, an unregistered path throwing), CLI tests inject a fake `fetch` plus
+  captured stdout/stderr into `runCli` (`harness()` in `test/cli.test.ts`). Keep it that
+  way — no live workspace in the suite, and no second HTTP double.
 - API keys are server-side only: never log them, never ship them to a browser, never write
   them into examples, tests or docs. `.env` at the repo root is gitignored and real.

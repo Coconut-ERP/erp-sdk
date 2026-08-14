@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ErpClient } from "../src/client";
 import { SchemaMismatchError } from "../src/errors";
-import type { Http, HttpOptions } from "../src/http";
 import {
   type MiniAppSchema,
   planSchema,
@@ -10,6 +9,7 @@ import {
   unresolvedRelations,
   validateSchema,
 } from "../src/schema";
+import { FakeHttp } from "./helpers/http";
 
 const SCHEMA: MiniAppSchema = {
   objects: [
@@ -61,10 +61,16 @@ describe("validateSchema", () => {
     });
 
     expect(problems).toContain('Object #1 has an unknown key "field"');
-    expect(problems).toContain('Field "X" of "A" has unsupported type "barcode"');
+    expect(problems).toContain(
+      'Field "X" of "A" has unsupported type "barcode"',
+    );
     expect(problems).toContain('Object "A" declares field "x" twice');
-    expect(problems.some((p) => p.includes("rollup fields are computed"))).toBe(true);
-    expect(problems.some((p) => p.includes("needs config.targetObject"))).toBe(true);
+    expect(problems.some((p) => p.includes("rollup fields are computed"))).toBe(
+      true,
+    );
+    expect(problems.some((p) => p.includes("needs config.targetObject"))).toBe(
+      true,
+    );
     expect(problems).toContain('schema.json declares object "a" twice');
   });
 });
@@ -83,14 +89,20 @@ describe("planSchema", () => {
   it("diffs the declaration the way the review screen does", () => {
     const plans = planSchema(SCHEMA, workspace);
     expect(plans[0]).toMatchObject({ name: "Đơn nghỉ phép", action: "create" });
-    expect(plans[0]?.fields.every((field) => field.action === "create")).toBe(true);
+    expect(plans[0]?.fields.every((field) => field.action === "create")).toBe(
+      true,
+    );
     expect(plans[1]).toMatchObject({ name: "Nhân viên", action: "unchanged" });
     expect(schemaSettled(plans)).toBe(false);
   });
 
   it("marks an existing table that is missing a field as update", () => {
     const plans = planSchema(
-      { objects: [{ name: "Nhân viên", fields: [{ name: "Email", type: "email" }] }] },
+      {
+        objects: [
+          { name: "Nhân viên", fields: [{ name: "Email", type: "email" }] },
+        ],
+      },
       workspace,
     );
     expect(plans[0]?.action).toBe("update");
@@ -99,10 +111,17 @@ describe("planSchema", () => {
 
   it("reports a same-name different-type field as a conflict", () => {
     const plans = planSchema(
-      { objects: [{ name: "Nhân viên", fields: [{ name: "Mã NV", type: "number" }] }] },
+      {
+        objects: [
+          { name: "Nhân viên", fields: [{ name: "Mã NV", type: "number" }] },
+        ],
+      },
       workspace,
     );
-    expect(plans[0]?.fields[0]).toMatchObject({ action: "conflict", currentType: "text" });
+    expect(plans[0]?.fields[0]).toMatchObject({
+      action: "conflict",
+      currentType: "text",
+    });
     expect(schemaConflicts(plans)).toEqual([
       "Nhân viên.Mã NV is text, the app declares number",
     ]);
@@ -110,7 +129,11 @@ describe("planSchema", () => {
 
   it("settles when the workspace already matches", () => {
     const plans = planSchema(
-      { objects: [{ name: "nhân viên", fields: [{ name: "mã nv", type: "text" }] }] },
+      {
+        objects: [
+          { name: "nhân viên", fields: [{ name: "mã nv", type: "text" }] },
+        ],
+      },
       workspace,
     );
     expect(schemaSettled(plans)).toBe(true);
@@ -125,7 +148,11 @@ describe("planSchema", () => {
             {
               name: "A",
               fields: [
-                { name: "Chủ", type: "relation", config: { targetObject: "Khách" } },
+                {
+                  name: "Chủ",
+                  type: "relation",
+                  config: { targetObject: "Khách" },
+                },
               ],
             },
           ],
@@ -135,16 +162,6 @@ describe("planSchema", () => {
     ).toContain('points at "Khách"');
   });
 });
-
-class FakeHttp implements Http {
-  constructor(private readonly responses: Record<string, unknown>) {}
-
-  async request<T>(method: string, path: string, _options?: HttpOptions): Promise<T> {
-    const key = `${method} ${path}`;
-    if (!(key in this.responses)) throw new Error(`Unexpected request: ${key}`);
-    return this.responses[key] as T;
-  }
-}
 
 function field(objectId: string, key: string, name: string, type: string) {
   return {
@@ -168,15 +185,17 @@ const SMALL: MiniAppSchema = {
 describe("assertSchema", () => {
   it("returns a handle per declared object when the workspace matches", async () => {
     const http = new FakeHttp({
-      "GET /objects": [{ id: "obj-1", workspaceId: "ws-1", name: "Nhân viên", position: 0 }],
-      "GET /objects/obj-1/fields": [field("obj-1", "code", "Mã NV", "text")],
+      "GET /objects": [
+        [{ id: "obj-1", workspaceId: "ws-1", name: "Nhân viên", position: 0 }],
+      ],
+      "GET /objects/obj-1/fields": [[field("obj-1", "code", "Mã NV", "text")]],
     });
     const objects = await new ErpClient(http).assertSchema(SMALL);
     expect(objects["Nhân viên"]?.id).toBe("obj-1");
   });
 
   it("fails fast, and says the review is someone else's step", async () => {
-    const http = new FakeHttp({ "GET /objects": [] });
+    const http = new FakeHttp({ "GET /objects": [[]] });
     await expect(new ErpClient(http).assertSchema(SMALL)).rejects.toThrowError(
       SchemaMismatchError,
     );
@@ -188,8 +207,12 @@ describe("assertSchema", () => {
 
   it("separates a type conflict from a missing field", async () => {
     const http = new FakeHttp({
-      "GET /objects": [{ id: "obj-1", workspaceId: "ws-1", name: "Nhân viên", position: 0 }],
-      "GET /objects/obj-1/fields": [field("obj-1", "code", "Mã NV", "number")],
+      "GET /objects": [
+        [{ id: "obj-1", workspaceId: "ws-1", name: "Nhân viên", position: 0 }],
+      ],
+      "GET /objects/obj-1/fields": [
+        [field("obj-1", "code", "Mã NV", "number")],
+      ],
     });
     const error = await new ErpClient(http)
       .assertSchema(SMALL)
@@ -198,7 +221,12 @@ describe("assertSchema", () => {
     expect(error).toBeInstanceOf(SchemaMismatchError);
     expect((error as SchemaMismatchError).missing).toEqual([]);
     expect((error as SchemaMismatchError).conflicts).toEqual([
-      { object: "Nhân viên", field: "Mã NV", type: "text", currentType: "number" },
+      {
+        object: "Nhân viên",
+        field: "Mã NV",
+        type: "text",
+        currentType: "number",
+      },
     ]);
   });
 });

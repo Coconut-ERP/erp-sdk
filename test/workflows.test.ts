@@ -7,15 +7,15 @@ import {
   WorkflowRunFailedError,
   WorkflowRunTimeoutError,
 } from "../src/errors";
-import type { Http, HttpOptions } from "../src/http";
 import type { WorkflowDto, WorkflowRunDto } from "../src/types";
 import {
   isRunFinished,
   runLogs,
   runResult,
-  WorkflowsApi,
   WORKFLOW_ENV_KEEP,
+  WorkflowsApi,
 } from "../src/workflows";
+import { FakeHttp } from "./helpers/http";
 
 const CODE = "async function main(input) { return input }";
 
@@ -52,26 +52,6 @@ function run(overrides: Partial<WorkflowRunDto> = {}): WorkflowRunDto {
   };
 }
 
-interface Call {
-  method: string;
-  path: string;
-  options?: HttpOptions;
-}
-
-class FakeHttp implements Http {
-  calls: Call[] = [];
-  constructor(private readonly responses: Record<string, unknown[]>) {}
-
-  async request<T>(method: string, path: string, options?: HttpOptions): Promise<T> {
-    this.calls.push({ method, path, options });
-    const queue = this.responses[`${method} ${path}`];
-    if (!queue || queue.length === 0) {
-      throw new Error(`Unexpected request: ${method} ${path}`);
-    }
-    return queue.shift() as T;
-  }
-}
-
 describe("workflow definition checks", () => {
   it("rejects trigger types the backend does not have", async () => {
     const api = new WorkflowsApi(new FakeHttp({}));
@@ -101,7 +81,10 @@ describe("workflow definition checks", () => {
       await api.create({
         name: "x",
         code: CODE,
-        trigger: { type: "cron", config: { schedule, timezone: "Asia/Ho_Chi_Minh" } },
+        trigger: {
+          type: "cron",
+          config: { schedule, timezone: "Asia/Ho_Chi_Minh" },
+        },
       });
     }
     expect(http.calls).toHaveLength(2);
@@ -143,9 +126,9 @@ describe("WorkflowsApi", () => {
 
   it("names the known workflows when the name is wrong", async () => {
     const http = new FakeHttp({ "GET /workflows": [[workflow()]] });
-    await expect(new WorkflowsApi(http).handle("Nhac don")).rejects.toBeInstanceOf(
-      UnknownWorkflowError,
-    );
+    await expect(
+      new WorkflowsApi(http).handle("Nhac don"),
+    ).rejects.toBeInstanceOf(UnknownWorkflowError);
   });
 
   it("walks offsets until a page is short", async () => {
@@ -157,7 +140,7 @@ describe("WorkflowsApi", () => {
     });
     const all = await new WorkflowsApi(http).listAll({ pageSize: 2 });
     expect(all.map((w) => w.id)).toEqual(["a", "b", "c"]);
-    expect(http.calls[1]?.options?.query).toEqual({ limit: 2, offset: 2 });
+    expect(http.calls[1]?.options.query).toEqual({ limit: 2, offset: 2 });
   });
 });
 
@@ -173,14 +156,14 @@ describe("WorkflowHandle", () => {
     const handle = await new WorkflowsApi(http).handle("wf-1");
 
     await handle.update({ code: CODE });
-    expect(http.calls[2]?.options?.body).toMatchObject({ version: 2 });
+    expect(http.body(2)).toMatchObject({ version: 2 });
     expect(handle.status).toBe("draft");
 
     await handle.publish();
-    expect(http.calls[3]?.options?.body).toEqual({ version: 3 });
+    expect(http.body(3)).toEqual({ version: 3 });
 
     await handle.delete();
-    expect(http.calls[4]?.options?.query).toEqual({ version: 4 });
+    expect(http.calls[4]?.options.query).toEqual({ version: 4 });
   });
 
   it("keeps a secret it cannot read by resending the KEEP sentinel", async () => {
@@ -193,7 +176,7 @@ describe("WorkflowHandle", () => {
     expect(handle.envNames).toEqual(["SMTP_PASSWORD"]);
 
     await handle.setEnv({ SMTP_PASSWORD: WORKFLOW_ENV_KEEP, BOT_TOKEN: "t" });
-    expect(http.calls[2]?.options?.body).toEqual({
+    expect(http.body(2)).toEqual({
       env: { SMTP_PASSWORD: "[KEEP]", BOT_TOKEN: "t" },
     });
   });
@@ -205,7 +188,9 @@ describe("WorkflowHandle", () => {
     });
     const client = new ErpClient(http, [], undefined, "development");
     const handle = await client.workflow("wf-1");
-    await expect(handle.run({ a: 1 })).rejects.toBeInstanceOf(DryRunUnsupportedError);
+    await expect(handle.run({ a: 1 })).rejects.toBeInstanceOf(
+      DryRunUnsupportedError,
+    );
     await expect(handle.run({ a: 1 }, { dryRun: false })).rejects.toThrow(
       /Unexpected request: POST/,
     );
@@ -229,9 +214,14 @@ describe("WorkflowHandle", () => {
       "GET /workflows/wf-1/runs/run-1": [run({ status: "PENDING" }), finished],
     });
     const handle = await new WorkflowsApi(http).handle("wf-1");
-    const result = await handle.runAndWait({ ngay: "2026-01-01" }, { intervalMs: 1 });
+    const result = await handle.runAndWait(
+      { ngay: "2026-01-01" },
+      { intervalMs: 1 },
+    );
 
-    expect(http.calls[2]?.options?.body).toEqual({ input: { ngay: "2026-01-01" } });
+    expect(http.body(2)).toEqual({
+      input: { ngay: "2026-01-01" },
+    });
     expect(runResult<{ sent: number }>(result)?.sent).toBe(3);
     expect(runLogs(result)).toEqual(["log: bắt đầu"]);
   });
@@ -245,9 +235,9 @@ describe("WorkflowHandle", () => {
       ],
     });
     const handle = await new WorkflowsApi(http).handle("wf-1");
-    await expect(handle.waitForRun("run-1", { intervalMs: 1 })).rejects.toBeInstanceOf(
-      WorkflowRunFailedError,
-    );
+    await expect(
+      handle.waitForRun("run-1", { intervalMs: 1 }),
+    ).rejects.toBeInstanceOf(WorkflowRunFailedError);
   });
 
   it("times out without pretending the run stopped", async () => {

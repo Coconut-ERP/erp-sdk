@@ -1,21 +1,20 @@
 import {
-  MissingPermissionsError,
-  type SchemaGap,
-  SchemaMismatchError,
-  UnknownFieldError,
-  UnknownObjectError,
-} from "./errors";
-import {
-  DashboardHandle,
+  type DashboardHandle,
   DashboardsApi,
   type QueryResult,
   type SqlOptions,
 } from "./dashboards";
+import {
+  MissingPermissionsError,
+  type SchemaGap,
+  SchemaMismatchError,
+  UnknownObjectError,
+} from "./errors";
 import { FetchHttp, type Http } from "./http";
 import { type ErpMode, isDryRunMode, resolveMode } from "./mode";
 import { ObjectHandle } from "./objects";
-import { WorkflowHandle, WorkflowsApi } from "./workflows";
 import { isAllowed, missingPermissions } from "./permissions";
+import { resolveByName } from "./resolve";
 import {
   type MiniAppSchema,
   planSchema,
@@ -32,6 +31,7 @@ import type {
   RequiredPermission,
   UserDto,
 } from "./types";
+import { type WorkflowHandle, WorkflowsApi } from "./workflows";
 
 export interface MiniAppConfig {
   baseUrl: string;
@@ -166,13 +166,19 @@ export class ErpClient {
   async assertPermissions(extra?: RequiredPermission[]): Promise<void> {
     const required = [...this.required, ...(extra ?? [])];
     if (required.length === 0) return;
-    const missing = missingPermissions(await this.myPermissions(true), required);
+    const missing = missingPermissions(
+      await this.myPermissions(true),
+      required,
+    );
     if (missing.length > 0) throw new MissingPermissionsError(missing);
   }
 
   async objects(refresh = false): Promise<ObjectDto[]> {
     if (!this.objectsCache || refresh) {
-      this.objectsCache = await this.http.request<ObjectDto[]>("GET", "/objects");
+      this.objectsCache = await this.http.request<ObjectDto[]>(
+        "GET",
+        "/objects",
+      );
     }
     return this.objectsCache;
   }
@@ -181,11 +187,7 @@ export class ErpClient {
     const cached = this.handleCache.get(nameOrId);
     if (cached) return cached;
 
-    const objects = await this.objects();
-    const meta =
-      objects.find((o) => o.id === nameOrId) ??
-      objects.find((o) => o.name === nameOrId) ??
-      objects.find((o) => o.name.toLowerCase() === nameOrId.toLowerCase());
+    const meta = resolveByName(await this.objects(), nameOrId);
     if (!meta) throw new UnknownObjectError(nameOrId);
 
     const fields = await this.http.request<FieldDto[]>(
@@ -287,7 +289,11 @@ export class ErpClient {
       }
       for (const field of plan.fields) {
         if (field.action === "create") {
-          missing.push({ object: plan.name, field: field.name, type: field.type });
+          missing.push({
+            object: plan.name,
+            field: field.name,
+            type: field.type,
+          });
         } else if (field.action === "conflict") {
           conflicts.push({
             object: plan.name,
@@ -310,9 +316,9 @@ export class ErpClient {
   }
 
   /**
-   * Creates an object. Mini apps cannot do this any more (their service
-   * account is a `member`) — it is for tooling run with an admin key, such as
-   * preparing a workspace before installing an app.
+   * Creates an object. Not available to a mini app, whose service account is a
+   * `member` — this is for tooling run with an admin key, such as preparing a
+   * workspace before installing an app.
    *
    * Structure changes have no dry run on the server, so this writes for real
    * in `development` mode too. Dry runs cover record writes only.
@@ -325,7 +331,9 @@ export class ErpClient {
       body: { name, position: options.position ?? 0 },
     });
     this.objectsCache = undefined;
-    const handle = new ObjectHandle(this.http, meta, [], { dryRun: this.dryRun });
+    const handle = new ObjectHandle(this.http, meta, [], {
+      dryRun: this.dryRun,
+    });
     this.handleCache.set(meta.id, handle);
     this.handleCache.set(meta.name, handle);
     return handle;
@@ -365,12 +373,7 @@ export class ErpClient {
   }
 
   async hasObject(nameOrId: string): Promise<boolean> {
-    const objects = await this.objects();
-    return objects.some(
-      (o) =>
-        o.id === nameOrId ||
-        o.name.toLowerCase() === nameOrId.toLowerCase(),
-    );
+    return resolveByName(await this.objects(), nameOrId) !== undefined;
   }
 
   /**
@@ -386,27 +389,22 @@ export class ErpClient {
     name: string,
     fields: EnsureFieldSpec[] = [],
   ): Promise<ObjectHandle> {
-    let handle: ObjectHandle;
-    try {
-      handle = await this.object(name);
-    } catch (error) {
-      if (!(error instanceof UnknownObjectError)) throw error;
+    let exists = await this.hasObject(name);
+    if (!exists) {
+      // The cached list can predate an object someone else just created.
       await this.objects(true);
-      handle = (await this.hasObject(name))
-        ? await this.object(name)
-        : await this.createObject(name);
+      exists = await this.hasObject(name);
     }
+    const handle = exists
+      ? await this.object(name)
+      : await this.createObject(name);
 
     for (const spec of fields) {
-      try {
-        handle.field(spec.name);
-      } catch (error) {
-        if (!(error instanceof UnknownFieldError)) throw error;
-        await handle.addField(spec.name, spec.type, {
-          config: spec.config,
-          position: spec.position,
-        });
-      }
+      if (handle.hasField(spec.name)) continue;
+      await handle.addField(spec.name, spec.type, {
+        config: spec.config,
+        position: spec.position,
+      });
     }
     return handle;
   }

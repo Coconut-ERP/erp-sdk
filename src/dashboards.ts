@@ -5,6 +5,7 @@ import {
 } from "./errors";
 import { DataFrame, type Row } from "./frame";
 import type { Http } from "./http";
+import { resolveByName } from "./resolve";
 import type {
   ChartType,
   DashboardDto,
@@ -80,7 +81,19 @@ export function assertSelectStatement(sql: string): void {
   const withoutStrings = stripped.replace(STRINGS, "''");
   const semicolon = withoutStrings.indexOf(";");
   if (semicolon >= 0 && withoutStrings.slice(semicolon + 1).trim() !== "") {
-    throw new SqlQueryError("only one statement runs — remove everything after the ;");
+    throw new SqlQueryError(
+      "only one statement runs — remove everything after the ;",
+    );
+  }
+}
+
+/** The other cap the endpoint enforces: how many `@name` params one query declares. */
+export function assertQueryParams(params: QueryParamSpec[]): void {
+  if (params.length > MAX_QUERY_PARAMS) {
+    throw new SqlQueryError(
+      `it declares ${params.length} parameters, but at most ` +
+        `${MAX_QUERY_PARAMS} are accepted`,
+    );
   }
 }
 
@@ -176,19 +189,12 @@ export class DashboardsApi {
   async list(
     options: ListDashboardsOptions = {},
   ): Promise<{ dashboards: DashboardDto[]; meta?: PageMeta }> {
-    const query = { page: options.page, perPage: options.perPage };
-    if (this.http.requestPaged) {
-      const paged = await this.http.requestPaged<DashboardDto[]>(
-        "GET",
-        "/dashboards",
-        { query },
-      );
-      return { dashboards: paged.data ?? [], meta: paged.meta };
-    }
-    const dashboards = await this.http.request<DashboardDto[]>("GET", "/dashboards", {
-      query,
-    });
-    return { dashboards: dashboards ?? [] };
+    const paged = await this.http.requestPaged<DashboardDto[]>(
+      "GET",
+      "/dashboards",
+      { query: { page: options.page, perPage: options.perPage } },
+    );
+    return { dashboards: paged.data ?? [], meta: paged.meta };
   }
 
   /** Every dashboard the caller may see, walking `meta.totalPages`. */
@@ -208,7 +214,10 @@ export class DashboardsApi {
     return this.http.request<DashboardDto>("GET", `/dashboards/${dashboardId}`);
   }
 
-  async create(spec: { name: string; description?: string }): Promise<DashboardHandle> {
+  async create(spec: {
+    name: string;
+    description?: string;
+  }): Promise<DashboardHandle> {
     const dto = await this.http.request<DashboardDto>("POST", "/dashboards", {
       body: { name: spec.name, description: spec.description },
     });
@@ -218,10 +227,7 @@ export class DashboardsApi {
   /** Resolves by id, then exact name, then case-insensitive name. */
   async handle(nameOrId: string): Promise<DashboardHandle> {
     const dashboards = await this.listAll();
-    const found =
-      dashboards.find((d) => d.id === nameOrId) ??
-      dashboards.find((d) => d.name === nameOrId) ??
-      dashboards.find((d) => d.name.toLowerCase() === nameOrId.toLowerCase());
+    const found = resolveByName(dashboards, nameOrId);
     if (!found) {
       throw new UnknownDashboardError(
         nameOrId,
@@ -238,6 +244,7 @@ export class DashboardsApi {
    */
   async sql(sql: string, options: SqlOptions = {}): Promise<QueryResult> {
     assertSelectStatement(sql);
+    if (options.params) assertQueryParams(options.params);
     const dto = await this.http.request<QueryResultDto>(
       "POST",
       "/dashboards/queries/preview",
@@ -271,15 +278,25 @@ export class DashboardHandle {
   }
 
   async refresh(): Promise<DashboardDto> {
-    this.dto = await this.http.request<DashboardDto>("GET", `/dashboards/${this.id}`);
+    this.dto = await this.http.request<DashboardDto>(
+      "GET",
+      `/dashboards/${this.id}`,
+    );
     this.queryCache = this.dto.queries;
     return this.dto;
   }
 
-  async update(changes: { name?: string; description?: string }): Promise<DashboardDto> {
-    this.dto = await this.http.request<DashboardDto>("PUT", `/dashboards/${this.id}`, {
-      body: changes,
-    });
+  async update(changes: {
+    name?: string;
+    description?: string;
+  }): Promise<DashboardDto> {
+    this.dto = await this.http.request<DashboardDto>(
+      "PUT",
+      `/dashboards/${this.id}`,
+      {
+        body: changes,
+      },
+    );
     return this.dto;
   }
 
@@ -301,10 +318,7 @@ export class DashboardHandle {
   /** Resolves a query by id, then exact name, then case-insensitive name. */
   async query(nameOrId: string): Promise<DashboardQueryDto> {
     const queries = await this.queries();
-    const found =
-      queries.find((q) => q.id === nameOrId) ??
-      queries.find((q) => q.name === nameOrId) ??
-      queries.find((q) => q.name.toLowerCase() === nameOrId.toLowerCase());
+    const found = resolveByName(queries, nameOrId);
     if (!found) {
       throw new UnknownQueryError(
         nameOrId,
@@ -317,6 +331,7 @@ export class DashboardHandle {
 
   async addQuery(spec: QuerySpec): Promise<DashboardQueryDto> {
     assertSelectStatement(spec.sql);
+    if (spec.params) assertQueryParams(spec.params);
     const created = await this.http.request<DashboardQueryDto>(
       "POST",
       `/dashboards/${this.id}/queries`,
@@ -339,6 +354,7 @@ export class DashboardHandle {
     changes: QueryChanges,
   ): Promise<DashboardQueryDto> {
     if (changes.sql !== undefined) assertSelectStatement(changes.sql);
+    if (changes.params) assertQueryParams(changes.params);
     const target = await this.query(nameOrId);
     const updated = await this.http.request<DashboardQueryDto>(
       "PUT",

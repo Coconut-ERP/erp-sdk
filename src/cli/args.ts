@@ -24,9 +24,6 @@ export interface ParsedArgs {
 const ALIASES: Record<string, string> = {
   h: "help",
   v: "version",
-  w: "where",
-  f: "field",
-  s: "set",
 };
 
 export function parseArgv(argv: string[]): ParsedArgs {
@@ -35,7 +32,8 @@ export function parseArgv(argv: string[]): ParsedArgs {
   let literal = false;
 
   for (let i = 0; i < argv.length; i++) {
-    const token = argv[i]!;
+    const token = argv[i];
+    if (token === undefined) continue;
 
     if (literal || token === "-" || !token.startsWith("-")) {
       positional.push(token);
@@ -98,34 +96,4 @@ export function flagBool(args: ParsedArgs, name: string): boolean {
   if (typeof value === "boolean") return value;
   const last = value[value.length - 1];
   return last !== "false" && last !== "0";
-}
-
-export function flagNumber(args: ParsedArgs, name: string): number | undefined {
-  const raw = flagString(args, name);
-  if (raw === undefined) return undefined;
-  const value = Number(raw);
-  if (!Number.isFinite(value)) {
-    throw new UsageError(`--${name} must be a number, got "${raw}"`);
-  }
-  return value;
-}
-
-export function flagJson(
-  args: ParsedArgs,
-  name: string,
-): Record<string, unknown> | undefined {
-  const raw = flagString(args, name);
-  if (raw === undefined) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    throw new UsageError(
-      `--${name} must be valid JSON: ${(error as Error).message}`,
-    );
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new UsageError(`--${name} must be a JSON object`);
-  }
-  return parsed as Record<string, unknown>;
 }

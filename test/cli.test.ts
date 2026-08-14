@@ -2,13 +2,33 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { runCli } from "../src/cli/index";
 import { parseArgv } from "../src/cli/args";
+import { runCli } from "../src/cli/index";
 
-const OBJECTS = [{ id: "obj-1", workspaceId: "ws-1", name: "Hóa đơn", position: 0 }];
+const OBJECTS = [
+  { id: "obj-1", workspaceId: "ws-1", name: "Hóa đơn", position: 0 },
+];
 const FIELDS = [
-  { id: "f-1", objectId: "obj-1", key: "status", name: "Trạng thái", type: "single_select", config: null, position: 0, isArchived: false },
-  { id: "f-2", objectId: "obj-1", key: "total", name: "Tổng tiền", type: "currency", config: null, position: 1, isArchived: false },
+  {
+    id: "f-1",
+    objectId: "obj-1",
+    key: "status",
+    name: "Trạng thái",
+    type: "single_select",
+    config: null,
+    position: 0,
+    isArchived: false,
+  },
+  {
+    id: "f-2",
+    objectId: "obj-1",
+    key: "total",
+    name: "Tổng tiền",
+    type: "currency",
+    config: null,
+    position: 1,
+    isArchived: false,
+  },
 ];
 
 interface Call {
@@ -33,12 +53,21 @@ function harness(routes: Record<string, unknown>) {
     });
     if (!(key in routes)) {
       return new Response(
-        JSON.stringify({ success: false, message: `no route ${key}`, statusCode: 404 }),
+        JSON.stringify({
+          success: false,
+          message: `no route ${key}`,
+          statusCode: 404,
+        }),
         { status: 404 },
       );
     }
     return new Response(
-      JSON.stringify({ success: true, message: "ok", statusCode: 200, data: routes[key] }),
+      JSON.stringify({
+        success: true,
+        message: "ok",
+        statusCode: 200,
+        data: routes[key],
+      }),
       { status: 200 },
     );
   }) as unknown as typeof globalThis.fetch;
@@ -61,8 +90,14 @@ function harness(routes: Record<string, unknown>) {
     calls,
     out: () => stdout.join(""),
     err: () => stderr.join(""),
-    json: () => JSON.parse(stdout.join("")) as any,
-    errorJson: () => JSON.parse(stderr.join("")) as { error: { type: string; [k: string]: unknown } },
+    // The parsed result is a different shape per command, so a test that cares
+    // passes its own T rather than this file restating every spec in COMMANDS.
+    // biome-ignore lint/suspicious/noExplicitAny: arbitrary parsed CLI output
+    json: <T = any>(): T => JSON.parse(stdout.join("")) as T,
+    errorJson: () =>
+      JSON.parse(stderr.join("")) as {
+        error: { type: string; [k: string]: unknown };
+      },
   };
 }
 
@@ -73,9 +108,19 @@ const SCHEMA_ROUTES = {
 
 describe("argv parsing", () => {
   it("collects repeated flags, inline values and negations", () => {
-    const args = parseArgv(["doctor", "--require", "object:read", "--require=object:record:create", "--compact", "--no-fields"]);
+    const args = parseArgv([
+      "doctor",
+      "--require",
+      "object:read",
+      "--require=object:record:create",
+      "--compact",
+      "--no-fields",
+    ]);
     expect(args.positional).toEqual(["doctor"]);
-    expect(args.flags.get("require")).toEqual(["object:read", "object:record:create"]);
+    expect(args.flags.get("require")).toEqual([
+      "object:read",
+      "object:record:create",
+    ]);
     expect(args.flags.get("compact")).toBe(true);
     expect(args.flags.get("fields")).toBe(false);
   });
@@ -89,14 +134,20 @@ describe("help", () => {
     const names = spec.commands.map((c: { name: string }) => c.name);
     expect(names).toContain("objects show");
     expect(names).toContain("schema dump");
-    expect(spec.globalFlags.map((f: { name: string }) => f.name)).toContain("api-key");
+    expect(spec.globalFlags.map((f: { name: string }) => f.name)).toContain(
+      "api-key",
+    );
   });
 
   it("keeps record CRUD out of the CLI — that is the SDK's job", async () => {
     const cli = harness({});
     expect(await cli.run(["help", "--json"])).toBe(0);
-    const names: string[] = cli.json().commands.map((c: { name: string }) => c.name);
-    expect(names.some((name) => /^(records|fields|links|perms) /.test(name))).toBe(false);
+    const names: string[] = cli
+      .json()
+      .commands.map((c: { name: string }) => c.name);
+    expect(
+      names.some((name) => /^(records|fields|links|perms) /.test(name)),
+    ).toBe(false);
     expect(names).not.toContain("objects create");
     expect(names).not.toContain("objects delete");
   });
@@ -122,7 +173,10 @@ describe("objects", () => {
     expect(cli.json()).toMatchObject({
       id: "obj-1",
       name: "Hóa đơn",
-      fields: [{ key: "status", type: "single_select" }, { key: "total", type: "currency" }],
+      fields: [
+        { key: "status", type: "single_select" },
+        { key: "total", type: "currency" },
+      ],
     });
   });
 
@@ -139,7 +193,9 @@ describe("schema dump", () => {
   const dirs: string[] = [];
 
   afterEach(async () => {
-    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    await Promise.all(
+      dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+    );
   });
 
   it("prints every object with its fields", async () => {
@@ -147,10 +203,9 @@ describe("schema dump", () => {
     expect(await cli.run(["schema", "dump"])).toBe(0);
     const dump = cli.json();
     expect(dump.objects[0]).toMatchObject({ name: "Hóa đơn" });
-    expect(dump.objects[0].fields.map((f: { name: string }) => f.name)).toEqual([
-      "Trạng thái",
-      "Tổng tiền",
-    ]);
+    expect(dump.objects[0].fields.map((f: { name: string }) => f.name)).toEqual(
+      ["Trạng thái", "Tổng tiền"],
+    );
   });
 
   it("writes the dump to a file — the context an agent loads before writing code", async () => {
@@ -165,14 +220,20 @@ describe("schema dump", () => {
     const written = JSON.parse(await readFile(file, "utf8")) as {
       objects: { name: string; fields: { name: string; type: string }[] }[];
     };
-    expect(written.objects[0]?.fields[1]).toMatchObject({ name: "Tổng tiền", type: "currency" });
+    expect(written.objects[0]?.fields[1]).toMatchObject({
+      name: "Tổng tiền",
+      type: "currency",
+    });
   });
 });
 
 describe("doctor", () => {
   it("fails with hints when nothing is configured", async () => {
     const cli = harness({});
-    const code = await cli.run(["doctor"], { ERP_BASE_URL: undefined, ERP_API_KEY: undefined });
+    const code = await cli.run(["doctor"], {
+      ERP_BASE_URL: undefined,
+      ERP_API_KEY: undefined,
+    });
     expect(code).toBe(1);
     const report = cli.json();
     expect(report.ok).toBe(false);
@@ -197,22 +258,36 @@ describe("doctor", () => {
 
     const bad = harness({});
     expect(await bad.run(["doctor"], { ERP_ENV: "prodution" })).toBe(1);
-    const check = (bad.json().checks as { name: string; status: string }[]).find(
-      (c) => c.name === "mode",
-    );
+    const check = (
+      bad.json().checks as { name: string; status: string }[]
+    ).find((c) => c.name === "mode");
     expect(check?.status).toBe("fail");
   });
 
   it("checks required permissions", async () => {
     const cli = harness({
       "GET /api/v1/iam/me/permissions": [
-        { id: "p1", ruleId: "r1", resource: "object", action: "read", effect: "allow", scopeType: "all", scope: null, createdAt: "" },
+        {
+          id: "p1",
+          ruleId: "r1",
+          resource: "object",
+          action: "read",
+          effect: "allow",
+          scopeType: "all",
+          scope: null,
+          createdAt: "",
+        },
       ],
       "GET /api/v1/objects": OBJECTS,
     });
-    expect(await cli.run(["doctor", "--require", "object:record:create"])).toBe(1);
+    expect(await cli.run(["doctor", "--require", "object:record:create"])).toBe(
+      1,
+    );
     const checks = cli.json().checks as { name: string; status: string }[];
-    expect(checks.find((check) => check.name === "permission object:record:create")?.status).toBe("fail");
+    expect(
+      checks.find((check) => check.name === "permission object:record:create")
+        ?.status,
+    ).toBe("fail");
   });
 });
 
@@ -229,7 +304,9 @@ describe("usage errors", () => {
 
   it("explains missing credentials before making a request", async () => {
     const cli = harness(SCHEMA_ROUTES);
-    expect(await cli.run(["objects", "list"], { ERP_API_KEY: undefined })).toBe(2);
+    expect(await cli.run(["objects", "list"], { ERP_API_KEY: undefined })).toBe(
+      2,
+    );
     expect(cli.errorJson().error.message).toContain("Missing credentials");
     expect(cli.calls).toHaveLength(0);
   });
@@ -239,7 +316,9 @@ describe("scaffolding", () => {
   const dirs: string[] = [];
 
   afterEach(async () => {
-    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    await Promise.all(
+      dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+    );
   });
 
   async function temp(): Promise<string> {
@@ -251,7 +330,14 @@ describe("scaffolding", () => {
   it("writes a runnable mini app that declares its tables", async () => {
     const dir = await temp();
     const cli = harness({});
-    expect(await cli.run(["init", join(dir, "don-xin-nghi"), "--name", "Đơn xin nghỉ"])).toBe(0);
+    expect(
+      await cli.run([
+        "init",
+        join(dir, "don-xin-nghi"),
+        "--name",
+        "Đơn xin nghỉ",
+      ]),
+    ).toBe(0);
 
     const result = cli.json();
     expect(result.files).toContain("server.js");
@@ -267,7 +353,10 @@ describe("scaffolding", () => {
     expect(manifest.name).toBe("don-xin-nghi");
     expect(manifest.dependencies["erp-sdk"]).toBeTruthy();
 
-    const server = await readFile(join(dir, "don-xin-nghi", "server.js"), "utf8");
+    const server = await readFile(
+      join(dir, "don-xin-nghi", "server.js"),
+      "utf8",
+    );
     expect(server).toContain('const OBJECT_NAME = "Đơn xin nghỉ"');
     expect(server).toContain("app.session(initData)");
 
@@ -275,37 +364,124 @@ describe("scaffolding", () => {
     expect(await cli.run(["init", join(dir, "don-xin-nghi")])).toBe(2);
   });
 
-  it("installs the skill", async () => {
+  it("installs every bundled skill", async () => {
     const dir = await temp();
     const cli = harness({});
-    expect(await cli.run(["skill", "install", "--dir", join(dir, "skills")])).toBe(0);
-    const skill = await readFile(join(dir, "skills", "erp-data", "SKILL.md"), "utf8");
-    expect(skill).toContain("name: erp-data");
-    expect(await cli.run(["skill", "install", "--dir", join(dir, "skills")])).toBe(2);
-    expect(await cli.run(["skill", "install", "--dir", join(dir, "skills"), "--force"])).toBe(0);
+    expect(
+      await cli.run(["skill", "install", "--dir", join(dir, "skills")]),
+    ).toBe(0);
+
+    const names = cli
+      .json()
+      .skills.map((s: { skill: string }) => s.skill)
+      .sort();
+    expect(names).toEqual(["erp-data", "erp-miniapp"]);
+    for (const name of names) {
+      const skill = await readFile(
+        join(dir, "skills", name, "SKILL.md"),
+        "utf8",
+      );
+      expect(skill).toContain(`name: ${name}`);
+    }
+
+    expect(
+      await cli.run(["skill", "install", "--dir", join(dir, "skills")]),
+    ).toBe(2);
+    expect(
+      await cli.run([
+        "skill",
+        "install",
+        "--dir",
+        join(dir, "skills"),
+        "--force",
+      ]),
+    ).toBe(0);
   });
 
-  it("tells every agent how to reach the one installed copy", async () => {
+  it("installs one skill on request, and rejects a name it does not ship", async () => {
     const dir = await temp();
     const cli = harness({});
-    expect(await cli.run(["skill", "install", "--dir", join(dir, "skills")])).toBe(0);
+    expect(
+      await cli.run([
+        "skill",
+        "install",
+        "--skill",
+        "erp-data",
+        "--dir",
+        join(dir, "skills"),
+      ]),
+    ).toBe(0);
+    expect(cli.json().skills).toHaveLength(1);
+
+    const bad = harness({});
+    expect(
+      await bad.run([
+        "skill",
+        "install",
+        "--skill",
+        "erp-nope",
+        "--dir",
+        join(dir, "skills"),
+      ]),
+    ).toBe(2);
+    expect(bad.errorJson().error.message).toContain("erp-data");
+  });
+
+  it("refuses a colliding install without writing anything", async () => {
+    const dir = await temp();
+    const cli = harness({});
+    // Only erp-data is present, so a full install collides on it. The other
+    // skill must not be written while the run is being refused.
+    expect(
+      await cli.run([
+        "skill",
+        "install",
+        "--skill",
+        "erp-data",
+        "--dir",
+        join(dir, "skills"),
+      ]),
+    ).toBe(0);
+
+    const second = harness({});
+    expect(
+      await second.run(["skill", "install", "--dir", join(dir, "skills")]),
+    ).toBe(2);
+    await expect(
+      readFile(join(dir, "skills", "erp-miniapp", "SKILL.md"), "utf8"),
+    ).rejects.toThrow();
+  });
+
+  it("tells every agent how to reach the installed copies", async () => {
+    const dir = await temp();
+    const cli = harness({});
+    expect(
+      await cli.run(["skill", "install", "--dir", join(dir, "skills")]),
+    ).toBe(0);
 
     const result = cli.json();
-    expect(result.entry).toBe(join(dir, "skills", "erp-data", "SKILL.md"));
+    expect(result.root).toBe(join(dir, "skills"));
     const wiring = result.wiring as { agent: string; how: string }[];
-    // Only Claude Code autoloads a SKILL.md, and only from its own directory.
-    expect(wiring.find((w) => w.agent === "claude")?.how).toContain("~/.claude/skills/erp-data");
-    // Everything else reads AGENTS.md, so it gets a pointer at the same file.
+    // Only Claude Code autoloads a SKILL.md, and only from its own directory —
+    // so every skill needs its own symlink.
+    const claude = wiring.find((w) => w.agent === "claude")?.how ?? "";
+    expect(claude).toContain("~/.claude/skills/erp-data");
+    expect(claude).toContain("~/.claude/skills/erp-miniapp");
+    // Everything else reads AGENTS.md, so it gets a pointer at the same files.
     const shared = wiring.find((w) => w.agent.includes("codex"))?.how ?? "";
     expect(shared).toContain("AGENTS.md");
     expect(shared).toContain("SKILL.md");
     expect(cli.err()).toContain("Point your agents at it:");
   });
 
-  it("points at the bundled skill in place", async () => {
+  it("points at the bundled skills in place", async () => {
     const cli = harness({});
     expect(await cli.run(["skill", "path"])).toBe(0);
-    expect(cli.json()).toMatchObject({ skill: "erp-data" });
-    expect(cli.json().entry).toMatch(/erp-data[\\/]SKILL\.md$/);
+    const skills = cli.json().skills as { skill: string; entry: string }[];
+    expect(skills.map((s) => s.skill).sort()).toEqual([
+      "erp-data",
+      "erp-miniapp",
+    ]);
+    expect(skills[0]?.entry).toMatch(/erp-data[\\/]SKILL\.md$/);
   });
 });

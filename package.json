@@ -28,6 +28,8 @@
     "build": "tsup",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome check --write .",
     "prepare": "tsup",
     "prepublishOnly": "node -e \"console.error('erp-sdk is installed from GitHub, not from npm. See README > Installation.'); process.exit(1)\""
   },
@@ -35,6 +37,7 @@
     "lodash": "^4.17.21"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.8",
     "@types/lodash": "^4.17.7",
     "@types/node": "^26.1.2",
     "tsup": "^8.2.4",

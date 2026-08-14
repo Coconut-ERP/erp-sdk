@@ -12,6 +12,7 @@ const {
   sumBy,
   uniqBy,
 } = lodash;
+
 import type { FilterOperator, SortDirection } from "./types";
 
 export type Row = Record<string, unknown>;
@@ -101,7 +102,9 @@ function runAgg<T extends Row>(rows: T[], spec: AggSpec<T>): unknown {
     case "sum":
       return sumBy(rows, (row) => toNumber(row[field as string]));
     case "avg":
-      return rows.length === 0 ? null : meanBy(rows, (row) => toNumber(row[field as string]));
+      return rows.length === 0
+        ? null
+        : meanBy(rows, (row) => toNumber(row[field as string]));
     case "min": {
       const row = minBy(rows, (r) => toNumber(r[field as string]));
       return row ? row[field as string] : null;
@@ -270,7 +273,9 @@ export class DataFrame<T extends Row> {
     return row ? row[field] : null;
   }
 
-  countBy(field: (keyof T & string) | ((row: T) => string)): Record<string, number> {
+  countBy(
+    field: (keyof T & string) | ((row: T) => string),
+  ): Record<string, number> {
     return _countBy(this.data, field);
   }
 
@@ -282,8 +287,7 @@ export class DataFrame<T extends Row> {
     field: (keyof T & string) | ((row: T) => string),
     options: { as?: string } = {},
   ): GroupedFrame<T> {
-    const keyName =
-      options.as ?? (typeof field === "string" ? field : "key");
+    const keyName = options.as ?? (typeof field === "string" ? field : "key");
     return new GroupedFrame(_groupBy(this.data, field), keyName);
   }
 

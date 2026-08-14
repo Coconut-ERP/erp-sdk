@@ -49,13 +49,17 @@ interface LocationLike {
  * Reads initData embedded in the mini app URL — either
  * `#erpInitData=<encoded>` or `?erpInitData=<encoded>`.
  */
-export function readInitDataFromLocation(location?: LocationLike): string | undefined {
+export function readInitDataFromLocation(
+  location?: LocationLike,
+): string | undefined {
   const loc =
-    location ??
-    (typeof window !== "undefined" ? window.location : undefined);
+    location ?? (typeof window !== "undefined" ? window.location : undefined);
   if (!loc) return undefined;
 
-  for (const raw of [loc.hash.replace(/^#/, ""), loc.search.replace(/^\?/, "")]) {
+  for (const raw of [
+    loc.hash.replace(/^#/, ""),
+    loc.search.replace(/^\?/, ""),
+  ]) {
     const value = new URLSearchParams(raw).get(INIT_DATA_URL_PARAM);
     if (value) return value;
   }
@@ -72,12 +76,21 @@ export interface ReceiveInitDataOptions {
  * Mini app side of the host bridge: resolves with the initData string when the
  * host posts `{ type: "erp-miniapp:init-data", initData }` via postMessage.
  */
-export function receiveInitData(options: ReceiveInitDataOptions): Promise<string> {
+export function receiveInitData(
+  options: ReceiveInitDataOptions,
+): Promise<string> {
   if (typeof window === "undefined") {
-    return Promise.reject(new Error("receiveInitData requires a browser environment"));
+    return Promise.reject(
+      new Error("receiveInitData requires a browser environment"),
+    );
   }
-  if (options.allowedOrigins.length === 0 || options.allowedOrigins.includes("*")) {
-    return Promise.reject(new Error("receiveInitData requires explicit allowedOrigins"));
+  if (
+    options.allowedOrigins.length === 0 ||
+    options.allowedOrigins.includes("*")
+  ) {
+    return Promise.reject(
+      new Error("receiveInitData requires explicit allowedOrigins"),
+    );
   }
 
   return new Promise((resolve, reject) => {
@@ -86,7 +99,8 @@ export function receiveInitData(options: ReceiveInitDataOptions): Promise<string
     const listener = (event: MessageEvent) => {
       if (!options.allowedOrigins.includes(event.origin)) return;
       const data = event.data as { type?: string; initData?: string } | null;
-      if (!data || data.type !== INIT_DATA_MESSAGE_TYPE || !data.initData) return;
+      if (!data || data.type !== INIT_DATA_MESSAGE_TYPE || !data.initData)
+        return;
       window.removeEventListener("message", listener);
       if (timer) clearTimeout(timer);
       resolve(data.initData);

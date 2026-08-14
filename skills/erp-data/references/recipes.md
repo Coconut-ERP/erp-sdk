@@ -342,43 +342,8 @@ const rows = await (await erp.dashboard("Vận hành")).run("Doanh thu theo thá
 
 ## 13. Workflow chạy 9h sáng mỗi ngày
 
-```js
-const code = `
-async function main(input) {
-  const orders = await erp.object("Đơn hàng");
-  const quaHan = await orders.records()
-    .where("Trạng thái", "equals", "new")
-    .where("Hạn giao", "less_than", moment().format("YYYY-MM-DD"))
-    .fetchAll({ max: 500 });
-
-  console.log("Quá hạn:", quaHan.length);
-  return { count: quaHan.length };
-}`;
-
-const wf = await erp.workflows.create({
-  name: "Nhắc đơn quá hạn",
-  code,
-  trigger: { type: "cron", config: { schedule: "0 0 9 * * *", timezone: "Asia/Ho_Chi_Minh" } },
-});
-await wf.publish();                       // ⚠ không publish thì cron không chạy code mới
-
-const run = await wf.runAndWait({});       // thử ngay một lượt
-console.log(runResult(run), runLogs(run));
-```
-
-Sửa code sau này:
-
-```js
-const wf = await erp.workflow("Nhắc đơn quá hạn");
-await wf.update({ code: codeMoi });        // → về draft
-await wf.publish();
-```
-
-Thêm secret mà không xoá secret cũ:
-
-```js
-await wf.setEnv({ SMTP_PASSWORD: WORKFLOW_ENV_KEEP, BOT_TOKEN: "token-mới" });
-```
+Dựng workflow, publish, chạy thử và đọc kết quả — ví dụ đầy đủ cùng toàn bộ luật
+(trigger, version/publish, env write-only) nằm ở **`references/workflows.md`**.
 
 ## Bẫy đã trả giá
 

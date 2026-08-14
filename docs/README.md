@@ -19,8 +19,8 @@ thao tác.
 **Dùng terminal hoặc AI agent** — [CLI `erp` & AI agent](10-cli-va-ai-agent.md):
 `erp doctor` để chẩn đoán kết nối/quyền, `erp objects show` / `erp schema dump`
 để xem schema thật, `erp init` để sinh app chạy được, `erp skill install` để cài
-skill `erp-data` vào `~/.agents/skills` cho mọi agent (claude, codex, opencode,
-pi). CLI **không làm CRUD dữ liệu** — đọc/ghi/phân tích đều viết bằng SDK.
+hai skill `erp-miniapp` (dựng app) và `erp-data` (khai thác dữ liệu) vào
+`~/.agents/skills` cho mọi agent (claude, codex, opencode, pi). CLI **không làm CRUD dữ liệu** — đọc/ghi/phân tích đều viết bằng SDK.
 
 **Tra cứu khi viết code:**
 
@@ -32,7 +32,7 @@ pi). CLI **không làm CRUD dữ liệu** — đọc/ghi/phân tích đều vi�
 | [06 — Phân quyền](06-phan-quyen.md) | Service account, khai báo permission, `can()`/`assertPermissions()`, các tầng IAM |
 | [07 — Triển khai & vận hành](07-trien-khai-van-hanh.md) | Cài app (template/repo/zip), duyệt `schema.json` khi deploy, vòng đời deploy, ENV được inject, logs, logo, lỗi thường gặp |
 | [08 — API reference](08-api-reference.md) | Toàn bộ export của SDK: chữ ký hàm, kiểu dữ liệu, error |
-| [10 — CLI `erp` & AI agent](10-cli-va-ai-agent.md) | Khám phá workspace từ terminal (`doctor`, `whoami`, `objects show`, `schema dump`), sinh app bằng `erp init`, cài skill `erp-data` cho agent |
+| [10 — CLI `erp` & AI agent](10-cli-va-ai-agent.md) | Khám phá workspace từ terminal (`doctor`, `whoami`, `objects show`, `schema dump`), sinh app bằng `erp init`, cài skill `erp-miniapp` + `erp-data` cho agent |
 | [11 — Truy vấn SQL & dashboard](11-truy-van-sql-dashboard.md) | `erp.sql()` chạy `SELECT` read-only trên tên bảng/cột hiển thị, tham số `@name`, dashboard và query đã lưu, biểu đồ, chia sẻ |
 | [12 — Workflow](12-workflow.md) | Script chạy trên server ERP: trigger `manual`/`cron`, version & publish, env chứa secret, khởi chạy và chờ kết quả run |
 

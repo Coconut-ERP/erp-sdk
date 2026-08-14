@@ -368,7 +368,12 @@ export type ChartType =
   | "sankey"
   | "sunburst";
 
-export type QueryParamType = "text" | "number" | "boolean" | "date" | "datetime";
+export type QueryParamType =
+  | "text"
+  | "number"
+  | "boolean"
+  | "date"
+  | "datetime";
 
 /** Declares an `@name` placeholder used by the SQL. */
 export interface QueryParamSpec {

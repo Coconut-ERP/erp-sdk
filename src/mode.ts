@@ -13,14 +13,13 @@
  */
 export type ErpMode = "production" | "development";
 
-/** The variable that decides it. Nothing else is consulted — see below. */
+/**
+ * The only variable consulted. `NODE_ENV` is deliberately ignored: a mini app
+ * running locally normally has `NODE_ENV=development`, and having every write
+ * silently disappear in that setup is worse than an explicit opt-in.
+ */
 export const ERP_ENV_VAR = "ERP_ENV";
 
-/**
- * `NODE_ENV` is deliberately **not** consulted. A mini app running locally
- * normally has `NODE_ENV=development`, and having every write silently
- * disappear in that setup is a worse failure than an explicit opt-in.
- */
 const MODES: Record<string, ErpMode> = {
   production: "production",
   prod: "production",
@@ -32,8 +31,9 @@ const MODES: Record<string, ErpMode> = {
 };
 
 function processEnv(): Record<string, string | undefined> {
-  const proc = (globalThis as { process?: { env?: Record<string, string | undefined> } })
-    .process;
+  const proc = (
+    globalThis as { process?: { env?: Record<string, string | undefined> } }
+  ).process;
   return proc?.env ?? {};
 }
 

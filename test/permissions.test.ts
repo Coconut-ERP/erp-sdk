@@ -21,16 +21,24 @@ function perm(
 
 describe("isAllowed", () => {
   it("allows exact resource/action match", () => {
-    expect(isAllowed([perm("object:record", "read")], "object:record", "read")).toBe(true);
+    expect(
+      isAllowed([perm("object:record", "read")], "object:record", "read"),
+    ).toBe(true);
   });
 
   it("denies when nothing matches", () => {
-    expect(isAllowed([perm("object:record", "read")], "object:record", "update")).toBe(false);
-    expect(isAllowed([perm("object:record", "read")], "workflow", "read")).toBe(false);
+    expect(
+      isAllowed([perm("object:record", "read")], "object:record", "update"),
+    ).toBe(false);
+    expect(isAllowed([perm("object:record", "read")], "workflow", "read")).toBe(
+      false,
+    );
   });
 
   it("matches wildcard action and resource", () => {
-    expect(isAllowed([perm("object:record", "*")], "object:record", "delete")).toBe(true);
+    expect(
+      isAllowed([perm("object:record", "*")], "object:record", "delete"),
+    ).toBe(true);
     expect(isAllowed([perm("*", "*")], "dashboard", "manage")).toBe(true);
   });
 

@@ -81,7 +81,7 @@ npx erp objects list                            # what tables exist
 npx erp objects show "Đơn xin nghỉ"             # fields, types, config
 npx erp schema dump --out workspace.json        # whole workspace as JSON
 npx erp init my-app --name "Đơn xin nghỉ"       # runnable Express mini app
-npx erp skill install                           # the agent skill, see below
+npx erp skill install                           # the agent skills, see below
 ```
 
 Errors carry what you need to fix them — `UnknownObjectError` names the object,
@@ -91,31 +91,37 @@ Errors carry what you need to fix them — `UnknownObjectError` names the object
 ## For AI agents
 
 `erp help --json` returns the entire command surface as machine-readable JSON,
-and the package ships an **`erp-data` skill** teaching agents to use this SDK
-against a real workspace: reading the live schema first, querying with
-filters/sorting/pagination, walking `relation` fields without N+1, aggregating
-with `DataFrame`, and writing (and bulk-writing) safely.
+and the package ships **two agent skills**, split by the two jobs this SDK is
+used for:
+
+| Skill | Teaches |
+| --- | --- |
+| **`erp-miniapp`** | Building an app on the ERP: declaring `schema.json` and `assertSchema`, identifying users through initData, the two authority models, and the deploy contract |
+| **`erp-data`** | Working a live workspace: reading the real schema first, querying with filters/sorting/pagination, walking `relation` fields without N+1, aggregating with `DataFrame` or read-only SQL, and writing (and bulk-writing) safely behind a dry run |
+
+Each is a lean `SKILL.md` plus `references/` the agent loads only when it needs
+the detail.
 
 ```bash
-npx erp skill install               # → ~/.agents/skills/erp-data
-npx erp skill path                  # or just point an agent at the files
+npx erp skill install                    # → ~/.agents/skills/{erp-miniapp,erp-data}
+npx erp skill install --skill erp-data   # just one
+npx erp skill path                       # or point an agent at the files in place
 ```
 
 It installs **one copy per machine**, in a directory that belongs to no single
-tool, then prints how to reach it from each agent — Claude Code is the only one
-that autoloads a `SKILL.md`, and only from its own directory:
+tool, then prints how to reach them from each agent — Claude Code is the only
+one that autoloads a `SKILL.md`, and only from its own directory:
 
 ```bash
-ln -sfn ~/.agents/skills/erp-data ~/.claude/skills/erp-data      # claude
+mkdir -p ~/.claude/skills \
+  && ln -sfn ~/.agents/skills/erp-data ~/.claude/skills/erp-data \
+  && ln -sfn ~/.agents/skills/erp-miniapp ~/.claude/skills/erp-miniapp
 # codex / opencode / pi — one line in AGENTS.md:
-#   ERP data tasks (erp-sdk, object/field/record, ERP_API_KEY):
-#   read ~/.agents/skills/erp-data/SKILL.md first.
+#   ERP tasks (erp-sdk): read the SKILL.md files under ~/.agents/skills first.
 ```
 
-`--dir` overrides the target (`erp skill install --dir .claude/skills` keeps it
-inside one repo instead).
-
-Building a **mini app** is a different subject — that is what `docs/` covers.
+`--dir` overrides the target (`erp skill install --dir .claude/skills` keeps
+them inside one repo instead).
 
 See [docs/10-cli-va-ai-agent.md](docs/10-cli-va-ai-agent.md) (tiếng Việt).
 

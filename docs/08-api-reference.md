@@ -25,8 +25,6 @@ interface MiniAppConfig {
 
 Throw nếu không có `apiKey` lẫn `accessToken`. SDK không kiểm tra prefix của
 key — key sai/hết hạn sẽ lộ ra ở request đầu tiên dưới dạng `ErpApiError` 401.
-(`API_KEY_PREFIX = "erp_sk_"` vẫn export để tham chiếu, không còn dùng để
-validate.)
 
 ## Chế độ chạy — `ERP_ENV`
 
@@ -322,7 +320,7 @@ hết hạn), 403 (thiếu permission RBAC), 404 (không tồn tại *hoặc* b�
 ## HTTP tầng thấp
 
 ```ts
-import { FetchHttp, API_KEY_PREFIX } from "erp-sdk";
+import { FetchHttp } from "erp-sdk";
 
 const http = new FetchHttp({ baseUrl, apiKey, workspaceId?, accessToken?, fetch? });
 await http.request<T>(method, path, { body?, query? });

@@ -1,10 +1,26 @@
 import { COMMANDS, type CommandSpec } from "./commands";
 
 export const GLOBAL_FLAGS = [
-  { name: "base-url", value: "url", description: "ERP base URL (env ERP_BASE_URL)" },
-  { name: "api-key", value: "erp_sk_…", description: "Service-account API key (env ERP_API_KEY)" },
-  { name: "token", value: "jwt", description: "User access token instead of a key (env ERP_ACCESS_TOKEN)" },
-  { name: "workspace", value: "id", description: "Workspace id, only with --token (env ERP_WORKSPACE_ID)" },
+  {
+    name: "base-url",
+    value: "url",
+    description: "ERP base URL (env ERP_BASE_URL)",
+  },
+  {
+    name: "api-key",
+    value: "erp_sk_…",
+    description: "Service-account API key (env ERP_API_KEY)",
+  },
+  {
+    name: "token",
+    value: "jwt",
+    description: "User access token instead of a key (env ERP_ACCESS_TOKEN)",
+  },
+  {
+    name: "workspace",
+    value: "id",
+    description: "Workspace id, only with --token (env ERP_WORKSPACE_ID)",
+  },
   { name: "compact", description: "Print result JSON on a single line" },
   { name: "help", description: "Show help for a command" },
   { name: "version", description: "Print the SDK version" },
@@ -32,12 +48,22 @@ export function helpJson(command?: CommandSpec) {
     usage: "erp <command> [args] [flags]",
     output: "Results are JSON on stdout; notes and errors are JSON on stderr.",
     globalFlags: GLOBAL_FLAGS,
-    env: ["ERP_BASE_URL", "ERP_API_KEY", "ERP_ACCESS_TOKEN", "ERP_WORKSPACE_ID"],
+    env: [
+      "ERP_BASE_URL",
+      "ERP_API_KEY",
+      "ERP_ACCESS_TOKEN",
+      "ERP_WORKSPACE_ID",
+    ],
     commands: COMMANDS.map(describe),
   };
 }
 
-function flagLine(flag: { name: string; value?: string; repeatable?: boolean; description: string }): string {
+function flagLine(flag: {
+  name: string;
+  value?: string;
+  repeatable?: boolean;
+  description: string;
+}): string {
   const label = `--${flag.name}${flag.value ? ` <${flag.value}>` : ""}${flag.repeatable ? " (repeatable)" : ""}`;
   return `  ${label.padEnd(34)} ${flag.description}`;
 }

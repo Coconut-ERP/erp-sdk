@@ -20,11 +20,17 @@ describe("DataFrame", () => {
   it("matches in/not_in against a list, the same set the server would", () => {
     const df = DataFrame.from(rows);
     expect(df.where("status", "in", ["approved", "paid"]).count()).toBe(3);
-    expect(df.where("status", "not_in", ["approved"]).pluck("customer")).toEqual(["Bình"]);
-    expect(df.where("total", "in", [50, 200]).pluck("total")).toEqual([50, 200]);
+    expect(
+      df.where("status", "not_in", ["approved"]).pluck("customer"),
+    ).toEqual(["Bình"]);
+    expect(df.where("total", "in", [50, 200]).pluck("total")).toEqual([
+      50, 200,
+    ]);
     // A row with no value is not one of the excluded values, so it stays.
     expect(
-      DataFrame.from([{ status: null }]).where("status", "not_in", ["approved"]).count(),
+      DataFrame.from([{ status: null }])
+        .where("status", "not_in", ["approved"])
+        .count(),
     ).toBe(1);
   });
 
@@ -63,7 +69,9 @@ describe("DataFrame", () => {
     ]);
     const joined = DataFrame.from(rows).leftJoin(regions, "customer");
     expect(joined.where("region", "equals", "HN").count()).toBe(2);
-    expect(joined.where("region", "is_empty").pluck("customer")).toEqual(["Chi"]);
+    expect(joined.where("region", "is_empty").pluck("customer")).toEqual([
+      "Chi",
+    ]);
   });
 
   it("chains immutably", () => {

@@ -16,8 +16,20 @@ import {
   WorkflowRunFailedError,
   WorkflowRunTimeoutError,
 } from "../errors";
-import { flagBool, flagString, parseArgv, UsageError, type ParsedArgs } from "./args";
-import { COMMANDS, ExitCode, matchCommand, type CliContext, type CommandSpec } from "./commands";
+import {
+  flagBool,
+  flagString,
+  type ParsedArgs,
+  parseArgv,
+  UsageError,
+} from "./args";
+import {
+  type CliContext,
+  COMMANDS,
+  type CommandSpec,
+  ExitCode,
+  matchCommand,
+} from "./commands";
 import { GLOBAL_FLAGS, helpJson, helpText } from "./help";
 
 export interface CliIo {
@@ -34,7 +46,11 @@ const EXIT_USAGE = 2;
 
 function serializeError(error: unknown): Record<string, unknown> {
   if (error instanceof UsageError) {
-    return { type: "UsageError", message: error.message, hint: "Run `erp help <command>`" };
+    return {
+      type: "UsageError",
+      message: error.message,
+      hint: "Run `erp help <command>`",
+    };
   }
   if (error instanceof MissingPermissionsError) {
     return {
@@ -77,7 +93,7 @@ function serializeError(error: unknown): Record<string, unknown> {
       type: "RelationValueError",
       message: error.message,
       field: error.field,
-      hint: "Write the whole list: data[\"Chi tiết\"] = [id1, id2]; null keeps it, [] clears it",
+      hint: 'Write the whole list: data["Chi tiết"] = [id1, id2]; null keeps it, [] clears it',
     };
   }
   if (error instanceof DryRunUnsupportedError) {
@@ -174,7 +190,10 @@ function serializeError(error: unknown): Record<string, unknown> {
     };
   }
   const known = error as Error;
-  return { type: known?.name ?? "Error", message: known?.message ?? String(error) };
+  return {
+    type: known?.name ?? "Error",
+    message: known?.message ?? String(error),
+  };
 }
 
 function knownFlagNames(command?: CommandSpec): Set<string> {
@@ -207,38 +226,51 @@ async function loadEnvFile(
   try {
     content = await readFile(resolve(cwd, path), "utf8");
   } catch (error) {
-    throw new UsageError(`Cannot read --env-file ${path}: ${(error as Error).message}`);
+    throw new UsageError(
+      `Cannot read --env-file ${path}: ${(error as Error).message}`,
+    );
   }
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
     const eq = trimmed.indexOf("=");
     if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).replace(/^export\s+/, "").trim();
-    const value = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
+    const key = trimmed
+      .slice(0, eq)
+      .replace(/^export\s+/, "")
+      .trim();
+    const value = trimmed
+      .slice(eq + 1)
+      .trim()
+      .replace(/^["']|["']$/g, "");
     // Real environment wins — the file only fills in what is missing.
     if (env[key] === undefined) env[key] = value;
   }
 }
 
+/**
+ * The version from whichever package.json ships alongside this file — its depth
+ * differs between `dist/cli.js`, `src/` in development and `node_modules`.
+ * Best effort throughout: `erp --version` must not be what fails a session.
+ */
 async function readVersion(): Promise<string> {
   try {
     const { readFile } = await import("node:fs/promises");
     const { dirname, resolve } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
     const here = dirname(fileURLToPath(import.meta.url));
-    for (const candidate of ["../package.json", "../../package.json", "../../../package.json"]) {
+    for (const candidate of [
+      "../package.json",
+      "../../package.json",
+      "../../../package.json",
+    ]) {
       try {
         const raw = await readFile(resolve(here, candidate), "utf8");
         const parsed = JSON.parse(raw) as { name?: string; version?: string };
         if (parsed.name === "erp-sdk" && parsed.version) return parsed.version;
-      } catch {
-        continue;
-      }
+      } catch {}
     }
-  } catch {
-    // fall through
-  }
+  } catch {}
   return "unknown";
 }
 
@@ -282,12 +314,16 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
         return EXIT_OK;
       }
       const attempted = positional.join(" ");
-      const near = COMMANDS.filter((command) => command.name.startsWith(positional[0] ?? ""))
+      const near = COMMANDS.filter((command) =>
+        command.name.startsWith(positional[0] ?? ""),
+      )
         .map((command) => command.name)
         .slice(0, 6);
       throw new UsageError(
         `Unknown command "${attempted}".` +
-          (near.length ? ` Did you mean: ${near.join(", ")}?` : " Run `erp help`."),
+          (near.length
+            ? ` Did you mean: ${near.join(", ")}?`
+            : " Run `erp help`."),
       );
     }
 
@@ -328,12 +364,22 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
       return cached;
     };
 
-    const context: CliContext = { args, rest, client, out, note, cwd: io.cwd, env };
+    const context: CliContext = {
+      args,
+      rest,
+      client,
+      out,
+      note,
+      cwd: io.cwd,
+      env,
+    };
     await command.run(context);
     return EXIT_OK;
   } catch (error) {
     if (error instanceof ExitCode) return error.code;
-    io.stderr(`${JSON.stringify({ error: serializeError(error) }, null, compact ? 0 : 2)}\n`);
+    io.stderr(
+      `${JSON.stringify({ error: serializeError(error) }, null, compact ? 0 : 2)}\n`,
+    );
     return error instanceof UsageError ? EXIT_USAGE : EXIT_ERROR;
   }
 }

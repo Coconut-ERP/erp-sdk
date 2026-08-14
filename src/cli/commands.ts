@@ -4,9 +4,15 @@ import { ERP_ENV_VAR, resolveMode } from "../mode";
 import type { ObjectHandle } from "../objects";
 import { SCHEMA_FILE } from "../schema";
 import type { FieldDto } from "../types";
-import { flagBool, flagList, flagString, UsageError, type ParsedArgs } from "./args";
+import {
+  flagBool,
+  flagList,
+  flagString,
+  type ParsedArgs,
+  UsageError,
+} from "./args";
 import { scaffoldMiniApp } from "./scaffold";
-import { installSkill, skillSource, SKILL_NAME } from "./skill";
+import { bundledSkills, installSkill, skillsSource } from "./skill";
 
 export interface CliContext {
   args: ParsedArgs;
@@ -90,7 +96,8 @@ export const COMMANDS: CommandSpec[] = [
       }
       const apiKey = flagString(ctx.args, "api-key") ?? ctx.env.ERP_API_KEY;
       ctx.out({
-        baseUrl: flagString(ctx.args, "base-url") ?? ctx.env.ERP_BASE_URL ?? null,
+        baseUrl:
+          flagString(ctx.args, "base-url") ?? ctx.env.ERP_BASE_URL ?? null,
         auth: apiKey ? "api-key" : "access-token",
         mode: client.mode,
         dryRunWrites: client.dryRun,
@@ -119,7 +126,7 @@ export const COMMANDS: CommandSpec[] = [
     ],
     examples: [
       "erp doctor",
-      'erp doctor --require object:read --require object:record:create',
+      "erp doctor --require object:read --require object:record:create",
     ],
     async run(ctx) {
       const checks: {
@@ -218,7 +225,10 @@ export const COMMANDS: CommandSpec[] = [
             name: "objects",
             status: "ok",
             detail: `${objects.length} object(s) visible`,
-            hint: objects.length === 0 ? "The key may lack object:read, or the workspace is empty" : undefined,
+            hint:
+              objects.length === 0
+                ? "The key may lack object:read, or the workspace is empty"
+                : undefined,
           });
         } catch (error) {
           checks.push({
@@ -232,7 +242,9 @@ export const COMMANDS: CommandSpec[] = [
         for (const required of flagList(ctx.args, "require")) {
           const separator = required.lastIndexOf(":");
           if (separator <= 0) {
-            throw new UsageError(`--require must be "resource:action", got "${required}"`);
+            throw new UsageError(
+              `--require must be "resource:action", got "${required}"`,
+            );
           }
           const resource = required.slice(0, separator);
           const action = required.slice(separator + 1);
@@ -241,7 +253,9 @@ export const COMMANDS: CommandSpec[] = [
             name: `permission ${resource}:${action}`,
             status: allowed ? "ok" : "fail",
             detail: allowed ? "granted" : "not granted",
-            hint: allowed ? undefined : `Add an IAM allow rule for ${resource}:${action}`,
+            hint: allowed
+              ? undefined
+              : `Add an IAM allow rule for ${resource}:${action}`,
           });
         }
       }
@@ -254,13 +268,24 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "objects list",
     summary: "List the objects (tables) in the workspace",
-    flags: [{ name: "fields", description: "Include each object's fields (one request per object)" }],
+    flags: [
+      {
+        name: "fields",
+        description: "Include each object's fields (one request per object)",
+      },
+    ],
     examples: ["erp objects list", "erp objects list --fields"],
     async run(ctx) {
       const client = await ctx.client();
       const objects = await client.objects();
       if (!flagBool(ctx.args, "fields")) {
-        ctx.out(objects.map((o) => ({ id: o.id, name: o.name, position: o.position })));
+        ctx.out(
+          objects.map((o) => ({
+            id: o.id,
+            name: o.name,
+            position: o.position,
+          })),
+        );
         return;
       }
       const detailed = [];
@@ -273,17 +298,28 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "objects show",
     summary: "Show one object with all of its fields (types + config)",
-    args: [{ name: "object", required: true, description: "Object name or id" }],
+    args: [
+      { name: "object", required: true, description: "Object name or id" },
+    ],
     examples: ['erp objects show "Đơn xin nghỉ"'],
     async run(ctx) {
       const client = await ctx.client();
-      ctx.out(describeObject(await client.object(requireArg(ctx, 0, "object"))));
+      ctx.out(
+        describeObject(await client.object(requireArg(ctx, 0, "object"))),
+      );
     },
   },
   {
     name: "schema dump",
-    summary: "Dump every object + field as JSON — the context an agent needs before writing code",
-    flags: [{ name: "out", value: "file", description: "Write to a file instead of stdout" }],
+    summary:
+      "Dump every object + field as JSON — the context an agent needs before writing code",
+    flags: [
+      {
+        name: "out",
+        value: "file",
+        description: "Write to a file instead of stdout",
+      },
+    ],
     examples: ["erp schema dump", "erp schema dump --out workspace.json"],
     async run(ctx) {
       const client = await ctx.client();
@@ -307,7 +343,12 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "init",
     summary: `Scaffold a runnable mini app (Express + initData bridge + ${SCHEMA_FILE})`,
-    args: [{ name: "dir", description: "Target directory (default: current directory)" }],
+    args: [
+      {
+        name: "dir",
+        description: "Target directory (default: current directory)",
+      },
+    ],
     flags: [
       { name: "name", value: "text", description: "App display name" },
       {
@@ -318,7 +359,8 @@ export const COMMANDS: CommandSpec[] = [
       {
         name: "sdk",
         value: "spec",
-        description: "erp-sdk dependency spec (default: the pinned release tarball URL)",
+        description:
+          "erp-sdk dependency spec (default: the pinned release tarball URL)",
       },
       { name: "force", description: "Overwrite existing files" },
     ],
@@ -343,17 +385,24 @@ export const COMMANDS: CommandSpec[] = [
   },
   {
     name: "skill install",
-    summary: `Install the ${SKILL_NAME} skill so coding agents know this SDK`,
+    summary: "Install the bundled skills so coding agents know this SDK",
     flags: [
       {
         name: "dir",
         value: "path",
-        description: `Where to install it (default ~/.agents/skills — shared by every agent)`,
+        description:
+          "Where to install them (default ~/.agents/skills — shared by every agent)",
+      },
+      {
+        name: "skill",
+        value: "name",
+        description: "Install only this one (default: every bundled skill)",
       },
       { name: "force", description: "Overwrite an existing installation" },
     ],
     examples: [
       "erp skill install",
+      "erp skill install --skill erp-data",
       "erp skill install --dir .claude/skills",
       "erp skill install --force",
     ],
@@ -361,22 +410,27 @@ export const COMMANDS: CommandSpec[] = [
       const result = await installSkill({
         cwd: ctx.cwd,
         dir: flagString(ctx.args, "dir"),
+        skill: flagString(ctx.args, "skill"),
         force: flagBool(ctx.args, "force"),
       });
-      ctx.note(`Installed skill "${result.skill}" to ${result.dir}`);
+      const names = result.skills.map((item) => item.skill).join(", ");
+      ctx.note(
+        `Installed ${result.skills.length} skill(s) to ${result.root}: ${names}`,
+      );
       ctx.note("Point your agents at it:");
-      for (const { agent, how } of result.wiring) ctx.note(`  ${agent}: ${how}`);
+      for (const { agent, how } of result.wiring)
+        ctx.note(`  ${agent}: ${how}`);
       ctx.out(result);
     },
   },
   {
     name: "skill path",
-    summary: "Print where the bundled skill lives, so an agent can read it in place",
+    summary:
+      "Print where the bundled skills live, so an agent can read them in place",
     examples: ["erp skill path"],
     async run(ctx) {
-      const dir = await skillSource();
-      const { join } = await import("node:path");
-      ctx.out({ skill: SKILL_NAME, dir, entry: join(dir, "SKILL.md") });
+      const skills = await bundledSkills();
+      ctx.out({ root: await skillsSource(), skills });
     },
   },
 ];

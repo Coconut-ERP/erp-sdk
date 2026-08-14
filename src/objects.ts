@@ -1,10 +1,10 @@
-import { DataFrame, type Row } from "./frame";
 import {
   DryRunUnsupportedError,
   FilterValueError,
   RelationValueError,
   UnknownFieldError,
 } from "./errors";
+import { DataFrame, type Row } from "./frame";
 import type { Http } from "./http";
 import type {
   BulkCreateRecordsResult,
@@ -136,7 +136,7 @@ export class ObjectHandle {
     private readonly http: Http,
     readonly meta: ObjectDto,
     readonly fields: FieldDto[],
-    private readonly options: { dryRun?: boolean } = {},
+    private readonly options: WriteOptions = {},
   ) {
     for (const field of fields) {
       this.index(field);
@@ -177,9 +177,15 @@ export class ObjectHandle {
     return this.meta.name;
   }
 
+  /** Internal key first, then display name (case-insensitive) — the one lookup. */
+  private lookup(nameOrKey: string): FieldDto | undefined {
+    return (
+      this.byKey.get(nameOrKey) ?? this.byName.get(nameOrKey.toLowerCase())
+    );
+  }
+
   field(nameOrKey: string): FieldDto {
-    const field =
-      this.byKey.get(nameOrKey) ?? this.byName.get(nameOrKey.toLowerCase());
+    const field = this.lookup(nameOrKey);
     if (!field) {
       throw new UnknownFieldError(
         nameOrKey,
@@ -188,6 +194,11 @@ export class ObjectHandle {
       );
     }
     return field;
+  }
+
+  /** Whether this object carries the field, by internal key or display name. */
+  hasField(nameOrKey: string): boolean {
+    return this.lookup(nameOrKey) !== undefined;
   }
 
   fieldKey(nameOrKey: string): string {
@@ -201,8 +212,7 @@ export class ObjectHandle {
    * "id" still wins — the same order the backend resolves filter fields in.
    */
   filterKey(nameOrKey: string): string {
-    const field =
-      this.byKey.get(nameOrKey) ?? this.byName.get(nameOrKey.toLowerCase());
+    const field = this.lookup(nameOrKey);
     if (field) return field.key;
     if (nameOrKey.trim().toLowerCase() === RECORD_ID_FILTER_KEY) {
       return RECORD_ID_FILTER_KEY;
@@ -283,11 +293,9 @@ export class ObjectHandle {
    * no follow-up `createLink` calls, nothing half-written if one id is wrong.
    */
   async create(data: Row, options: WriteOptions = {}): Promise<RecordDto> {
-    return this.http.request<RecordDto>(
-      "POST",
-      `/objects/${this.id}/records`,
-      { body: { data: this.resolveData(data), ...this.writeFlag(options) } },
-    );
+    return this.http.request<RecordDto>("POST", `/objects/${this.id}/records`, {
+      body: { data: this.resolveData(data), ...this.writeFlag(options) },
+    });
   }
 
   async createMany(
@@ -298,7 +306,10 @@ export class ObjectHandle {
     if (rows.length === 0) {
       return { created: 0, records: [], ...(dryRun ? { dryRun } : {}) };
     }
-    const chunkSize = Math.min(options.chunkSize ?? MAX_BULK_CREATE, MAX_BULK_CREATE);
+    const chunkSize = Math.min(
+      options.chunkSize ?? MAX_BULK_CREATE,
+      MAX_BULK_CREATE,
+    );
     const result: BulkCreateRecordsResult = { created: 0, records: [] };
 
     for (let start = 0; start < rows.length; start += chunkSize) {
@@ -380,9 +391,10 @@ export class ObjectHandle {
   }
 
   /**
-   * The third argument is either the version (as before) or an options object,
-   * so `update(id, data, rec.version)` keeps working while
-   * `update(id, data, { dryRun: true })` is available.
+   * The third argument is either the optimistic-lock version on its own —
+   * `update(id, data, rec.version)` — or an options object carrying it:
+   * `update(id, data, { version, dryRun: true })`. Omitted, the current
+   * version is read first.
    */
   async update(
     recordId: string,
@@ -487,15 +499,19 @@ export class ObjectHandle {
    */
   linkedIds(record: RecordDto, fieldNameOrKey: string): string[] {
     const value = record.data[this.fieldKey(fieldNameOrKey)];
-    return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
+    return Array.isArray(value)
+      ? value.filter((id): id is string => typeof id === "string")
+      : [];
   }
 
+  /**
+   * Unknown names fall through as-is rather than throwing: a preload the server
+   * did not return is an empty list, not a caller error.
+   */
   related(record: RecordDto, field: string | FieldDto): RecordDto[] {
     const key =
       typeof field === "string"
-        ? (this.byKey.get(field)?.key ??
-          this.byName.get(field.toLowerCase())?.key ??
-          field)
+        ? (this.lookup(field)?.key ?? field)
         : field.key;
     return record.related?.[key] ?? [];
   }
