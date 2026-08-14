@@ -21,10 +21,10 @@ attached to a [GitHub Release](https://github.com/Coconut-ERP/erp-sdk/releases) 
 install it by URL with any package manager:
 
 ```bash
-npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz
-bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz
-pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz
-yarn add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz
+npm  install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz
+bun  add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz
+pnpm add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz
+yarn add     https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz
 ```
 
 In a `package.json` dependency list that reads:
@@ -32,7 +32,7 @@ In a `package.json` dependency list that reads:
 ```json
 {
   "dependencies": {
-    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz"
+    "erp-sdk": "https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz"
   }
 }
 ```
@@ -50,7 +50,7 @@ npm install -g https://github.com/Coconut-ERP/erp-sdk/releases/download/latest/e
 Use that for a global CLI install or a throwaway script. **Do not put it in an
 app's `package.json`**: package managers cache and lock by URL, so a moving URL
 installs whatever was cached and stops being reproducible. Dependencies get the
-pinned `v0.3.2` URL above.
+pinned `v0.4.0` URL above.
 
 Installing straight from the repo also works, **but only with npm, pnpm or yarn**:
 

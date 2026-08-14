@@ -33,7 +33,7 @@ CLI có sẵn khi cài `erp-sdk`:
 ```bash
 BASE=https://github.com/Coconut-ERP/erp-sdk/releases/download
 
-npm install "$BASE/v0.3.2/erp-sdk.tgz"   # trong project: ghim version
+npm install "$BASE/v0.4.0/erp-sdk.tgz"   # trong project: ghim version
 npx erp help
 
 npm install -g "$BASE/latest/erp-sdk.tgz"   # global: URL không bao giờ phải sửa
@@ -41,7 +41,7 @@ erp help
 ```
 
 Tag `latest` được trỏ lại sau mỗi lần phát hành nên hợp với máy mới và CLI
-global; còn dependency của app thì ghim `v0.3.2` — package manager khoá theo URL,
+global; còn dependency của app thì ghim `v0.4.0` — package manager khoá theo URL,
 URL chạy được mãi thì cài lại không còn tái lập được.
 
 Cấu hình bằng env (hoặc flag tương ứng):

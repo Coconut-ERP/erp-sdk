@@ -23,7 +23,7 @@ bằng SDK, vì logic nhiều bước (join, tổng hợp, đếm trước khi g
 ## 1. Kết nối
 
 ```bash
-npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.3.2/erp-sdk.tgz
+npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.0/erp-sdk.tgz
 npx erp doctor        # env + kết nối + quyền → {ok, checks[]}, exit 1 nếu hỏng
 ```
 
