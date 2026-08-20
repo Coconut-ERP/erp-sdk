@@ -12,8 +12,10 @@ export interface Call {
  *
  * Responses are queued per `"METHOD /path"` and consumed in order; the last one
  * repeats once the queue runs dry, so a test lists one entry per *distinct*
- * reply rather than one per call. A path that was never registered throws: a
- * request the test did not plan for is a failure, not an empty result.
+ * reply rather than one per call. A queued `Error` is thrown instead of
+ * returned, which is how a test plans a 404. A path that was never registered
+ * throws too: a request the test did not plan for is a failure, not an empty
+ * result.
  */
 export class FakeHttp implements Http {
   readonly calls: Call[] = [];
@@ -34,7 +36,9 @@ export class FakeHttp implements Http {
     if (!queue || queue.length === 0) {
       throw new Error(`Unexpected request: ${method} ${path}`);
     }
-    return (queue.length === 1 ? queue[0] : queue.shift()) as T;
+    const next = queue.length === 1 ? queue[0] : queue.shift();
+    if (next instanceof Error) throw next;
+    return next as T;
   }
 
   async requestPaged<T>(

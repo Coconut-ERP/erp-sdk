@@ -150,6 +150,22 @@ export class UnknownWorkflowError extends UnknownByNameError {
   }
 }
 
+/**
+ * A shared variable this caller cannot read. Inside a workflow run that is two
+ * causes the server deliberately answers the same way — no such key, or this
+ * workflow is not on its access list — so the message names both. Use
+ * `variables.value(key)` where absence is ordinary, such as a first run.
+ */
+export class UnknownWorkflowVariableError extends Error {
+  constructor(readonly key: string) {
+    super(
+      `Shared variable not found: "${key}". Either no variable has that key, ` +
+        "or the workflow running this script was not granted it",
+    );
+    this.name = "UnknownWorkflowVariableError";
+  }
+}
+
 export class UnknownDashboardError extends UnknownByNameError {
   constructor(
     readonly dashboard: string,
@@ -172,13 +188,14 @@ export class UnknownQueryError extends UnknownByNameError {
 }
 
 /**
- * A workflow definition the server would refuse anyway — wrong trigger, code
- * without an `async function main()`, or an env name it will not store. Caught
- * here so the fix arrives without a round trip.
+ * A definition the server would refuse anyway — wrong trigger, code without an
+ * `async function main()`, an env name it will not store, or a shared variable
+ * whose key or value it would reject. Caught here so the fix arrives without a
+ * round trip.
  */
 export class WorkflowDefinitionError extends Error {
   constructor(
-    readonly field: "trigger" | "code" | "env",
+    readonly field: "trigger" | "code" | "env" | "variable",
     readonly reason: string,
   ) {
     super(`Workflow ${field} is invalid: ${reason}`);

@@ -665,11 +665,23 @@ runResult(done);   // whatever main() returned
 runLogs(done);     // its console.log lines
 ```
 
-Four things the API makes you get right:
+Five things the API makes you get right:
 
-- **Only `manual` and `cron` triggers exist** — no webhooks, no record events.
+- **`manual`, `cron` and `webhook` triggers exist** — no record events.
   Cron takes a **6-field schedule (seconds first)** plus an IANA timezone;
   `"0 9 * * *"` is rejected, `"0 0 9 * * *"`, `@daily` and `@every 1h` are not.
+- **A webhook workflow is reached at `wf.webhookUrl`, and that URL is the whole
+  credential** — anyone holding it starts a run, and nothing verifies a
+  signature on the way in. `main(input)` gets the delivery unparsed
+  (`{ source, method, query, headers, body, receivedAt }`, `body` being the
+  exact string that was posted, so it still verifies against the sender's
+  signature), and the request is answered `202` with a run id rather than with
+  what the script returned. The SDK only ever **reads** that URL — retiring a
+  leaked one is `POST /workflows/{id}/webhook/rotate` from a person's own
+  session. `POST <webhookUrl>/test` rehearses one: same URL plus
+  `/test`, works on a draft and rolls every record write back, and answers
+  exactly as the live URL does — with a run id, not with output, so reading what
+  the script logged takes the workflow's own read permission.
 - **Every change returns the workflow to draft**, so publish again or nothing
   new runs. `version` is an optimistic lock — mismatch is a 409, `refresh()`
   and retry.
@@ -688,6 +700,43 @@ One backend quirk worth knowing: a run started immediately after `publish()`
 sometimes comes back `ERROR` with the generic message `"Workflow run failed"` —
 the runner has not picked the new version up. Anything the script itself throws
 produces a specific message, so treat that one as "retry in a few seconds".
+
+### Shared variables — what one run leaves for the next
+
+Env is where a workflow keeps a **secret**; `app.variables` is where it keeps
+**state**: a checkpoint, a sync cursor, the id of the last thing processed.
+Plain text, readable back as written, and shareable by several workflows.
+
+```ts
+await app.variables.create({
+  key: "invoice.cursor",
+  value: "2026-08-01",
+  workflowIds: [wf.id],                 // who may read and write it
+});
+
+// inside the script
+const since = (await erp.variables.value("invoice.cursor")) ?? "2026-01-01";
+await erp.variables.set("invoice.cursor", newCursor);
+```
+
+- **`workflowIds` is the whole access model**, with no split between reading and
+  writing: a workflow trusted to read its own checkpoint is trusted to move it.
+  An empty list is a variable no run reaches, and every id must be a workflow of
+  the same workspace — variables never cross one.
+- **Inside a run that list narrows the caller's own authority.** The run's token
+  says which workflow is acting, so a script sees only the variables it was
+  granted; an ungranted key answers 404, exactly as a missing one does.
+- **A run may set a value and nothing else.** Creating, deleting and re-scoping
+  are the user's decisions, made from their own session.
+- **Last writer wins** — no version check, which is what a checkpoint wants.
+  Caps: key ≤ 128 chars matching `[A-Za-z][A-Za-z0-9_.-]*`, value ≤ 16 384
+  chars, ≤ 100 workflows per variable.
+- `value(key)` answers `undefined` when there is nothing to read — the first
+  run's normal case; `get(key)` throws `UnknownWorkflowVariableError`.
+
+Reads work in development mode, writes refuse with `DryRunUnsupportedError`:
+the server has no dry run for them, and a rehearsal that quietly moved the real
+cursor would make the next real run skip data. `{ dryRun: false }` writes anyway.
 
 ## Permissions at runtime
 
@@ -716,6 +765,7 @@ source of truth; the SDK check is a fast preflight.
 | `DryRunUnsupportedError` | a delete/restore/link call, or `workflow.run()`, while the client is in development mode (`.operation`) |
 | `SqlQueryError` | SQL that is not a single read-only `SELECT` (`.reason`) |
 | `UnknownWorkflowError` / `UnknownDashboardError` / `UnknownQueryError` | name or id doesn't match (`.known` lists what does) |
+| `UnknownWorkflowVariableError` | no shared variable under that key, or this workflow was not granted it (`.key`) |
 | `WorkflowDefinitionError` | unsupported trigger, cron missing its seconds field, code without `main()`, bad env name (`.field`, `.reason`) |
 | `WorkflowRunFailedError` | a run ended in `ERROR` (`.run.error` is what the script threw, logs appended) |
 | `WorkflowRunTimeoutError` | `waitForRun` gave up; the run itself keeps going (`.run`, `.timeoutMs`) |

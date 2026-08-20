@@ -1,70 +1,66 @@
-# Danh tính người dùng — initData & session
+# User identity — initData & session
 
-Mini app chạy bằng API key của chính nó, nhưng cần biết **người nào** đang bấm.
-Mô hình giống Telegram Mini App: app chủ đưa iframe một chuỗi đã ký; mini app
-đổi chuỗi đó lấy danh tính đã xác minh. **JWT của user không bao giờ đi vào mini
-app.**
+Mini apps run with their own API key, but need to know **who's clicking**.
+Model is like Telegram Mini App: host app hands iframe a signed string; mini app trades it for verified identity. **User JWTs never go into mini apps.**
 
-## Luồng
+## Flow
 
 ```
-App chủ (user đã đăng nhập)
-  │ POST /auth/miniapp/init-data { serviceAccountId }   ← SA của mini app đích
+Host app (logged-in user)
+  │ POST /auth/miniapp/init-data { serviceAccountId }   ← target mini app's SA
   ▼
 initData = "user=%7B...%7D&workspace_id=...&service_account_id=...
             &auth_date=...&hash=..."
-  │ đưa vào iframe (URL fragment hoặc postMessage)
+  │ hand to iframe (URL fragment or postMessage)
   ▼
-Mini app FE: gửi kèm mọi request về server app (header X-Init-Data)
+Mini app FE: send with every request to app server (header X-Init-Data)
   │
   ▼
 Mini app server: app.session(initData)
-  → backend kiểm chữ ký HMAC, hạn 5 phút, đúng API key app này,
-    user còn là member workspace
+  → backend verifies HMAC signature, 5-minute expiry, right API key for this app,
+    user still member of workspace
   → { user, client, expiresIn }
 ```
 
-Vì sao an toàn:
+Why it's secure:
 
-- initData **tự nó không cấp quyền gì** — chỉ app giữ đúng API key mới đổi được
-  phiên. Chuỗi bị lộ là vô dụng với người khác, và chết sau 5 phút.
-- Mỗi initData gắn với **một** app (service account id nằm trong chuỗi) — app
-  khác cầm cũng bị từ chối.
-- **Không có refresh token.** Phiên hết thì FE xin app chủ chuỗi mới — đúng mô
-  hình re-launch của Telegram.
+- initData **grants no permissions by itself** — only apps holding the right API key can trade it.
+  Leaked string is useless to others, and expires in 5 minutes.
+- Each initData tied to **exactly one** app (service account id in the string) — different apps reject it.
+- **No refresh token.** Session expires, frontend asks host for a new string — true Telegram re-launch model.
 
 ## Frontend
 
-Helpers browser, import từ `erp-sdk`, **không cần API key**:
+Browser helpers, import from `erp-sdk`, **don't need API key**:
 
 ```ts
 import {
   readInitDataFromLocation, receiveInitData, parseInitData,
 } from "erp-sdk";
 
-// Cách A: app chủ nhét vào URL — <app url>/#erpInitData=<encoded>
-const fromUrl = readInitDataFromLocation();   // đọc cả #erpInitData= lẫn ?erpInitData=
+// Option A: host puts in URL — <app url>/#erpInitData=<encoded>
+const fromUrl = readInitDataFromLocation();   // reads both #erpInitData= and ?erpInitData=
 
-// Cách B: app chủ postMessage { type: "erp-miniapp:init-data", initData }
+// Option B: host postMessage { type: "erp-miniapp:init-data", initData }
 const initData =
   fromUrl ??
   (await receiveInitData({
-    allowedOrigins: ["https://erp.example.com"],   // "*" bị từ chối
+    allowedOrigins: ["https://erp.example.com"],   // "*" is rejected
     timeoutMs: 10_000,
   }));
 
-// Hiển thị tức thì — CHƯA XÁC MINH, chỉ để hiển thị
+// Display immediately — UNVERIFIED, display-only
 const unsafe = parseInitData(initData);
 unsafe.user?.displayName;
 
-// Gửi kèm mọi request về server của chính app
+// Send with every request to app server
 await fetch("api/leaves", { headers: { "X-Init-Data": initData } });
 ```
 
-`parseInitData` không kiểm chữ ký — browser không có secret. **Mọi quyết định
-quyền/dữ liệu phải dựa trên kết quả `session()` phía server.**
+`parseInitData` doesn't verify the signature — browser doesn't have the secret. **All permission/data
+decisions must be based on `session()` results on the server.**
 
-Khi server trả 401 (phiên hết hạn), xin lại rồi thử lại:
+When server returns 401 (session expired), ask for fresh string and retry:
 
 ```ts
 window.parent.postMessage({ type: "erp-miniapp:request-init-data" }, "*");
@@ -73,12 +69,12 @@ const fresh = await receiveInitData({
 });
 ```
 
-App chủ của ERP đã lắng nghe `erp-miniapp:request-init-data` và trả chuỗi mới
-qua postMessage — đó là quy ước bridge của hệ thống.
+ERP's host app already listens for `erp-miniapp:request-init-data` and replies with a new string
+via postMessage — that's the bridge convention built-in.
 
 ## Server
 
-Cache theo chuỗi initData để không đổi phiên lại mỗi request:
+Cache by initData string to avoid re-trading every request:
 
 ```ts
 const sessions = new Map();
@@ -103,91 +99,87 @@ server.use("/api", async (req, res, next) => {
     req.erp = await identify(initData);
     next();
   } catch (e) {
-    res.status(401).json({ error: e.message });   // FE xin initData mới
+    res.status(401).json({ error: e.message });   // FE asks for fresh initData
   }
 });
 ```
 
-Hết hạn thì `session()` throw `ErpApiError` 401 → trả 401 cho FE xử lý. Map
-trong RAM là đủ cho một container; nhiều instance thì mỗi instance tự cache.
+Session expires, `session()` throws `ErpApiError` 401 → return 401 to FE to handle.
+In-memory cache per container is fine; multiple instances each cache independently.
 
-## Hai mô hình quyền
+## Two permission models
 
-### App authority — mặc định, khuyến nghị
+### App authority — default, recommended
 
-Thao tác dữ liệu chạy bằng client của app (service account); `session()` chỉ để
-biết *ai*, app tự ghi user id vào field:
+Data operations run on app's client (service account); `session()` only identifies *who*,
+app writes user id into a field:
 
 ```ts
 const { user } = req.erp;
 
 await leaves.create({
-  "Người xin nghỉ": user.id,        // danh tính ghi vào dữ liệu
-  "Lý do": req.body.reason,
-  "Trạng thái": "pending",
+  "Requester": user.id,        // identity written into data
+  "Reason": req.body.reason,
+  "Status": "pending",
 });
 
-// "chỉ đơn của tôi" là logic của app
+// "only my leaves" is app logic
 const mine = await leaves.records()
-  .where("Người xin nghỉ", "equals", user.id)
+  .where("Requester", "equals", user.id)
   .fetchAll();
 ```
 
-Ai mở được app là dùng được đủ chức năng, kể cả khi role cá nhân của họ không
-ghi được bảng đó — như Telegram bot hành động với tư cách bot. Đổi lại: **ranh
-giới dữ liệu giữa các user là trách nhiệm của app**. Quên một `where` là lộ dữ
-liệu của người khác.
+Anyone who can open the app gets full features, regardless of their individual role — like a
+Telegram bot acting as bot. Trade-off: **data boundaries between users are the app's job**. Forgetting one `where` leaks other users' data.
 
 ### User authority — opt-in
 
 ```ts
 const { user, client } = req.erp;
-const leavesAsUser = await client.object("Đơn xin nghỉ");
-await leavesAsUser.create({ ... });   // 403 nếu user không có quyền ghi
+const leavesAsUser = await client.object("Leave Request");
+await leavesAsUser.create({ ... });   // 403 if user can't write
 ```
 
-Mọi call bị giới hạn theo IAM permission + row scope của chính user,
-`createdBy` là user thật. Chọn khi app phải phản chiếu đúng quyền dữ liệu từng
-người của ERP. Cũng lấy được ngoài luồng initData: `app.asUser(accessToken)`.
+Every call limited by that user's IAM permissions + row scope,
+`createdBy` is the real user. Use when app must mirror ERP's actual per-user permissions.
+Also available outside initData flow: `app.asUser(accessToken)`.
 
-**Trộn được**: đọc bằng `client` (thấy đúng phần được phép), ghi bằng `app`
-(không bị chặn), tuỳ endpoint.
+**Can mix**: read as `client` (see only permitted rows), write as `app`
+(not blocked), per endpoint.
 
-## Phía app chủ (nếu bạn cũng viết phần nhúng)
+## Host app side (if you also write the embedding)
 
 ```ts
 const { initData, expiresIn } = await hostClient.issueInitData(
   app.serviceAccountId,
 );
 
-// Cách A — URL fragment. Nhớ "/" trước "#"; fragment không đi lên server.
+// Option A — URL fragment. Remember "/" before "#"; fragment stays on browser.
 iframe.src = `${app.url}/#erpInitData=${encodeURIComponent(initData)}`;
 
-// Cách B — postMessage, origin cụ thể
+// Option B — postMessage, specific origin
 import { sendInitDataToFrame } from "erp-sdk";
 sendInitDataToFrame(iframe.contentWindow, initData, new URL(app.url).origin);
 ```
 
-Thiếu `/` trước `#` làm fetch tương đối của FE resolve sai path Traefik → 404.
+Missing "/" before "#" → relative fetch of FE uses wrong Traefik path → 404.
 
-## Chạy local
+## Local development
 
-Không có ENV inject, tự cấp; lấy initData bằng token user thật rồi mở app kèm
-fragment:
+No ENV injected, supply it; get initData using real user token, open app with fragment:
 
 ```bash
 ERP_BASE_URL=http://localhost:8000 ERP_API_KEY=erp_sk_... PORT=4567 npm start
-# POST /auth/miniapp/init-data với serviceAccountId của SA dev → chuỗi initData
-# mở http://localhost:4567/#erpInitData=<urlencoded>
+# POST /auth/miniapp/init-data with SA's serviceAccountId → initData string
+# open http://localhost:4567/#erpInitData=<urlencoded>
 ```
 
-## Checklist bảo mật
+## Security checklist
 
-- [ ] Không nhận/lưu JWT của user trong mini app — chỉ initData.
-- [ ] `receiveInitData` / `postMessage` luôn dùng origin cụ thể (SDK từ chối `"*"`).
-- [ ] Không log initData ra console/analytics — dù lộ cũng vô hại, nhưng vẫn là PII.
-- [ ] Mọi authorization thật nằm server-side sau `session()`; `parseInitData` chỉ
-      để hiển thị.
-- [ ] App authority: query theo user luôn `where` theo **user id đã xác minh** —
-      không tin id do FE gửi lên.
-- [ ] API key không bao giờ xuống browser, không vào file kết quả, không vào log.
+- [ ] Never receive/store user JWT in mini app — initData only.
+- [ ] `receiveInitData` / `postMessage` always use specific origins (SDK rejects `"*"`).
+- [ ] Never log initData to console/analytics — even if leaked, harmless, but still PII.
+- [ ] Real authorization always server-side after `session()`; `parseInitData` is display-only.
+- [ ] App authority: queries always `where` by **verified user id** —
+      don't trust id from frontend.
+- [ ] API key never to browser, never in output files, never in logs.

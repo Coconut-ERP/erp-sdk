@@ -1,40 +1,36 @@
 ---
 name: erp-data
-description: Đọc, ghi, truy vấn SQL, phân tích dữ liệu và chạy workflow trên workspace ERP 1kk bằng erp-sdk (TypeScript/JavaScript). Dùng khi task nhắc tới erp-sdk, ErpClient, ObjectHandle, RecordQuery, DataFrame, erp.sql / dashboard / query đã lưu / biểu đồ, workflow / cron / publish / run trên ERP, ERP_API_KEY / erp_sk_, ERP_ENV / dryRun / chạy thử trước khi ghi, link–relation giữa hai bảng, object–field–record của ERP, hoặc khi người dùng muốn lấy/thống kê/nhập/sửa dữ liệu trên ERP ("lấy danh sách đơn hàng từ ERP", "báo cáo doanh thu theo tháng", "gộp theo tháng bằng SQL", "tạo dashboard", "chạy script định kỳ mỗi sáng", "import CSV vào bảng", "cập nhật hàng loạt", "join hai bảng", "xuất Excel/CSV từ ERP"). Dựng web app dùng ERP làm backend (schema.json, initData, deploy) thì dùng skill erp-miniapp.
+description: Read, write, query SQL, analyze data, and run workflows on Coconut ERP workspace using erp-sdk (TypeScript/JavaScript). Use when the task mentions erp-sdk, ErpClient, ObjectHandle, RecordQuery, DataFrame, erp.sql / dashboard / saved queries / charts, workflows / cron / publish / run on ERP, ERP_API_KEY / erp_sk_, ERP_ENV / dryRun / test run before writing, link–relation between two tables, object–field–record of ERP, or when the user wants to fetch/aggregate/import/edit data on ERP ("get order list from ERP", "revenue report by month", "aggregate by month using SQL", "create dashboard", "run scheduled script each morning", "import CSV to table", "bulk update", "join two tables", "export Excel/CSV from ERP"). For building web apps using ERP as backend (schema.json, initData, deploy) use the erp-miniapp skill.
 ---
 
-# Khai thác dữ liệu ERP bằng erp-sdk
+# Working with ERP data using erp-sdk
 
-ERP 1kk lưu dữ liệu trong **object engine**: object (bảng) → field (cột) →
-record (dòng). `erp-sdk` là lớp TypeScript trên REST API đó.
+Coconut ERP stores data in an **object engine**: object (table) → field (column) →
+record (row). `erp-sdk` is a TypeScript layer on top of the REST API.
 
-**Cách làm mặc định: viết một script chạy được rồi chạy nó.** CLI `erp` chỉ để
-dựng môi trường và xem schema thật — mọi thao tác đọc/ghi/phân tích đều viết
-bằng SDK, vì logic nhiều bước (join, tổng hợp, đếm trước khi ghi) không diễn đạt
-được bằng cờ dòng lệnh.
+**Default approach: write a runnable script then execute it.** The `erp` CLI is only for setting up the environment and viewing the real schema — all read/write/analysis operations are written using the SDK, since multi-step logic (join, aggregation, count before write) cannot be expressed with command-line flags.
 
-**Hai luật không được quên:**
+**Two rules to never forget:**
 
-1. **Tên object/field là địa chỉ dữ liệu.** Đoán sai → `UnknownObjectError` /
-   `UnknownFieldError` lúc chạy. Lấy schema thật trước khi viết code (§2).
-2. **Script có ghi thì chạy thử trước** bằng `ERP_ENV=development` (§7) — cùng
-   một file, không sửa dòng nào. Đây là dữ liệu thật của người dùng.
+1. **Object/field names are data addresses.** Guessing wrong → `UnknownObjectError` /
+   `UnknownFieldError` at runtime. Fetch the real schema before writing code (§2).
+2. **Scripts that write must test first** using `ERP_ENV=development` (§7) — same
+   file, no changes needed. This is real user data.
 
-## 1. Kết nối
+## 1. Connecting
 
 ```bash
 npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.1/erp-sdk.tgz
-npx erp doctor        # env + kết nối + quyền → {ok, checks[]}, exit 1 nếu hỏng
+npx erp doctor        # env + connection + permissions → {ok, checks[]}, exit 1 if broken
 ```
 
 ```
 ERP_BASE_URL=https://erp.example.com
 ERP_API_KEY=erp_sk_...
-ERP_ENV=development     # tùy chọn — mọi lệnh ghi record thành dry run
+ERP_ENV=development     # optional — makes all record write commands dry runs
 ```
 
-Chưa có credential thì **dừng lại hỏi người dùng** — đừng đoán URL/key, cũng
-đừng đoán tên bảng.
+Without credentials, **ask the user** — don't guess the URL/key or table names.
 
 ```ts
 import { createMiniApp } from "erp-sdk";
@@ -42,7 +38,7 @@ import { createMiniApp } from "erp-sdk";
 const erp = await createMiniApp({
   baseUrl: process.env.ERP_BASE_URL,
   apiKey: process.env.ERP_API_KEY,
-  permissions: [                       // preflight: thiếu quyền là chết ngay đây
+  permissions: [                       // preflight: missing permissions dies here immediately
     { resource: "object", action: "read" },
     { resource: "object:field", action: "read" },
     { resource: "object:record", action: "read" },
@@ -50,178 +46,166 @@ const erp = await createMiniApp({
 });
 ```
 
-Thêm `object:record` + `create`/`update`/`delete` khi script có ghi; `dashboard`
-cho SQL; `workflow` cho automation. Chạy: `node --env-file=.env script.mjs`
-(Node 20.6+) hoặc `npx tsx script.ts`. Đặt script ở thư mục tạm, đừng rải vào
-source người dùng.
+Add `object:record` + `create`/`update`/`delete` when the script writes; `dashboard`
+for SQL; `workflow` for automation. Run: `node --env-file=.env script.mjs`
+(Node 20.6+) or `npx tsx script.ts`. Place scripts in a temporary directory, don't scatter into source.
 
-## 2. Xem schema thật trước
+## 2. View the real schema first
 
 ```bash
-npx erp objects list                      # có bảng nào
-npx erp objects show "Đơn hàng"           # field nào, type gì, config ra sao
-npx erp schema dump --out workspace.json  # toàn bộ, nạp làm context
+npx erp objects list                      # which tables exist
+npx erp objects show "Order"              # which fields, what type, what config
+npx erp schema dump --out workspace.json  # full dump, load as context
 ```
 
-Đọc kỹ `type` và `config`: `relation` trỏ bảng nào, `single_select` có `options`
-gì, `source: "workspace_users"` nghĩa là giá trị lưu **user id**.
+Read carefully `type` and `config`: which table does `relation` point to, what `options` does `single_select` have, `source: "workspace_users"` means the value stores **user id**.
 
-## 3. Đọc
+## 3. Reading
 
 ```ts
-const orders = await erp.object("Đơn hàng");        // theo tên hiển thị hoặc id
+const orders = await erp.object("Order");        // by display name or id
 
 await orders.records()
-  .where("Trạng thái", "equals", "paid")
-  .orderBy("Tổng tiền", "desc")
+  .where("Status", "equals", "paid")
+  .orderBy("Total Amount", "desc")
   .limit(50).withTotal().fetch();                   // { records, nextCursor, hasMore, total }
 
-await orders.records().where(…).fetchAll({ max: 5000 });   // tự đi hết cursor
+await orders.records().where(…).fetchAll({ max: 5000 });   // auto-paginate to cursor end
 await orders.records().where(…).first();
 await orders.records().where(…).count();
 ```
 
-Giới hạn server: **20 filter, 3 sort, 100 record/trang**, `in`/`not_in` tối đa
-**200 giá trị**. Toán tử và chữ ký đầy đủ: `references/api.md`.
+Server limits: **20 filters, 3 sorts, 100 records/page**, `in`/`not_in` max
+**200 values**. Full operators and signatures: `references/api.md`.
 
-## 4. Quan hệ — đừng N+1
+## 4. Relations — avoid N+1
 
-Field `relation` nằm trong `data` dưới dạng **mảng id**. Ba cách, theo thứ tự
-nên dùng: `preload()` (server nạp kèm) → `getMany(ids)` (1 request/200 id) →
-`leftJoin` trên DataFrame. **Không bao giờ gọi `handle.get(id)` trong vòng lặp.**
+`relation` fields live in `data` as **arrays of ids**. Three approaches, in order of preference: `preload()` (server loads with results) → `getMany(ids)` (1 request/200 ids) →
+`leftJoin` on DataFrame. **Never call `handle.get(id)` in a loop.**
 
-## 5. Phân tích: DataFrame
+## 5. Analysis: DataFrame
 
-`toFrame()` = `fetchAll()` + đổi sang dòng phẳng, cột theo **tên hiển thị**.
-Frame bất biến, mọi method trả frame mới.
+`toFrame()` = `fetchAll()` + flatten to rows, columns by **display name**.
+Frames are immutable, every method returns a new frame.
 
 ```ts
 const df = await orders.records().where(…).toFrame({ max: 20000 });
 
-df.groupBy("Khách hàng")
-  .agg({ doanhThu: ["sum", "Tổng tiền"], soDon: ["count"] })
-  .sortBy("doanhThu", "desc").head(10).toArray();
+df.groupBy("Customer")
+  .agg({ revenue: ["sum", "Total Amount"], orderCount: ["count"] })
+  .sortBy("revenue", "desc").head(10).toArray();
 ```
 
-Báo cáo thì `console.table` bản rút gọn — đừng đổ hàng nghìn dòng ra stdout.
+For reports, use `console.table` with a summary — don't dump thousands of rows to stdout.
 
-## 6. Tổng hợp nặng: SQL read-only
+## 6. Heavy aggregation: read-only SQL
 
-`RecordQuery` chỉ lọc trên **một** bảng. `GROUP BY`, `JOIN`, xếp hạng — viết SQL,
-chỉ kéo về kết quả đã gộp:
+`RecordQuery` filters on **one** table only. For `GROUP BY`, `JOIN`, ranking — write SQL,
+fetch only aggregated results:
 
 ```ts
 const df = (await erp.sql(`
-  SELECT "Khách hàng" AS kh, SUM("Tổng tiền")::float8 AS doanh_thu
-  FROM "Đơn hàng" WHERE "Ngày đặt" >= @tu
+  SELECT "Customer" AS customer, SUM("Total Amount")::float8 AS revenue
+  FROM "Order" WHERE "Order Date" >= @startDate
   GROUP BY 1 ORDER BY 2 DESC
-`, { params: [{ name: "tu", type: "date" }], values: { tu: "2026-01-01" } })).toFrame();
+`, { params: [{ name: "startDate", type: "date" }], values: { startDate: "2026-01-01" } })).toFrame();
 ```
 
-Bảng/cột là tên hiển thị, **phân biệt hoa thường**, phải trong nháy kép. Một câu
-`SELECT`, trần **1 000 dòng**, không cursor → gộp trong SQL. Cột `numeric` về
-JSON là **chuỗi** — `::float8` nếu cần số. Cú pháp, tham số, câu mẫu:
+Tables/columns are display names, **case-sensitive**, must be double-quoted. One
+`SELECT` statement, max **1,000 rows**, no cursor → aggregate in SQL. `numeric` columns
+return as **strings** in JSON — use `::float8` if you need numbers. Syntax, parameters, examples:
 `references/sql.md`.
 
-## 7. Ghi — và chạy thử trước
+## 7. Writing — and test first
 
 ```ts
-await orders.create({ "Mã đơn": "DH-001", "Tổng tiền": 500000 });
-await orders.createMany(rows);                       // tự chia lô 500
-await orders.update(id, { "Trạng thái": "paid" });   // tự đọc version
+await orders.create({ "Order Code": "ORD-001", "Total Amount": 500000 });
+await orders.createMany(rows);                       // auto-chunks into 500s
+await orders.update(id, { "Status": "paid" });   // auto-reads version
 await orders.records().where(…).update(patch, { limit: 1000 });   // bulk
 ```
 
-`ERP_ENV=development` làm **mọi lệnh ghi record** thành dry run: server chạy
-đúng câu lệnh thật (validate, unique, version, id relation, rule) rồi
-**rollback**. Sai thì lỗi y hệt lúc chạy thật; đúng thì không để lại dấu vết.
+`ERP_ENV=development` makes **all record write commands** dry runs: server executes
+the real statement (validate, unique, version, relation ids, rules) then
+**rolls back**. Errors are identical to live runs; success leaves no trace.
 
 ```bash
-ERP_ENV=development node script.mjs   # thử toàn bộ
-node script.mjs                        # ưng con số rồi thì ghi thật
+ERP_ENV=development node script.mjs   # test everything
+node script.mjs                        # commit if numbers look good
 ```
 
-`delete`, `restore`, `createLink`, `deleteLink`, `workflow.run()` **không có**
-dry run — trong chế độ development chúng ném `DryRunUnsupportedError` chứ không
-làm lén. **Id trả về từ dry-run create là id giả**, chưa từng lưu.
+`delete`, `restore`, `createLink`, `deleteLink`, `workflow.run()` have **no**
+dry run — in development mode they throw `DryRunUnsupportedError` instead of silently succeeding. **IDs returned from dry-run create are fake**, never persisted.
 
-**Quy trình bắt buộc khi được giao việc ghi hàng loạt:**
+**Mandatory procedure for bulk write tasks:**
 
-1. `.count()` đúng filter đó trước, **báo con số cho người dùng**.
-2. Chạy `ERP_ENV=development`, báo `matched`/`created` và lỗi nếu có.
-3. Thao tác lớn hoặc phá huỷ (bulk update, xoá, đổi trạng thái hàng loạt):
-   **hỏi xác nhận** rồi mới chạy thật.
+1. `.count()` on the exact filter first, **report the number to the user**.
+2. Run `ERP_ENV=development`, report `matched`/`created` and any errors.
+3. Large or destructive operations (bulk update, delete, status changes):
+   **ask for confirmation** before running for real.
 
-### Ghi relation = thay cả list
+### Writing relations = replace entire list
 
-| Gửi gì | Kết quả |
+| What you send | Result |
 | --- | --- |
-| không có key trong `data` | link giữ nguyên |
-| `"Chi tiết": null` | **giống hệt không gửi key** — link giữ nguyên |
-| `"Chi tiết": [a, b]` | link **đúng** a, b; link cũ khác biến mất |
-| `"Chi tiết": []` | **xoá sạch link** của field đó |
+| key not in `data` | links stay as-is |
+| `"Line Items": null` | **same as not sending the key** — links stay as-is |
+| `"Line Items": [a, b]` | links become **exactly** a, b; old links disappear |
+| `"Line Items": []` | **clear all links** for this field |
 
-Ngược với field thường (ở đó `null` là *xoá giá trị*). Thêm 1 link vào record
-đang có 3 link = gửi cả 4 id: `[...orders.linkedIds(rec, "Chi tiết"), idMoi]`.
-Tối đa **100 id/field/record**; dài hơn phải `createLink`/`deleteLink` từng cái.
+Unlike regular fields (where `null` = *delete value*). Adding 1 link to a record with 3 existing = send all 4 ids: `[...orders.linkedIds(rec, "Line Items"), newId]`.
+Max **100 ids/field/record**; longer requires `createLink`/`deleteLink` individually.
 
-## 8. Workflow — script chạy trên server ERP
+## 8. Workflows — scripts running on ERP server
 
-Việc chạy **định kỳ** (nhắc hạn mỗi sáng, đồng bộ hằng đêm) không cần dựng
-service riêng: workflow là một file TypeScript có `async function main(input)`,
-ERP giữ code, secret và lịch chạy.
+Scheduled tasks (deadline reminders every morning, nightly sync) don't need a separate service: a workflow is a TypeScript file with `async function main(input)`, ERP stores the code, secrets, and schedule.
 
 ```ts
 const wf = await erp.workflows.create({ name, code, trigger: { type: "cron",
   config: { schedule: "0 0 9 * * *", timezone: "Asia/Ho_Chi_Minh" } } });
-await wf.publish();          // ⚠ chưa publish thì run vẫn ra bản cũ
+await wf.publish();          // ⚠ runs use old version until published
 ```
 
-Bốn thứ hay sai: chỉ có `manual`/`cron` (không webhook); cron **6 trường có
-giây**; **sửa gì cũng về draft** phải publish lại; `setEnv` **thay cả map**.
-Chi tiết quản lý workflow: `references/workflows.md`.
+Four common mistakes: only `manual`/`cron` (no webhooks); cron is **6 fields with seconds**; **any edit reverts to draft**, must republish; `setEnv` **replaces the entire map**.
+Full workflow management: `references/workflows.md`.
 
-**Viết hoặc sửa code bên trong `main()`** — sandbox của runner, module nào import
-được, trần 60s/256KB, `check`/`test-run` để thử mà không tạo draft → dùng skill
+**Writing or editing code inside `main()`** — runner sandbox, which modules import, 60s/256KB limits, `check`/`test-run` to test without creating a draft → use skill
 **`erp-workflow`**.
 
-Trước khi tạo/sửa/xoá workflow của người dùng: **hỏi**. Đó là thứ chạy định kỳ
-trên dữ liệu thật.
+Before creating/editing/deleting user workflows: **ask**. These run on real data on a schedule.
 
-## Bẫy đã trả giá
+## Lessons learned (pitfalls)
 
-- **`RecordQuery` là builder có trạng thái**: `count()`/`first()` set `limit` lên
-  chính nó — dựng chain mới mỗi lần dùng.
-- **`fetchAll()` không có trần mặc định** — bảng lớn nhớ `{ max }`.
-- **Đọc ra 0 dòng** thường là row scope IAM, không phải filter sai (`npx erp whoami`).
-- **`createdAt`/`updatedAt` không lọc và không sắp xếp được** — filter chỉ nhận
-  field thật của bảng, cộng khoá đặc biệt `id`.
-- **`get(id)` không trả relation** — muốn mảng id thì query, hoặc `preload`.
-- **Field computed** (`formula`/`lookup`/`rollup`) ở `computedData`, do worker
-  tính nền, có thể chưa xong ngay sau khi ghi.
-- **`sum`/`avg` ép chuỗi không parse được thành `0`** — kiểm cột trước khi tin số.
-- **Đổi cấu trúc bảng xong phải `erp.invalidate()`**, không thì cache còn field cũ.
-- **`erp.dashboards.list()` phân trang trước khi lọc quyền** — dùng `listAll()`.
+- **`RecordQuery` is stateful builder**: `count()`/`first()` mutate `limit` —
+  build a new chain each time.
+- **`fetchAll()` has no default limit** — large tables: remember `{ max }`.
+- **Reading 0 rows** is usually IAM row scope, not a wrong filter (`npx erp whoami`).
+- **`createdAt`/`updatedAt` cannot be filtered or sorted** — filters only accept real
+  table fields, plus the special key `id`.
+- **`get(id)` doesn't return relations** — for id arrays use query, or `preload`.
+- **Computed fields** (`formula`/`lookup`/`rollup`) live in `computedData`, background-calculated,
+  may not update immediately after write.
+- **`sum`/`avg` coerce unparseable strings to `0`** — check column before trusting numbers.
+- **After changing table structure, call `erp.invalidate()`**, otherwise cache keeps old fields.
+- **`erp.dashboards.list()` paginates before filtering permissions** — use `listAll()`.
 
-## Quyền và ranh giới
+## Permissions and boundaries
 
-Key `erp_sk_…` là **service account**, thường ở mức `member`: đọc/ghi record
-được, **tạo bảng/field thì không** (403). Muốn tạo bảng phải dùng key admin —
-mặc định đừng tự làm, **hỏi người dùng trước**. Cần chạy theo quyền một user cụ
-thể: `erp.asUser(accessToken)`.
+`erp_sk_…` keys are **service accounts**, typically at `member` level: can read/write records,
+**cannot create tables/fields** (403). To create tables use admin keys — don't do it yourself,
+**ask the user first**. To run as a specific user: `erp.asUser(accessToken)`.
 
-**API key chỉ ở server.** Không log, không commit, không ship xuống browser,
-không viết vào file kết quả.
+**API keys stay on server.** Never log, commit, ship to browser, or write to output files.
 
-## Tham chiếu
+## References
 
-- `references/api.md` — bề mặt SDK cho việc dữ liệu: chữ ký, kiểu, giới hạn, error.
-- `references/recipes.md` — script mẫu chạy được: báo cáo, join, import CSV,
-  cập nhật hàng loạt an toàn, xuất CSV, soi chất lượng dữ liệu.
-- `references/sql.md` — viết SQL cho ERP: tên bảng/cột, tham số, kiểu trả về, câu mẫu.
-- `references/workflows.md` — workflow đầy đủ: trigger, version/publish, env,
-  run và đọc kết quả.
-- Viết **code chạy trong workflow** (runtime, module cho phép, giới hạn,
+- `references/api.md` — SDK data surface: signatures, types, limits, errors.
+- `references/recipes.md` — runnable example scripts: reports, joins, CSV import,
+  safe bulk updates, CSV export, data quality checks.
+- `references/sql.md` — writing SQL for ERP: table/column names, parameters, return types, examples.
+- `references/workflows.md` — complete workflows: triggers, version/publish, env,
+  runs and reading results.
+- Writing **code that runs inside workflows** (runtime, allowed modules, limits,
   `test-run`) → skill **`erp-workflow`**.
-- Dựng **mini app** (web app dùng ERP làm backend, `schema.json`, initData,
+- Building **mini apps** (web apps using ERP as backend, `schema.json`, initData,
   deploy) → skill **`erp-miniapp`**.

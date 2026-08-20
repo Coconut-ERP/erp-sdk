@@ -13,6 +13,7 @@ import {
   runLogs,
   runResult,
   WORKFLOW_ENV_KEEP,
+  WorkflowHandle,
   WorkflowsApi,
 } from "../src/workflows";
 import { FakeHttp } from "./helpers/http";
@@ -56,8 +57,26 @@ describe("workflow definition checks", () => {
   it("rejects trigger types the backend does not have", async () => {
     const api = new WorkflowsApi(new FakeHttp({}));
     await expect(
-      api.create({ name: "x", code: CODE, trigger: { type: "webhook" } }),
+      api.create({ name: "x", code: CODE, trigger: { type: "event" } }),
     ).rejects.toBeInstanceOf(WorkflowDefinitionError);
+  });
+
+  it("accepts a webhook trigger and refuses to configure one", async () => {
+    const http = new FakeHttp({
+      "POST /workflows": [workflow({ trigger: { type: "webhook" } })],
+    });
+    const api = new WorkflowsApi(http);
+    await api.create({ name: "x", code: CODE, trigger: { type: "webhook" } });
+    expect(http.calls).toHaveLength(1);
+
+    await expect(
+      api.create({
+        name: "x",
+        code: CODE,
+        trigger: { type: "webhook", config: { secret: "s3cret" } },
+      }),
+    ).rejects.toThrow(/takes no config/);
+    expect(http.calls).toHaveLength(1);
   });
 
   it("rejects a five-field cron, because the scheduler wants seconds", async () => {
@@ -109,6 +128,39 @@ describe("workflow definition checks", () => {
     await expect(handle.setEnv({ "BOT-TOKEN": "x" })).rejects.toThrow(
       /not a valid name/,
     );
+  });
+});
+
+describe("webhook workflows", () => {
+  it("carries the delivery URL", async () => {
+    const dto = workflow({
+      trigger: { type: "webhook" },
+      webhookUrl: "https://erp.example.com/api/v1/webhooks/aaa",
+    });
+    const handle = await new WorkflowsApi(
+      new FakeHttp({ "POST /workflows": [dto] }),
+    ).create({ name: "x", code: CODE, trigger: { type: "webhook" } });
+    expect(handle.webhookUrl).toBe(dto.webhookUrl);
+  });
+
+  it("cannot rotate the delivery URL — that credential is not the SDK's to move", () => {
+    const handle = new WorkflowHandle(
+      new FakeHttp({}),
+      workflow({
+        trigger: { type: "webhook" },
+        webhookUrl: "https://erp.example.com/api/v1/webhooks/aaa",
+      }),
+    );
+    expect(
+      (handle as unknown as Record<string, unknown>).rotateWebhookUrl,
+    ).toBeUndefined();
+  });
+
+  it("has no URL on any other trigger", async () => {
+    const handle = await new WorkflowsApi(
+      new FakeHttp({ "POST /workflows": [workflow()] }),
+    ).create({ name: "x", code: CODE, trigger: { type: "manual" } });
+    expect(handle.webhookUrl).toBeUndefined();
   });
 });
 

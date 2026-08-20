@@ -30,6 +30,7 @@ export {
   UnknownObjectError,
   UnknownQueryError,
   UnknownWorkflowError,
+  UnknownWorkflowVariableError,
   WorkflowDefinitionError,
   WorkflowRunFailedError,
   WorkflowRunTimeoutError,
@@ -134,6 +135,7 @@ export type {
   SortDirection,
   UpdateRecordRequest,
   UserDto,
+  WebhookInput,
   WorkflowDto,
   WorkflowRunDto,
   WorkflowRunOutput,
@@ -141,7 +143,16 @@ export type {
   WorkflowStatus,
   WorkflowTrigger,
   WorkflowTriggerType,
+  WorkflowVariableDto,
 } from "./types";
+export {
+  assertWorkflowVariableKey,
+  MAX_WORKFLOW_VARIABLE_LENGTH,
+  MAX_WORKFLOW_VARIABLE_WORKFLOWS,
+  type WorkflowVariableChanges,
+  type WorkflowVariableSpec,
+  WorkflowVariablesApi,
+} from "./variables";
 export {
   INIT_DATA_MESSAGE_TYPE,
   INIT_DATA_URL_PARAM,

@@ -1,40 +1,39 @@
 ---
 name: erp-miniapp
-description: Dựng mini app chạy trên ERP 1kk bằng erp-sdk — web app dùng ERP làm engine thay cho database riêng. Dùng khi task nhắc tới mini app / miniapp ERP, erp init, schema.json, assertSchema, initData / X-Init-Data / session(), createMiniApp + permissions, service account erp_sk_, deploy app lên ERP (zip/repo/template), duyệt schema khi deploy, hoặc khi người dùng muốn "viết app quản lý X trên ERP", "app đơn xin nghỉ", "app chấm công", "làm form nhập liệu cho nhân viên", "app xem báo cáo cho sếp", "dựng web app không cần database". Chỉ đọc/ghi/phân tích dữ liệu trên workspace có sẵn (script, báo cáo, import) thì dùng skill erp-data.
+description: Build mini apps running on Coconut ERP using erp-sdk — web apps using ERP as an engine instead of a separate database. Use when the task mentions mini app / miniapp ERP, erp init, schema.json, assertSchema, initData / X-Init-Data / session(), createMiniApp + permissions, service account erp_sk_, deploying apps to ERP (zip/repo/template), schema review on deploy, or when the user wants to "build an X management app on ERP", "leave request app", "time tracking app", "build data entry form for staff", "dashboard app for managers", "create web app without a database". For only reading/writing/analyzing data on an existing workspace (scripts, reports, imports) use the erp-data skill.
 ---
 
-# Dựng mini app trên ERP
+# Building mini apps on ERP
 
-Mini app là **web app nhỏ, cài theo từng workspace**, mở từ trong giao diện ERP
-(iframe) và dùng ERP làm engine: dữ liệu, phân quyền, danh tính người dùng đều
-lấy từ ERP thay vì tự xây. Giống Telegram Mini App.
+A mini app is a **small web app installed per workspace**, opened inside ERP's
+UI (iframe) and uses ERP as its engine: data, access control, and user identity all
+come from ERP instead of being built separately. Like a Telegram Mini App.
 
-Hai nửa: **server** (bắt buộc — giữ API key, gọi ERP qua SDK, serve frontend) và
-**frontend** (tuỳ app — chạy trong iframe, nhận initData, gọi về server của
-chính app). API key **chỉ ở server**, không bao giờ xuống browser.
+Two halves: **server** (required — holds API key, calls ERP via SDK, serves frontend) and
+**frontend** (optional per app — runs in iframe, receives initData, calls back to app's server). API keys **stay on server only**, never go to the browser.
 
-## Ba ràng buộc quyết định mọi thiết kế
+## Three core constraints that shape all design
 
-Đọc kỹ ba dòng này trước khi viết dòng code nào — chúng là nguồn của hầu hết lỗi:
+Read these three lines carefully before writing any code — they are the source of most mistakes:
 
-1. **App không tạo được bảng.** Service account của app là `member`/`viewer`,
-   gọi `POST /objects` là 403. App **khai báo** bảng cần trong `schema.json`;
-   người deploy duyệt và tạo bằng quyền của *họ*. → §2
-2. **App không nhận JWT của user.** Nó nhận `initData` đã ký, đổi lấy danh tính
-   qua `session()`. → §3
-3. **API key xoay vòng mỗi lần deploy.** Luôn đọc `process.env.ERP_API_KEY`,
-   không hardcode, không cache ra ngoài env. → §4
+1. **Apps cannot create tables.** The app's service account is `member`/`viewer`,
+   calling `POST /objects` gets 403. Apps **declare** tables they need in `schema.json`;
+   the deployer reviews and creates them with *their* permissions. → §2
+2. **Apps don't receive user JWTs.** They receive signed `initData` and trade it for
+   verified identity via `session()`. → §3
+3. **API keys rotate on every deploy.** Always read `process.env.ERP_API_KEY`,
+   never hardcode, never cache outside env. → §4
 
-## 1. Khởi động một app
+## 1. Bootstrap an app
 
 ```bash
-npx erp init don-xin-nghi --name "Đơn xin nghỉ" --object "Đơn xin nghỉ"
+npx erp init leave-request --name "Leave Request" --object "Leave Request"
 ```
 
-Sinh sẵn `server.js` (Express + bridge initData), `schema.json`, `public/index.html`,
-`.env.example`, `README.md`. Chạy được ngay — sửa dần từ đó thay vì viết từ đầu.
+Generates `server.js` (Express + initData bridge), `schema.json`, `public/index.html`,
+`.env.example`, `README.md`. Runs immediately — iterate from there instead of from scratch.
 
-Khung boot chuẩn, **thứ tự này là bắt buộc**:
+Standard bootstrap, **this order is mandatory**:
 
 ```ts
 import { readFileSync } from "node:fs";
@@ -44,8 +43,8 @@ const schema = JSON.parse(
   readFileSync(new URL("./schema.json", import.meta.url), "utf8"),
 );
 
-// 1. Kết nối + preflight quyền: thiếu quyền là chết ngay lúc boot,
-//    không chết giữa luồng user.
+// 1. Connect + preflight permissions: missing permissions fails at boot,
+//    not mid-request.
 const app = await createMiniApp({
   baseUrl: process.env.ERP_BASE_URL,
   apiKey: process.env.ERP_API_KEY,
@@ -57,29 +56,28 @@ const app = await createMiniApp({
   ],
 });
 
-// 2. Chặn boot nếu workspace chưa khớp schema.json — một lỗi rõ ràng,
-//    thay vì UnknownFieldError rơi rớt ở từng route.
-const { "Đơn xin nghỉ": leaves } = await app.assertSchema(schema);
+// 2. Fail fast if workspace doesn't match schema.json — one clear error,
+//    not UnknownFieldError scattered through every route.
+const { "Leave Request": leaves } = await app.assertSchema(schema);
 ```
 
-Khai đúng quyền app dùng, **đừng khai `*`**, và **đừng khai `object:create` /
-`object:field:create`** — service account không bao giờ có chúng, khai vào là
-app chết lúc boot với `MissingPermissionsError`.
+Declare only the permissions your app uses, **never declare `*`**, and **never declare `object:create` /
+`object:field:create`** — service accounts never have them, declaring them kills the app at boot with `MissingPermissionsError`.
 
-## 2. `schema.json` — khai báo, không tạo
+## 2. `schema.json` — declare, don't create
 
-File ở **gốc source**. Mỗi object = body của `POST /objects` cộng `fields`:
+File at **project root**. Each object = body of `POST /objects` plus `fields`:
 
 ```json
 {
   "objects": [
     {
-      "name": "Đơn xin nghỉ",
+      "name": "Leave Request",
       "fields": [
-        { "name": "Người xin nghỉ", "type": "single_select",
+        { "name": "Requester", "type": "single_select",
           "config": { "source": "workspace_users" } },
-        { "name": "Lý do", "type": "long_text" },
-        { "name": "Trạng thái", "type": "single_select",
+        { "name": "Reason", "type": "long_text" },
+        { "name": "Status", "type": "single_select",
           "config": { "source": "static", "options": ["pending", "approved"] } }
       ]
     }
@@ -87,105 +85,92 @@ File ở **gốc source**. Mỗi object = body của `POST /objects` cộng `fie
 }
 ```
 
-Kiểm **trước khi** upload — hàm thuần, không cần credential:
+Validate **before** uploading — pure functions, no credentials needed:
 
 ```js
 import { validateSchema } from "erp-sdk";
-validateSchema(schema);            // string[] mọi lỗi backend sẽ bắt; [] = hợp lệ
-await app.schemaPlan(schema);      // diff với workspace thật, không throw
+validateSchema(schema);            // string[] of backend errors; [] = valid
+await app.schemaPlan(schema);      // diff with real workspace, doesn't throw
 ```
 
-Luật hay vi phạm: `formula`/`lookup`/`rollup` **không khai báo được**;
-`relation` cần `config.targetObject` là **tên bảng**; chỉ **thêm** được, đổi
-kiểu field đã có là `conflict` phải sửa tay. Chi tiết + toàn bộ 18 field type:
+Common mistakes: `formula`/`lookup`/`rollup` **can't be declared**;
+`relation` needs `config.targetObject` as **table name**; only **adding** is allowed,
+changing field types on existing fields is a `conflict` requiring manual fixes. Full details + all 18 field types:
 `references/schema.md`.
 
-## 3. Biết ai đang dùng app
+## 3. Know who's using the app
 
 ```ts
 server.use("/api", async (req, res, next) => {
   const initData = req.header("x-init-data");
   if (!initData) return res.status(401).json({ error: "Missing X-Init-Data" });
   try {
-    req.erp = await identify(initData);   // cache theo chuỗi initData
+    req.erp = await identify(initData);   // cache by initData string
     next();
   } catch (e) {
-    res.status(401).json({ error: e.message });   // FE xin app chủ initData mới
+    res.status(401).json({ error: e.message });   // FE re-requests fresh initData
   }
 });
 ```
 
-initData sống **5 phút**, không có refresh token — 401 là chuyện bình thường,
-FE phải xử lý được. Frontend đọc chuỗi bằng `readInitDataFromLocation()` hoặc
-`receiveInitData({ allowedOrigins })`; `parseInitData()` **chưa xác minh**, chỉ
-để hiển thị "Xin chào An". Luồng đầy đủ + code FE: `references/identity.md`.
+initData lives **5 minutes**, no refresh token — 401 is normal,
+frontend must handle it. Frontend reads the string via `readInitDataFromLocation()` or
+`receiveInitData()`; `parseInitData()` is **unverified**, display-only ("Hello Alice"). Full flow + frontend code: `references/identity.md`.
 
-**Hai mô hình quyền — chọn sớm, đừng trộn nhầm:**
+**Two permission models — choose early, don't mix:**
 
-| | App authority (mặc định) | User authority (opt-in) |
+| | App authority (default) | User authority (opt-in) |
 | --- | --- | --- |
-| Chạy bằng | client của app (service account) | `session(initData).client` / `asUser(token)` |
-| `createdBy` | service account | user thật |
-| Quyền | ai mở được app là dùng đủ chức năng | đúng RBAC + row scope của user đó |
-| Ranh giới dữ liệu giữa user | **app tự làm** bằng `where` | server tự cắt |
+| Runs as | app's client (service account) | `session(initData).client` / `asUser(token)` |
+| `createdBy` | service account | real user |
+| Permissions | anyone who can open the app uses full features | true RBAC + row scope of that user |
+| Data boundaries between users | **app's responsibility** via `where` | server handles automatically |
 
-App authority là mặc định khuyến nghị (kiểu Telegram bot). Đổi lại, mọi query
-theo user **phải** `where` theo user id đã xác minh từ `session()` — không bao
-giờ tin id do FE gửi lên:
+App authority is the default recommendation (like a Telegram bot). Trade-off: every query by user **must** `where` by a verified user id from `session()` — never trust id from frontend:
 
 ```ts
 const { user } = req.erp;
-await leaves.create({ "Người xin nghỉ": user.id, "Lý do": req.body.reason });
+await leaves.create({ "Requester": user.id, "Reason": req.body.reason });
 const mine = await leaves.records()
-  .where("Người xin nghỉ", "equals", user.id)   // quên dòng này = lộ dữ liệu
+  .where("Requester", "equals", user.id)   // forgetting this = data leak
   .fetchAll();
 ```
 
-## 4. Hợp đồng runtime khi deploy
+## 4. Runtime contract on deploy
 
-ERP build bằng nixpacks, chạy container sau Traefik. App hợp lệ khi:
+ERP builds with nixpacks, runs as container behind Traefik. Valid apps:
 
-- có script `start` (Node: nixpacks chạy `npm i` → `npm start`);
-- **nghe `process.env.PORT`, bind `0.0.0.0`** — không phải `localhost`;
-- **URL tương đối** ở FE (`fetch("api/me")`, không phải `/api/me`) — app được
-  serve dưới path `/apps/<slug>-<id>/`;
-- đọc mọi credential từ ENV, không ghi ra file.
+- have a `start` script (Node: nixpacks runs `npm i` → `npm start`);
+- **listen on `process.env.PORT`, bind `0.0.0.0`** — not `localhost`;
+- **use relative URLs** on frontend (`fetch("api/me")`, not `/api/me`) — app is served under `/apps/<slug>-<id>/`;
+- read all credentials from ENV, never write config files.
 
-ERP inject `ERP_BASE_URL`, `ERP_API_KEY`, `ERP_WORKSPACE_ID`, `PORT`.
+ERP injects `ERP_BASE_URL`, `ERP_API_KEY`, `ERP_WORKSPACE_ID`, `PORT`.
 
-⚠️ **Đừng bao giờ khai `ERP_ENV=development` cho app đã cài.** Biến đó biến mọi
-lệnh ghi record thành dry run: app chạy không lỗi nhưng không có gì được lưu —
-kiểu hỏng khó nhìn ra nhất. Không khai gì là đúng.
+⚠️ **Never declare `ERP_ENV=development` for installed apps.** It turns all record writes to dry runs: app runs without errors but nothing saves — hardest kind of silent failure. Omit it.
 
-Cài xong ERP tự deploy, **trừ khi** `schema.json` chưa khớp workspace: app dừng
-ở `schemaStatus: "pending"` và **không có build nào được tạo** cho tới khi người
-deploy bấm duyệt. Vòng đời, ba nguồn source (template/repo/zip), bảng lỗi đầy
-đủ: `references/deploy.md`.
+After install ERP auto-deploys, **unless** `schema.json` doesn't match: app stalls at `schemaStatus: "pending"` and **no builds created** until the deployer approves. Full lifecycle, three sources (template/repo/zip), error table: `references/deploy.md`.
 
-## Bẫy đã trả giá
+## Pitfalls learned the hard way
 
-- **App đứng yên sau khi cài, không có build** → `schemaStatus: "pending"`, đang
-  chờ duyệt `schema.json`. Không phải build hỏng.
-- **`MissingPermissionsError` lúc boot** → key thiếu quyền đã khai, hoặc app khai
-  `object:create` (mini app không bao giờ có). Đọc `.missing`.
-- **FE gọi `api/...` ra 404** → app chủ mở app thiếu `/` trước `#`, fetch tương
-  đối resolve sai path Traefik.
-- **401/403 sau redeploy** → app cache API key cũ; key đã rotate.
-- **Build ok nhưng không lên `running`** → bind `localhost` thay vì `0.0.0.0`,
-  hoặc không nghe `PORT`.
-- **Field `relation` ghi là thay cả list**, không phải thêm — `[]` xoá sạch link,
-  `null` giữ nguyên. Xem skill `erp-data`.
-- **Đọc ra 0 record dù có dữ liệu** → row scope IAM, không phải filter sai.
+- **App stalled after install, no build** → `schemaStatus: "pending"`, awaiting `schema.json` review. Not a build failure.
+- **`MissingPermissionsError` at boot** → key missing declared permissions, or app declared `object:create` (mini apps never have it). Read `.missing`.
+- **FE calls `api/...` gets 404** → app host opened without `/` before `#`, relative fetch resolves wrong through Traefik.
+- **401/403 after redeploy** → app cached old API key; it's rotated.
+- **Build OK but won't go `running`** → binds `localhost` instead of `0.0.0.0`,
+  or doesn't listen on `PORT`.
+- **`relation` fields write is replace-entire-list**, not append — `[]` clears links,
+  `null` keeps them. See erp-data skill.
+- **Reading 0 records despite data existing** → row scope IAM, not a filter bug.
 
-Trước khi sửa cấu trúc workspace của người dùng (tạo bảng, đổi field bằng key
-admin): **hỏi**. Đó không phải việc của app.
+Before modifying the deployer's workspace structure (creating tables, changing fields via admin key): **ask**. That's not the app's job.
 
-## Tham chiếu
+## References
 
-- `references/schema.md` — `schema.json`: format, 18 field type, luật backend,
-  `validateSchema`/`planSchema`/`assertSchema`, đổi schema về sau.
-- `references/identity.md` — initData đầy đủ: luồng ký, code FE + server, cache
-  phiên, hai mô hình quyền, checklist bảo mật.
-- `references/deploy.md` — hợp đồng runtime, ba nguồn source, màn duyệt schema,
-  vòng đời trạng thái, ENV, logo, bảng lỗi thường gặp.
-- Đọc/ghi/phân tích dữ liệu (query, DataFrame, SQL, workflow) → skill **`erp-data`**.
+- `references/schema.md` — `schema.json`: format, 18 field types, backend rules,
+  `validateSchema`/`planSchema`/`assertSchema`, evolving schema later.
+- `references/identity.md` — complete initData: signature flow, frontend + server code, session caching,
+  two permission models, security checklist.
+- `references/deploy.md` — runtime contract, three sources, schema review UI,
+  state lifecycle, ENV, logo, common error table.
+- Reading/writing/analyzing data (queries, DataFrame, SQL, workflows) → skill **`erp-data`**.

@@ -20,10 +20,11 @@ import type {
   WorkflowTriggerType,
 } from "./types";
 
-/** Every trigger the backend accepts today. `webhook`/`event` do not exist. */
+/** Every trigger the backend accepts today. `event` does not exist. */
 export const WORKFLOW_TRIGGER_TYPES: readonly WorkflowTriggerType[] = [
   "manual",
   "cron",
+  "webhook",
 ];
 
 /** Statuses that mean the run has not finished yet. */
@@ -96,7 +97,16 @@ export function assertWorkflowTrigger(trigger: WorkflowTrigger): void {
         `${WORKFLOW_TRIGGER_TYPES.join(", ")} exist`,
     );
   }
-  if (trigger.type !== "cron") return;
+  if (trigger.type !== "cron") {
+    if (trigger.config && Object.keys(trigger.config).length > 0) {
+      throw new WorkflowDefinitionError(
+        "trigger",
+        `a ${trigger.type} trigger takes no config — a webhook is addressed by ` +
+          "the URL the server mints for it, and nothing is configured about it",
+      );
+    }
+    return;
+  }
 
   const config = (trigger.config ?? {}) as Partial<CronTriggerConfig>;
   if (!config.schedule || !config.timezone) {
@@ -185,7 +195,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /**
  * `client.workflows` — the workspace's automation scripts. A workflow is one
  * TypeScript file exporting `async function main(input)`, versioned, published,
- * and then run either by hand or on a cron.
+ * and then run by hand, on a cron, or from a webhook delivery.
  */
 export class WorkflowsApi {
   constructor(
@@ -305,6 +315,23 @@ export class WorkflowHandle {
 
   get trigger(): WorkflowTrigger {
     return this.dto.trigger;
+  }
+
+  /**
+   * The URL a `webhook` workflow is delivered to, or `undefined` on any other
+   * trigger. **It is the whole credential** — anyone holding it can start a
+   * run, no signature is checked on the way in, so treat it as a secret and
+   * never print it into an agent transcript or a log. Relative (`/api/v1/...`)
+   * when the server has no public base URL configured. A draft answers 404
+   * until {@link publish}.
+   *
+   * Read-only here on purpose: **the SDK does not rotate it**. Retiring a
+   * leaked URL is a person's decision made from their own session, at
+   * `POST /workflows/{id}/webhook/rotate`, and a script holding the old URL
+   * should not be able to mint itself a new one.
+   */
+  get webhookUrl(): string | undefined {
+    return this.dto.webhookUrl;
   }
 
   get code(): string {

@@ -1,125 +1,122 @@
-# Viết SQL cho ERP
+# Writing SQL for ERP
 
-`erp.sql(sql, { params, values })` chạy **một** câu `SELECT` read-only trong
-database của workspace và trả `{ columns, rows, rowCount, truncated, compiledSql }`.
+`erp.sql(sql, { params, values })` runs **one** read-only `SELECT` in the workspace's
+database and returns `{ columns, rows, rowCount, truncated, compiledSql }`.
 
-## Bảng và cột là tên hiển thị
+## Tables and columns are display names
 
-Server dịch mỗi object thành một CTE có tên là **display name** của nó, mỗi
-field thành một cột có tên là display name của field:
+The server translates each object into a CTE named its **display name**, each
+field into a column named its display name:
 
 ```sql
-SELECT "Tên chuyền", "Sản lượng thực tế" FROM "Sản xuất"
+SELECT "Machine Name", "Actual Output" FROM "Production"
 ```
 
-| Quy tắc | Chi tiết |
+| Rule | Details |
 | --- | --- |
-| Nháy kép | Bắt buộc — tên có dấu, có khoảng trắng |
-| **Phân biệt hoa thường** | `FROM "sản xuất"` → 400 `Unknown table`. Lấy tên đúng: `npx erp objects list` |
-| Cột hệ thống | Mọi bảng có thêm `id`, `created_at`, `updated_at` |
-| Field computed | `formula`/`lookup`/`rollup` đọc như cột thường |
-| Field `relation` | Ra dưới dạng **mảng uuid** (`uuid[]`) |
-| Chỉ bảng workspace | `pg_catalog`, `information_schema`… bị chặn |
-| `@workspace_id` | Luôn có sẵn, đúng workspace của credential đang dùng |
+| Double quotes | Required — names with diacritics or spaces |
+| **Case-sensitive** | `FROM "production"` → 400 `Unknown table`. Get the correct name: `npx erp objects list` |
+| System columns | Every table has `id`, `created_at`, `updated_at` |
+| Computed fields | `formula`/`lookup`/`rollup` work like regular columns |
+| `relation` fields | Return as **uuid arrays** (`uuid[]`) |
+| Only workspace tables | `pg_catalog`, `information_schema`… are blocked |
+| `@workspace_id` | Always available, correct for your credential |
 
-`compiledSql` trong kết quả cho xem câu server thực sự chạy — dùng để hiểu một
-field được dịch thành gì.
+`compiledSql` in the result shows the actual query the server ran — use it to understand how a
+field was translated.
 
-## Luật của endpoint
+## Endpoint rules
 
-- **Một câu.** `WITH … SELECT` được; `;` rồi câu thứ hai → 400. `(SELECT …)
-  UNION ALL (SELECT …)` bị từ chối vì không bắt đầu bằng `SELECT` — bỏ ngoặc đi.
-- **Read-only.** INSERT/UPDATE/DELETE/DDL đều bị từ chối; ghi dữ liệu là việc
-  của `ObjectHandle`.
-- **Trần 1 000 dòng**, `truncated: true` khi bị cắt, **không có cursor**.
-  → Tổng hợp trong SQL. Cần dữ liệu thô nhiều hơn thì dùng
+- **One statement.** `WITH … SELECT` is OK; `;` then a second statement → 400. `(SELECT …)
+  UNION ALL (SELECT …)` is rejected because it doesn't start with `SELECT` — drop the parens.
+- **Read-only.** INSERT/UPDATE/DELETE/DDL all rejected; data writes are `ObjectHandle`'s job.
+- **Max 1,000 rows**, `truncated: true` when cut, **no cursor**.
+  → Aggregate in SQL. For more raw data use
   `records().fetchAll()`.
-- SQL ≤ 20 000 ký tự, ≤ 20 tham số.
-- Row scope của người gọi vẫn áp dụng — kết quả có thể khác nhau theo người chạy.
+- SQL ≤ 20,000 characters, ≤ 20 parameters.
+- Row scope of the caller still applies — results may differ by user.
 
-## Kiểu dữ liệu trả về
+## Return data types
 
 | Postgres | JSON |
 | --- | --- |
-| `numeric` (mọi field kiểu số, `SUM`, `AVG`) | **chuỗi** — `"327970"` |
+| `numeric` (all number-type fields, `SUM`, `AVG`) | **string** — `"327970"` |
 | `::float8`, `::int`, `COUNT(*)` | number |
-| `timestamptz` | chuỗi ISO `"2026-08-12T00:00:00Z"` |
-| `uuid[]` (relation) | chuỗi `"{uuid,uuid}"` |
+| `timestamptz` | ISO string `"2026-08-12T00:00:00Z"` |
+| `uuid[]` (relation) | string `"{uuid,uuid}"` |
 
-Ép ngay trong SQL cho gọn:
+Cast right in SQL for cleanliness:
 
 ```sql
-SUM("Tổng tiền")::float8 AS doanh_thu
-AVG("Sản lượng thực tế")::float8 AS trung_binh
+SUM("Total Amount")::float8 AS revenue
+AVG("Actual Output")::float8 AS average
 ```
 
-`DataFrame` tự ép số khi `sum`/`avg`/`sortBy`, nên chỉ cần bận tâm khi đọc thẳng
-`rows` hoặc xuất JSON/CSV.
+`DataFrame` auto-casts when you `sum`/`avg`/`sortBy`, so you only need to worry when reading
+`rows` directly or exporting to JSON/CSV.
 
-## Tham số
+## Parameters
 
 ```ts
 await erp.sql(
-  `SELECT "Khách hàng" AS kh, SUM("Tổng tiền")::float8 AS tien
-   FROM "Đơn hàng"
-   WHERE "Ngày đặt" >= @tu AND "Ngày đặt" < @den AND "Trạng thái" = @tt
+  `SELECT "Customer" AS customer, SUM("Total Amount")::float8 AS amount
+   FROM "Order"
+   WHERE "Order Date" >= @startDate AND "Order Date" < @endDate AND "Status" = @status
    GROUP BY 1 ORDER BY 2 DESC`,
   {
     params: [
-      { name: "tu",  type: "date" },
-      { name: "den", type: "date" },
-      { name: "tt",  type: "text", default: "paid" },
+      { name: "startDate",  type: "date" },
+      { name: "endDate", type: "date" },
+      { name: "status",  type: "text", default: "paid" },
     ],
-    values: { tu: "2026-01-01", den: "2027-01-01" },
+    values: { startDate: "2026-01-01", endDate: "2027-01-01" },
   },
 );
 ```
 
-`type`: `text` · `number` · `boolean` · `date` · `datetime`. Server ép kiểu theo
-khai báo, giá trị đi riêng khỏi câu lệnh — **đừng nối chuỗi giá trị vào SQL**.
-Với query đã lưu, giá trị truyền ở `dash.run(name, { tu: "…" })`; tham số thiếu
-thì dùng `default`.
+`type`: `text` · `number` · `boolean` · `date` · `datetime`. Server casts by declaration,
+values go separately from the statement — **never concatenate values into SQL**.
+For saved queries, pass values to `dash.run(name, { startDate: "…" })`; missing parameters use `default`.
 
-## Câu mẫu
+## Example queries
 
 ```sql
--- gộp theo tháng
-SELECT to_char("Ngày đặt", 'YYYY-MM') AS thang,
-       SUM("Tổng tiền")::float8 AS doanh_thu,
-       COUNT(*) AS so_don
-FROM "Đơn hàng"
+-- aggregate by month
+SELECT to_char("Order Date", 'YYYY-MM') AS month,
+       SUM("Total Amount")::float8 AS revenue,
+       COUNT(*) AS order_count
+FROM "Order"
 GROUP BY 1 ORDER BY 1;
 
--- join hai bảng theo field text
-SELECT sp."Tên KH" AS khach_hang, SUM(po."Số lượng")::float8 AS so_luong
-FROM "PO" po
-JOIN "Sản phẩm" sp ON po."Tên Hàng" = sp."Mã sản phẩm"
+-- join two tables on text field
+SELECT p."Customer Name" AS customer, SUM(o."Quantity")::float8 AS total_qty
+FROM "PurchaseOrder" o
+JOIN "Product" p ON o."Product Name" = p."Product Code"
 GROUP BY 1 ORDER BY 2 DESC;
 
--- join qua field relation (relation là mảng uuid)
-SELECT c."Tên khách" AS khach, SUM(d."Tổng tiền")::float8 AS tien
-FROM "Đơn hàng" d
-JOIN "Khách hàng" c ON c.id = ANY(d."Khách hàng")
+-- join via relation field (relations are uuid arrays)
+SELECT c."Customer Name" AS customer, SUM(o."Total Amount")::float8 AS amount
+FROM "Order" o
+JOIN "Customer" c ON c.id = ANY(o."Customer")
 GROUP BY 1;
 
--- xếp hạng trong nhóm
+-- rank within group
 SELECT * FROM (
-  SELECT "Tên chuyền" AS chuyen,
-         to_char("Ngày", 'YYYY-MM') AS thang,
-         SUM("Sản lượng thực tế")::float8 AS actual,
-         ROW_NUMBER() OVER (PARTITION BY to_char("Ngày", 'YYYY-MM')
-                            ORDER BY SUM("Sản lượng thực tế") DESC) AS hang
-  FROM "Sản xuất" GROUP BY 1, 2
-) t WHERE hang <= 3;
+  SELECT "Machine Name" AS machine,
+         to_char("Date", 'YYYY-MM') AS month,
+         SUM("Actual Output")::float8 AS output,
+         ROW_NUMBER() OVER (PARTITION BY to_char("Date", 'YYYY-MM')
+                            ORDER BY SUM("Actual Output") DESC) AS rank
+  FROM "Production" GROUP BY 1, 2
+) t WHERE rank <= 3;
 
--- phân phối theo trạng thái
-SELECT "Trạng thái" AS tt, COUNT(*) AS n
-FROM "Đơn hàng" GROUP BY 1 ORDER BY 2 DESC;
+-- distribution by status
+SELECT "Status" AS status, COUNT(*) AS count
+FROM "Order" GROUP BY 1 ORDER BY 2 DESC;
 ```
 
-## Khi nào KHÔNG dùng SQL
+## When NOT to use SQL
 
-- Cần `RecordDto` đầy đủ (version để update, `computedData`, relation dạng mảng
-  id) → `records()`.
-- Cần > 1 000 dòng thô → `fetchAll({ max })`.
-- Ghi dữ liệu → `create` / `update` / `createMany`.
+- Need complete `RecordDto` (version for update, `computedData`, relations as id arrays) → use `records()`.
+- Need > 1,000 raw rows → use `fetchAll({ max })`.
+- Writing data → use `create` / `update` / `createMany`.

@@ -1,17 +1,17 @@
-# Công thức — script chạy được
+# Recipes — runnable scripts
 
-Mỗi mục là một file `.mjs` chạy bằng `node --env-file=.env <file>` (Node 20.6+),
-hoặc `.ts` chạy bằng `npx tsx`. Node 18 thì tự nạp env:
+Each section is a `.mjs` file run with `node --env-file=.env <file>` (Node 20.6+),
+or `.ts` run with `npx tsx`. Node 18: load env yourself:
 `ERP_BASE_URL=… ERP_API_KEY=… node file.mjs`.
 
-Script có ghi thì chạy hai lượt, **cùng một file, không sửa dòng nào**:
+Scripts that write should run twice, **same file, no edits**:
 
 ```bash
-ERP_ENV=development node script.mjs   # server validate thật rồi rollback
-node script.mjs                        # ưng con số rồi thì ghi thật
+ERP_ENV=development node script.mjs   # server validates and rolls back
+node script.mjs                        # commit if numbers look good
 ```
 
-## 0. Khung chung
+## 0. Common scaffold
 
 ```js
 import { createMiniApp } from "erp-sdk";
@@ -27,14 +27,13 @@ const erp = await createMiniApp({
 });
 ```
 
-Thêm `{ resource: "object:record", action: "create" }` / `"update"` /
-`"delete"` khi script có ghi — khai đúng cái dùng, sai quyền là chết ngay lúc
-khởi tạo chứ không chết giữa chừng. Script chạy SQL/dashboard cần thêm quyền
-trên resource `dashboard` / `dashboard:query`, script điều khiển workflow cần
-`workflow` / `workflow:run` (`npx erp whoami` xem key có gì) — và import thêm
-`runResult`, `runLogs`, `WORKFLOW_ENV_KEEP` từ `erp-sdk`.
+Add `{ resource: "object:record", action: "create" }` / `"update"` /
+`"delete"` when the script writes — declare only what you use, missing permissions
+die at init, not mid-request. Scripts using SQL/dashboards need permissions on `dashboard` / `dashboard:query`, workflow scripts need
+`workflow` / `workflow:run` (`npx erp whoami` to see what your key has) — and import
+`runResult`, `runLogs`, `WORKFLOW_ENV_KEEP` from `erp-sdk`.
 
-## 1. Chụp schema thật ra file
+## 1. Snapshot real schema to file
 
 ```js
 const snapshot = [];
@@ -50,35 +49,35 @@ for (const meta of await erp.objects()) {
 console.log(JSON.stringify(snapshot, null, 2));
 ```
 
-Tương đương `npx erp schema dump`, nhưng lọc/định dạng được theo ý.
+Equivalent to `npx erp schema dump`, but filterable and formattable.
 
-## 2. Báo cáo tổng hợp → bảng gọn
+## 2. Aggregation report → summary table
 
 ```js
-const orders = await erp.object("Đơn hàng");
+const orders = await erp.object("Order");
 
 const df = await orders.records()
-  .where("Ngày đặt", "greater_than_or_equal", "2026-01-01")
-  .where("Trạng thái", "in", ["paid", "shipped"])
+  .where("Order Date", "greater_than_or_equal", "2026-01-01")
+  .where("Status", "in", ["paid", "shipped"])
   .toFrame({ max: 50000 });
 
 const byMonth = df
-  .groupBy((r) => String(r["Ngày đặt"]).slice(0, 7), { as: "Tháng" })
+  .groupBy((r) => String(r["Order Date"]).slice(0, 7), { as: "Month" })
   .agg({
-    "Doanh thu": ["sum", "Tổng tiền"],
-    "Số đơn": ["count"],
-    "Đơn lớn nhất": ["max", "Tổng tiền"],
+    "Revenue": ["sum", "Total Amount"],
+    "Order Count": ["count"],
+    "Largest Order": ["max", "Total Amount"],
   })
-  .sortBy("Tháng");
+  .sortBy("Month");
 
 console.table(byMonth.toArray());
-console.log("Tổng:", df.sum("Tổng tiền").toLocaleString("vi-VN"));
+console.log("Total:", df.sum("Total Amount").toLocaleString("en-US"));
 ```
 
-`console.table` đọc dễ hơn nhiều so với đổ JSON thô. Với báo cáo dài, in top-N
-(`.head(20)`) rồi ghi bản đầy đủ ra file.
+`console.table` reads much better than raw JSON. For long reports, print top-N
+(`.head(20)`) then write the full version to file.
 
-## 3. Xuất CSV (mở được bằng Excel tiếng Việt)
+## 3. Export CSV (opens in Excel)
 
 ```js
 import { writeFileSync } from "node:fs";
@@ -93,168 +92,166 @@ function toCsv(rows) {
 }
 
 const rows = (await orders.records().toFrame({ max: 20000 }))
-  .select("id", "Mã đơn", "Khách hàng", "Tổng tiền", "Trạng thái")
+  .select("id", "Order Code", "Customer", "Total Amount", "Status")
   .toArray();
 
-writeFileSync("don-hang.csv", "﻿" + toCsv(rows), "utf8");   // BOM cho Excel
+writeFileSync("orders.csv", "﻿" + toCsv(rows), "utf8");   // BOM for Excel
 ```
 
-## 4. Nối hai bảng qua field `relation`
+## 4. Join two tables via `relation` field
 
-Field `relation` nằm trong `data` dưới dạng **mảng id**. Ba cách, chọn theo tình
-huống:
+`relation` fields live in `data` as **id arrays**. Three approaches, choose by situation:
 
 ```js
-// (a) preload — server nạp kèm, tốt khi chỉ cần vài quan hệ mỗi dòng
-const records = await orders.records().preload("Khách hàng", { limit: 3 }).fetchAll({ max: 5000 });
+// (a) preload — server loads with query, good for just a few relations per row
+const records = await orders.records().preload("Customer", { limit: 3 }).fetchAll({ max: 5000 });
 for (const rec of records) {
-  const khach = orders.related(rec, "Khách hàng")[0];
-  console.log(rec.data.code, khach?.data.name);
+  const customer = orders.related(rec, "Customer")[0];
+  console.log(rec.data.code, customer?.data.name);
 }
 
-// (b) getMany — gom id rồi lấy một lần, tốt khi quan hệ trùng nhau nhiều
-const customers = await erp.object("Khách hàng");
-const key = orders.fieldKey("Khách hàng");
+// (b) getMany — collect ids and fetch once, good when relations overlap
+const customers = await erp.object("Customer");
+const key = orders.fieldKey("Customer");
 const ids = [...new Set(records.flatMap((r) => r.data[key] ?? []))];
 const byId = Object.fromEntries(
   (await customers.getMany(ids)).map((c) => [c.id, customers.rowFromRecord(c)]),
 );
 
-// (c) leftJoin trên DataFrame — tốt khi cần cả hai bảng để tổng hợp
+// (c) leftJoin on DataFrame — good when you need both tables for aggregation
 const dfOrders = (await orders.records().toFrame({ max: 20000 }))
-  .map((r) => ({ ...r, customerId: (r["Khách hàng"] ?? [])[0] }));
+  .map((r) => ({ ...r, customerId: (r["Customer"] ?? [])[0] }));
 const dfCustomers = (await customers.records().toFrame())
-  .select("id", "Tên", "Khu vực")
+  .select("id", "Name", "Region")
   .rename({ id: "customerId" });
 
 dfOrders.leftJoin(dfCustomers, "customerId")
-  .groupBy("Khu vực")
-  .sum("Tổng tiền", "Doanh thu")
-  .sortBy("Doanh thu", "desc")
+  .groupBy("Region")
+  .sum("Total Amount", "Revenue")
+  .sortBy("Revenue", "desc")
   .toArray();
 ```
 
-Không bao giờ gọi `handle.get(id)` trong vòng lặp theo dòng.
+Never call `handle.get(id)` in a row-by-row loop.
 
-## 5. Ghi link: tạo record kèm quan hệ trong **một** request
+## 5. Writing links: create records with relations in **one** request
 
-Relation là một field như mọi field khác, giá trị là mảng id — không còn cảnh
-"record đã tạo nhưng link fail":
+Relations are just fields, value is an id array — no "record created but link failed" scenario:
 
 ```js
-const orders = await erp.object("Đơn hàng");
-const lines = await erp.object("Chi tiết đơn");
+const orders = await erp.object("Order");
+const lines = await erp.object("Order Line");
 
-// 1. tạo các dòng chi tiết trước để có id
+// 1. create line items first to get their ids
 const created = await lines.createMany([
-  { "Sản phẩm": "SP-1", "Số lượng": 2 },
-  { "Sản phẩm": "SP-2", "Số lượng": 1 },
+  { "Product": "SKU-1", "Quantity": 2 },
+  { "Product": "SKU-2", "Quantity": 1 },
 ]);
 
-// 2. tạo đơn kèm link, cùng một transaction, thứ tự mảng = thứ tự hiển thị
+// 2. create order with links, one transaction, array order = display order
 await orders.create({
-  "Mã đơn": "DH-001",
-  "Chi tiết": created.records.map((r) => r.id),   // id, không phải cả record
+  "Order Code": "ORD-001",
+  "Line Items": created.records.map((r) => r.id),   // ids, not whole records
 });
 ```
 
-Sửa list của một record đang có sẵn — **gửi đủ mọi id muốn giữ**, vì ghi relation
-là *thay cả list*:
+Editing a record's link list — **send all ids you want to keep**, since writing relations
+is *replace entire list*:
 
 ```js
-const rec = await orders.records().where("Mã đơn", "equals", "DH-001").first();
-const dangCo = orders.linkedIds(rec, "Chi tiết");        // đọc từ data
+const rec = await orders.records().where("Order Code", "equals", "ORD-001").first();
+const existing = orders.linkedIds(rec, "Line Items");        // read from data
 
-await orders.update(rec.id, { "Chi tiết": [...dangCo, idMoi] });   // thêm 1
-await orders.update(rec.id, { "Chi tiết": dangCo.filter((i) => i !== idBo) }); // bớt 1
-await orders.update(rec.id, { "Chi tiết": [] });                   // gỡ hết
-await orders.update(rec.id, { "Trạng thái": "paid" });             // không đụng link
+await orders.update(rec.id, { "Line Items": [...existing, newId] });   // add 1
+await orders.update(rec.id, { "Line Items": existing.filter((i) => i !== removeId) }); // remove 1
+await orders.update(rec.id, { "Line Items": [] });                   // clear all
+await orders.update(rec.id, { "Status": "paid" });             // don't touch links
 ```
 
-`null` = "không nói gì về field này" (link giữ nguyên), `[]` = gỡ hết. Đừng để
-code tự biến `undefined` thành `[]` — đó là cách xoá link ngoài ý muốn.
+`null` = "say nothing about this field" (links stay), `[]` = clear all. Don't let
+code silently turn `undefined` into `[]` — that accidentally deletes links.
 
-Import nhiều đơn cùng lúc thì gộp luôn vào `createMany`, mỗi dòng mang link của
-nó; backend gom toàn bộ id của cả request để kiểm một lượt:
+Importing multiple orders at once: batch into `createMany`, each row carries its links;
+backend validates all ids in one pass:
 
 ```js
 await orders.createMany(
-  don.map((d) => ({ "Mã đơn": d.code, "Chi tiết": idChiTietCua[d.code] })),
+  orders_data.map((d) => ({ "Order Code": d.code, "Line Items": lineIdsByCode[d.code] })),
 );
 ```
 
-Quan hệ **hơn 100 id** thì không ghi inline được (đọc cũng chỉ trả 100) — dùng
-`createLink` / `deleteLink` từng cái:
+Relations **over 100 ids** can't be inline-written (reads are max 100 too) — use
+`createLink` / `deleteLink` individually:
 
 ```js
-await orders.createLink(rec.id, "Chi tiết", idMoi, dangCo.length);
-await orders.deleteLink(rec.id, "Chi tiết", idBo);
+await orders.createLink(rec.id, "Line Items", newId, existing.length);
+await orders.deleteLink(rec.id, "Line Items", removeId);
 ```
 
-## 6. Nhập dữ liệu từ CSV/JSON
+## 6. Import data from CSV/JSON
 
 ```js
 import { readFileSync } from "node:fs";
 
-const raw = JSON.parse(readFileSync("input.json", "utf8"));   // CSV có dấu ngoặc
-                                                              // thì dùng parser thật
-const products = await erp.object("Sản phẩm");
+const raw = JSON.parse(readFileSync("input.json", "utf8"));   // CSV with quotes needs
+                                                              // a real CSV parser
+const products = await erp.object("Product");
 const known = new Set(products.fields.map((f) => f.name));
 
-// 1. map + kiểm tra tên cột TRƯỚC khi gọi mạng
+// 1. map + validate column names BEFORE network call
 const rows = raw.map((r) => ({
-  "Tên sản phẩm": String(r.name).trim(),
-  "Giá bán": Number(r.price),
-  "Nhóm": r.category ?? null,
+  "Product Name": String(r.name).trim(),
+  "Sale Price": Number(r.price),
+  "Category": r.category ?? null,
 }));
 for (const col of Object.keys(rows[0])) {
-  if (!known.has(col)) throw new Error(`Bảng không có field "${col}"`);
+  if (!known.has(col)) throw new Error(`Table has no field "${col}"`);
 }
 
-// 2. in thử 3 dòng
+// 2. preview 3 rows
 console.log(rows.slice(0, 3));
 
-// 3. ghi — SDK tự chia lô 500, mỗi lô một transaction.
-//    ERP_ENV=development thì lệnh này là dry run: server validate từng dòng
-//    (unique, kiểu dữ liệu, id relation) rồi rollback, lỗi báo đúng dòng nào.
+// 3. write — SDK auto-chunks into 500s, each chunk is one transaction.
+//    ERP_ENV=development makes this dry run: server validates each row
+//    (unique, type, relation ids) then rolls back; errors show which row.
 const result = await products.createMany(rows);
 console.log(
   result.dryRun
-    ? `Chạy thử OK: ${rows.length} dòng hợp lệ. Bỏ ERP_ENV rồi chạy lại để ghi thật.`
-    : `Đã tạo ${result.created} record`,
+    ? `Test passed: ${rows.length} rows valid. Remove ERP_ENV and run again to commit.`
+    : `Created ${result.created} records`,
 );
 ```
 
-Không cần cờ `APPLY=1` tự chế nữa: `ERP_ENV=development` cho **đúng** đường đi
-của lệnh thật (kể cả lỗi từ server), thay vì chỉ in payload rồi thoát sớm.
+No custom `APPLY=1` flags needed: `ERP_ENV=development` runs the **exact same** path as live
+(including server errors), instead of just printing the payload and exiting early.
 
-## 7. Cập nhật hàng loạt an toàn
+## 7. Safe bulk updates
 
 ```js
-const filterOf = () => orders.records().where("Trạng thái", "equals", "new");
+const filterOf = () => orders.records().where("Status", "equals", "new");
 
-const total = await filterOf().count();          // đếm trước, báo con số
-console.log(`${total} đơn sẽ chuyển sang "processing"`);
+const total = await filterOf().count();          // count first, report the number
+console.log(`${total} orders will change to "processing"`);
 
-// thử một lượt: matched là số thật, không có dòng nào bị sửa
-const thu = await filterOf().update({ "Trạng thái": "processing" }, { dryRun: true });
-console.log(`Chạy thử: khớp ${thu.matched}, sẽ sửa ${thu.updated}`);
-if (erp.dryRun) process.exit(0);                 // ERP_ENV=development thì dừng ở đây
+// test once: matched is real, no rows changed yet
+const test = await filterOf().update({ "Status": "processing" }, { dryRun: true });
+console.log(`Test: matched ${test.matched}, will update ${test.updated}`);
+if (erp.dryRun) process.exit(0);                 // stop here in ERP_ENV=development
 
 let done = 0;
 for (;;) {
-  const res = await filterOf().update({ "Trạng thái": "processing" }, { limit: 1000 });
+  const res = await filterOf().update({ "Status": "processing" }, { limit: 1000 });
   done += res.updated;
   console.log(`${done}/${total}`);
   if (!res.hasMore) break;
 }
 ```
 
-Vòng lặp này chỉ kết thúc vì bản update **làm dòng đã sửa rớt khỏi filter**. Nếu
-field được set không nằm trong filter, vòng lặp sẽ chạy mãi — khi đó lấy danh
-sách id trước rồi update theo lô id.
+This loop terminates because the update **moves updated rows out of the filter**. If
+the field you're setting isn't in the filter, the loop runs forever — get id list first,
+then update by id chunks instead.
 
-## 8. Sửa một record đúng phiên bản (tránh mất dữ liệu)
+## 8. Update with version check (prevent lost data)
 
 ```js
 import { ErpApiError } from "erp-sdk";
@@ -265,117 +262,116 @@ async function updateSafely(handle, id, patch, retries = 2) {
     try {
       return await handle.update(id, patch(handle.rowFromRecord(current)), current.version);
     } catch (error) {
-      // 409 = ai đó vừa ghi đè: đọc lại rồi thử lại, đừng ép version
+      // 409 = someone just overwrote it: re-read and retry, don't force version
       if (!(error instanceof ErpApiError) || error.status !== 409 || attempt >= retries) throw error;
     }
   }
 }
 
-await updateSafely(orders, id, (row) => ({ "Tổng tiền": Number(row["Tổng tiền"]) + 1000 }));
+await updateSafely(orders, id, (row) => ({ "Total Amount": Number(row["Total Amount"]) + 1000 }));
 ```
 
-## 9. Soi chất lượng dữ liệu
+## 9. Data quality audit
 
 ```js
 const df = await orders.records().toFrame({ max: 50000 });
 
-console.log("Thiếu khách hàng:", df.where("Khách hàng", "is_empty").count());
-console.log("Theo trạng thái:", df.countBy("Trạng thái"));
+console.log("Missing customer:", df.where("Customer", "is_empty").count());
+console.log("By status:", df.countBy("Status"));
 
-// mã đơn bị trùng
-const dup = Object.entries(df.countBy("Mã đơn")).filter(([, n]) => n > 1);
-console.log("Trùng mã:", dup);
+// duplicate order codes
+const dup = Object.entries(df.countBy("Order Code")).filter(([, n]) => n > 1);
+console.log("Duplicate codes:", dup);
 
-// giá trị bất thường
-df.where("Tổng tiền", "less_than", 0).toArray().forEach((r) => console.log(r.id, r["Tổng tiền"]));
+// anomalies
+df.where("Total Amount", "less_than", 0).toArray().forEach((r) => console.log(r.id, r["Total Amount"]));
 ```
 
-## 10. Chạy theo quyền của một user cụ thể
+## 10. Run as a specific user
 
 ```js
-const asUser = erp.asUser(accessTokenCuaUser);       // hoặc (await erp.session(initData)).client
-const visible = await (await asUser.object("Đơn hàng")).records().count();
+const asUser = erp.asUser(userAccessToken);       // or (await erp.session(initData)).client
+const visible = await (await asUser.object("Order")).records().count();
 ```
 
-Client này bị cắt theo IAM permission + row scope của user đó — dùng khi cần
-biết "user này thực sự nhìn thấy gì", không phải khi cần dữ liệu đầy đủ.
+This client is limited by that user's IAM permissions + row scope — use when you need
+to know "what does this user actually see", not when you need complete data.
 
-## 11. Báo cáo bằng SQL rồi ghép ở client
+## 11. Report via SQL, aggregate on client
 
-Gộp nặng để database làm, chỉ kéo về dòng đã tổng hợp:
+Heavy lifting in SQL, fetch only aggregated rows:
 
 ```js
-const doanhThu = (await erp.sql(`
-  SELECT to_char("Ngày đặt", 'YYYY-MM') AS thang,
-         "Khách hàng" AS khach,
-         SUM("Tổng tiền")::float8 AS tien
-  FROM "Đơn hàng"
-  WHERE "Ngày đặt" >= @tu
+const revenue = (await erp.sql(`
+  SELECT to_char("Order Date", 'YYYY-MM') AS month,
+         "Customer" AS customer,
+         SUM("Total Amount")::float8 AS amount
+  FROM "Order"
+  WHERE "Order Date" >= @startDate
   GROUP BY 1, 2
-`, { params: [{ name: "tu", type: "date" }], values: { tu: "2026-01-01" } })).toFrame();
+`, { params: [{ name: "startDate", type: "date" }], values: { startDate: "2026-01-01" } })).toFrame();
 
 console.table(
-  doanhThu.groupBy("thang").sum("tien", "doanhThu").sortBy("thang").toArray(),
+  revenue.groupBy("month").sum("amount", "total").sortBy("month").toArray(),
 );
 ```
 
-Nhớ `::float8` — cột `numeric` về JSON là **chuỗi**. Trần 1 000 dòng, không có
-cursor: nếu `r.truncated` là `true` thì câu SQL còn thiếu `GROUP BY`.
+Remember `::float8` — `numeric` columns return as **strings** in JSON. Max 1,000 rows, no cursor:
+if `r.truncated` is `true`, your SQL is missing `GROUP BY`.
 
-## 12. Lưu query thành dashboard cho người dùng xem
+## 12. Save query as dashboard for users
 
 ```js
-const dash = await erp.dashboards.create({ name: "Vận hành", description: "Số liệu hằng ngày" });
+const dash = await erp.dashboards.create({ name: "Operations", description: "Daily metrics" });
 
 await dash.addQuery({
-  name: "Doanh thu theo tháng",
-  sql: `SELECT to_char("Ngày đặt", 'YYYY-MM') AS thang,
-               SUM("Tổng tiền")::float8 AS doanh_thu
-        FROM "Đơn hàng" GROUP BY 1 ORDER BY 1`,
+  name: "Revenue by month",
+  sql: `SELECT to_char("Order Date", 'YYYY-MM') AS month,
+               SUM("Total Amount")::float8 AS revenue
+        FROM "Order" GROUP BY 1 ORDER BY 1`,
   chartType: "line",
-  chartConfig: { x: "thang", y: "doanh_thu" },
+  chartConfig: { x: "month", y: "revenue" },
 });
 
-// chạy lại bất cứ lúc nào từ script
-const rows = await (await erp.dashboard("Vận hành")).run("Doanh thu theo tháng");
+// re-run anytime from script
+const rows = await (await erp.dashboard("Operations")).run("Revenue by month");
 ```
 
-## 13. Workflow chạy 9h sáng mỗi ngày
+## 13. Workflow running 9am daily
 
-Dựng workflow, publish, chạy thử và đọc kết quả — ví dụ đầy đủ cùng toàn bộ luật
-(trigger, version/publish, env write-only) nằm ở **`references/workflows.md`**.
+Build workflow, publish, test, read results — full example with all rules
+(triggers, version/publish, write-only env): **`references/workflows.md`**.
 
-## Bẫy đã trả giá
+## Lessons learned (pitfalls)
 
-- **`createdAt` / `updatedAt` không lọc và không sắp xếp được.** Filter chỉ nhận
-  field thật của bảng, cộng khóa đặc biệt `id`. Muốn lọc theo thời gian thì bảng
-  phải có field `date`/`datetime` của chính nó. (`rowFromRecord` vẫn trả
-  `createdAt`/`updatedAt`, nên lọc phía client bằng `DataFrame` được.)
-- **Query là builder có trạng thái**: `count()`/`first()` set `limit` lên chính
-  nó — dựng chain mới mỗi lần dùng (xem `filterOf()` ở mục 7).
-- **`fetchAll()` không có trần mặc định** — bảng lớn nhớ `{ max }`.
-- **`in`/`not_in` tối đa 200 giá trị**; nhiều hơn thì chia lô, hoặc dùng
-  `getMany` (đã chia lô sẵn).
-- **Số ép kiểu im lặng**: `sum`/`avg` biến chuỗi không parse được thành `0`.
-  Kiểm bằng `df.where("Cột", "is_empty").count()` trước khi tin con số.
-- **Đọc ra 0 dòng** thường là row scope của IAM chứ không phải filter sai —
-  `npx erp whoami` xem quyền thật.
-- **Field computed** (`formula`, `lookup`, `rollup`) nằm ở `computedData`, chỉ
-  đọc, và do worker tính nền — có thể chưa cập nhật ngay sau khi ghi.
-- **Đổi cấu trúc bảng xong phải `erp.invalidate()`**, nếu không handle cache còn
-  giữ danh sách field cũ.
-- **Ghi relation là thay cả list, không phải thêm**: gửi thiếu id = gỡ link. Đọc
-  `linkedIds()` rồi gửi lại đủ.
-- **`get(id)` không trả relation** — muốn mảng id thì lấy record bằng
-  `records().…` (query), hoặc `preload`.
-- **Id trả về từ dry-run create là id giả** (`ERP_ENV=development`): đừng lưu,
-  đừng dùng làm khoá cho bước sau. Muốn có id thật thì phải chạy thật.
-- **`delete` không có dry run**: ở chế độ development nó ném
-  `DryRunUnsupportedError` chứ không xoá — đó là chủ ý. `workflow.run()` cũng
-  vậy: chạy workflow là ghi thật.
-- **SQL phân biệt hoa thường** ở tên bảng/cột, trần 1 000 dòng, không cursor —
-  và cột `numeric` trả về **chuỗi** (`::float8` để ra số).
-- **Sửa workflow xong quên `publish()`** → run vẫn chạy bản cũ. Và `setEnv` thay
-  cả map: tên nào không gửi là mất.
-- **`erp.dashboards.list()` phân trang trước khi lọc quyền** — trang ngắn không
-  có nghĩa là hết, dùng `listAll()`.
+- **`createdAt` / `updatedAt` can't be filtered or sorted.** Filters only accept real
+  table fields, plus the special key `id`. To filter by time, the table must have its own
+  `date`/`datetime` field. (`rowFromRecord` still returns `createdAt`/`updatedAt`, so you can filter client-side with `DataFrame`.)
+- **Query is a stateful builder**: `count()`/`first()` mutate `limit` —
+  build new chain each call (see `filterOf()` in recipe 7).
+- **`fetchAll()` has no default limit** — large tables: remember `{ max }`.
+- **`in`/`not_in` max 200 values**; more: chunk yourself, or use
+  `getMany` (already chunks).
+- **Silent numeric coercion**: `sum`/`avg` turn unparseable strings to `0`.
+  Check with `df.where("Column", "is_empty").count()` before trusting numbers.
+- **Reading 0 rows** is usually IAM row scope, not a wrong filter —
+  `npx erp whoami` to see real permissions.
+- **Computed fields** (`formula`, `lookup`, `rollup`) live in `computedData`, read-only,
+  background-calculated — may not update immediately after write.
+- **After changing table structure, call `erp.invalidate()`**, otherwise cache
+  keeps the old field list.
+- **Writing relations is replace-entire-list, not append**: missing ids = clear links. Read
+  `linkedIds()` and send all back.
+- **`get(id)` doesn't return relations** — for id arrays use
+  `records().…` (query), or `preload`.
+- **IDs from dry-run create are fake** (`ERP_ENV=development`): don't save them,
+  don't use as keys for later steps. For real ids, run for real.
+- **`delete` has no dry run**: in development it throws
+  `DryRunUnsupportedError` instead of deleting — intentional. `workflow.run()` too:
+  running workflows is live.
+- **SQL is case-sensitive** on table/column names, max 1,000 rows, no cursor —
+  and `numeric` columns return as **strings** (`::float8` for numbers).
+- **Forgot to `publish()` after editing workflow** → runs still use old version. And `setEnv`
+  replaces entire map: names you don't send are lost.
+- **`erp.dashboards.list()` paginates before filtering permissions** — short page
+  doesn't mean end of list, use `listAll()`.

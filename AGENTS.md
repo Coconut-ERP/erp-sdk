@@ -5,7 +5,7 @@ code in this repository.
 
 ## What this is
 
-`erp-sdk` is the TypeScript SDK **and** the `erp` CLI for the 1kk ERP backend. It has no
+`erp-sdk` is the TypeScript SDK **and** the `erp` CLI for the Coconut ERP backend. It has no
 runtime dependency other than lodash and uses global `fetch` (Node 18+).
 
 Its audience is **mini apps**: ordinary web apps (Express, Next.js, …) that use the ERP
@@ -114,6 +114,7 @@ write the app's `schema.json` and validate its format with `validateSchema`.
 | `src/objects.ts` | `ObjectHandle` (CRUD, fields, links) and `RecordQuery` (chainable filter/sort/paginate over `POST /records/query`) |
 | `src/dashboards.ts` | `DashboardsApi`/`DashboardHandle` and `QueryResult` — read-only SQL (`client.sql`) plus saved queries, their params and chart config |
 | `src/workflows.ts` | `WorkflowsApi`/`WorkflowHandle` — server-side scripts: versions, publish, write-only env, queued runs and the helpers that unpack a run's output |
+| `src/variables.ts` | `WorkflowVariablesApi` — the workspace's shared key/value store for workflow scripts (checkpoints, cursors): plain text, granted per workflow, and refusing to write in development mode |
 | `src/schema.ts` | The `schema.json` model plus the backend's validation and diff rules as **pure functions** (`validateSchema`, `planSchema`, `schemaConflicts`, `unresolvedRelations`) — no I/O, so the CLI, the SDK and build scripts all share one source of truth |
 | `src/frame.ts` | `DataFrame`/`GroupedFrame` — immutable pandas-style analysis over fetched records; every method returns a new frame |
 | `src/permissions.ts` | `isAllowed`/`missingPermissions`, mirroring the backend enforcer (deny beats allow, `*` wildcards, `manage` implies nothing) |

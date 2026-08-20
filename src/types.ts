@@ -263,7 +263,7 @@ export interface SharingDto {
   dashboardId?: string;
 }
 
-export type WorkflowTriggerType = "manual" | "cron";
+export type WorkflowTriggerType = "manual" | "cron" | "webhook";
 
 /**
  * A 6-field cron expression (**with seconds**) or a descriptor such as
@@ -277,7 +277,23 @@ export interface CronTriggerConfig {
 
 export interface WorkflowTrigger {
   type: WorkflowTriggerType | (string & {});
+  /** Cron only. `manual` and `webhook` are rejected with any config at all. */
   config?: Record<string, unknown>;
+}
+
+/**
+ * What `main(input)` receives on a `webhook` run. `body` is the exact string
+ * that was posted — nothing parses it on the way, because a provider signs the
+ * bytes it sent and a re-encoded body verifies against nothing.
+ */
+export interface WebhookInput {
+  source: "webhook";
+  method: string;
+  query: Record<string, string>;
+  headers: Record<string, string>;
+  body: string;
+  /** RFC 3339, stamped when the delivery was accepted. */
+  receivedAt: string;
 }
 
 /** `draft` until published; `active` once a version is live. */
@@ -291,6 +307,13 @@ export interface WorkflowDto {
   status: WorkflowStatus;
   visibility: SharingVisibility;
   trigger: WorkflowTrigger;
+  /**
+   * Only on a `webhook` workflow, and it is a **credential**: whoever holds it
+   * can start a run. Relative when the server has no public base URL
+   * configured. Rotating it is not something the SDK does — that is a person's
+   * call, made from their own session.
+   */
+  webhookUrl?: string;
   /** Only on the detail endpoint — the list omits it. */
   code?: string;
   /** Names only: every value comes back as `***`, never readable. */
@@ -328,6 +351,24 @@ export interface WorkflowRunDto {
   updatedAt: string;
   /** `0001-01-01T00:00:00Z` while the run is still queued. */
   startedAt?: string;
+}
+
+/**
+ * A shared variable: the workspace's key/value store for workflow scripts.
+ * `value` is plain text and reads back as written — unlike a workflow's env,
+ * which is a credential and comes back masked.
+ */
+export interface WorkflowVariableDto {
+  id: string;
+  key: string;
+  value: string;
+  description: string;
+  /** The workflows whose runs may read and write it. Empty: none may. */
+  workflowIds: string[];
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** What the runner packs into {@link WorkflowRunDto.output}. */

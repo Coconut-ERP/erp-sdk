@@ -1,11 +1,11 @@
-# Kiểm code workflow trước khi nó thành workflow
+# Testing Workflow Code Before It Becomes a Workflow
 
-Hai endpoint dưới đây **không lưu gì**: không workflow, không run, không version.
-Chúng là chỗ sửa lỗi — tạo một workflow chỉ để xem code có chạy không là để lại
-rác cho người khác dọn, và nếu trigger là cron thì publish còn khởi động lịch.
+The two endpoints below **save nothing**: no workflow, no run, no version.
+They're where you fix bugs — creating a workflow just to see if code runs leaves trash for others,
+and if the trigger is cron, publish even activates the schedule.
 
-Cả hai chưa có method riêng trong SDK, nhưng `erp.http` là public nên gọi thẳng
-được, vẫn qua đúng auth và vẫn bóc envelope `{success, data}`:
+Neither has an SDK method yet, but `erp.http` is public so you can call them directly,
+still going through proper auth and unwrapping the `{success, data}` envelope:
 
 ```ts
 import { createMiniApp, ErpApiError } from "erp-sdk";
@@ -16,10 +16,10 @@ const erp = await createMiniApp({
   permissions: [{ resource: "workflow:run", action: "create" }],
 });
 
-const code = await readFile("nhac-don-qua-han.ts", "utf8");
+const code = await readFile("reminder-overdue-orders.ts", "utf8");
 ```
 
-## 1. `POST /workflows/check` — transpile, không chạy
+## 1. `POST /workflows/check` — transpile, don't run
 
 ```ts
 try {
@@ -33,13 +33,12 @@ try {
 }
 ```
 
-Rẻ và nhanh. Chạy sau mỗi lần sửa, trước khi tốn một test-run.
+Cheap and fast. Run after every edit, before spending a test-run.
 
-Nó bắt được: cú pháp TS, thiếu `main`, module ngoài registry, code > 128KB. Nó
-**không** bắt được: tên object/field sai, lỗi logic, quyền thiếu — đó là việc
-của test-run.
+It catches: TypeScript syntax, missing `main`, modules outside the registry, code > 128KB.
+It **doesn't** catch: wrong object/field names, logic errors, missing permissions — that's test-run's job.
 
-## 2. `POST /workflows/test-run` — chạy thật trong runner thật
+## 2. `POST /workflows/test-run` — run in the actual runner
 
 ```ts
 interface TestRun {
@@ -52,104 +51,117 @@ interface TestRun {
 }
 
 const t = await erp.http.request<TestRun>("POST", "/workflows/test-run", {
-  body: { code, input: { ngay: "2026-08-14" } },
+  body: { code, input: { date: "2026-08-14" }, workflowId: wf?.id },
 });
 
 if (!t.ok) {
-  console.error(t.error?.message, "dòng", t.error?.line, t.error?.column);
+  console.error(t.error?.message, "line", t.error?.line, t.error?.column);
   console.error(t.logs.join("\n"));
 }
 ```
 
-- `ok: false` là **script hỏng**, request vẫn 200. Đọc `error.message`,
-  `error.line`, `logs` → sửa → chạy lại. `error.timeout: true` nghĩa là chạm
-  trần.
-- **503 `Workflow runner is busy`** là runner quá tải, **không phải** code sai:
-  chờ vài giây rồi gửi lại đúng code đó, đừng viết lại script.
-- Trần **1 phút** cứng cho test-run (dù admin có nới `WORKFLOW_RUN_TIMEOUT`).
-- Cần quyền `workflow:run:create` — cùng quyền để chạy một workflow thật.
-- Chạy dưới **token của chính bạn**: script chỉ với tới đúng những gì key hiện
-  tại với tới. Đọc ra 0 dòng thì kiểm `npx erp whoami` trước khi nghi filter.
+- `ok: false` means **script is broken**, request still 200. Read `error.message`,
+  `error.line`, `logs` → fix → retry. `error.timeout: true` means you hit the limit.
+- **503 `Workflow runner is busy`** means the runner is overloaded, **not** a code error:
+  wait a few seconds then resend the exact same code, don't rewrite the script.
+- Hard **1 minute limit** for test-run (even if admins extended `WORKFLOW_RUN_TIMEOUT`).
+- Requires `workflow:run:create` permission — same as running a real workflow.
+- Runs under **your token**: the script can only reach what your key can reach. Reading 0 rows?
+  Check `npx erp whoami` first before blaming the filter.
 
-### Cái gì được rehearse, cái gì là thật
+### What rehearses, what runs for real
 
-Test-run luôn đặt SDK ở `development`, nên:
+Test-run always puts the SDK in `development`, so:
 
-| Thao tác trong script | Trong test-run |
+| Script operation | In test-run |
 | --- | --- |
-| `create`, `createMany`, `update`, bulk update theo filter | **Dry run**: server validate đủ (field, unique, version, id relation, rule, computed) rồi **rollback**. Id trả về là **id giả**, không được dùng tiếp |
-| `delete`, `restore`, `createLink`, `deleteLink`, chạy workflow khác | **Từ chối** — ném `DryRunUnsupportedError` chứ không giả vờ |
-| `createObject`, `addField`, `ensureObject` | **Thật** — cấu trúc bảng không có dry run |
-| Mail, Telegram, Slack, webhook, mọi HTTP ra ngoài | **Thật** — gửi là gửi |
-| Đọc (`fetch`, `count`, `erp.sql`) | Thật, chỉ đọc |
+| `create`, `createMany`, `update`, bulk update by filter | **Dry run**: server validates fully (field, unique, version, id relation, rule, computed) then **rolls back**. Returned id is **fake**, don't use it later |
+| `delete`, `restore`, `createLink`, `deleteLink`, running another workflow | **Rejected** — throws `DryRunUnsupportedError` rather than pretend |
+| `createObject`, `addField`, `ensureObject` | **Real** — table structure has no dry run |
+| Mail, Telegram, Slack, webhooks, any outbound HTTP | **Real** — sending is sending |
+| Reads (`fetch`, `count`, `erp.sql`) | Real, read-only |
 
-Relation viết **như một field của record** thì được rehearse cùng record;
-`createLink`/`deleteLink` thì không — script dựa vào link call chỉ chứng minh
-được sau khi đã là workflow đã lưu.
+Relations written **like a record field** get rehearsed with the record;
+`createLink`/`deleteLink` don't — scripts depending on link operations only prove themselves
+after the workflow is saved.
 
-### Env: không có
+### Env: only when you pass `workflowId`
 
-Code chưa lưu thì chưa thuộc workflow nào, nên không có env để cấp và request
-cũng **không nhận** env. Trong test-run `process.env` là `{}`. Vì vậy script cần
-secret nên viết theo kiểu thoát sớm:
+`workflowId` is optional, and it decides what identity the script runs as:
+
+| `workflowId` | Script is granted |
+| --- | --- |
+| **Present** — id of an existing workflow | The workflow's saved env (decrypted, sent directly to the runner), and shared variables the workflow is granted (`erp.variables`). Token carries a `wfid` claim, so `erp.variables` is pinned to the grant list: keys outside that list return 404, and the run can only change `value` not `description`/`workflowIds` |
+| **Absent** | No env (`process.env` is `{}`), no `wfid`. The request **can't** even send env |
+
+Editing code for an existing workflow **always pass its id**; otherwise, scripts verifying
+signatures or calling APIs with a key will break from missing secrets — not what you're testing.
+You need **manage** on that workflow, same permission to set env and save code for it;
+another workspace or no manage access = 404. Nothing is saved: no new workflow, no run.
+
+Env is delivered to the runner **only, never returned to the caller** — all endpoints still show
+`***`. So: **never print env values** — not in `return`, not in `console.log`. Test-run logs stay
+in the transcript.
+
+For code not yet in a workflow, if the script needs secrets, write an early exit:
 
 ```ts
-if (!process.env.BOT_TOKEN) return { skipped: "thiếu env BOT_TOKEN" };
+if (!process.env.BOT_TOKEN) return { skipped: "missing env BOT_TOKEN" };
 ```
 
-để test-run vẫn chứng minh được phần logic, và phần gửi đi được chứng minh sau —
-bằng một run thật, nhỏ nhất có thể (một người nhận, một dòng).
+so test-run still proves the logic, and the sending part is proven later — with a real run,
+as minimal as you can make it (one recipient, one row).
 
-## 3. Sau khi `ok: true`: lưu, publish
+## 3. After `ok: true`: save, publish
 
-Đây là lúc dùng SDK (chi tiết ở skill **`erp-data`**, `references/workflows.md`):
+Now use the SDK (details in the **`erp-data`** skill, `references/workflows.md`):
 
 ```ts
 const wf = await erp.workflows.create({
-  name: "Nhắc đơn quá hạn",
-  description: "Cron 9h sáng",
+  name: "Overdue reminders",
+  description: "Cron at 9am",
   code,
   trigger: { type: "cron", config: { schedule: "0 0 9 * * *", timezone: "Asia/Ho_Chi_Minh" } },
 });
-await wf.publish();            // draft KHÔNG chạy, cron chưa được đăng ký
+await wf.publish();            // draft doesn't run, cron isn't registered yet
 ```
 
-Ba luật của vòng đời, sai một cái là mất buổi debug:
+Three lifecycle rules, miss one and you're debugging for hours:
 
-1. **Mọi `update` đưa workflow về `draft` và gỡ cron.** Sửa xong phải
-   `publish()` lại, nếu không run vẫn dùng bản active cũ.
-2. **`version` là khoá lạc quan**, mọi mutation (kể cả `publish`) đều +1. Gửi
-   sai → 409 `Workflow version conflict` → `await wf.refresh()` rồi thử lại.
-3. **`setEnv` thay cả map**: tên nào không gửi là mất. Giữ giá trị cũ bằng
-   sentinel `WORKFLOW_ENV_KEEP` (`"[KEEP]"`). Đổi env **không** bump version,
-   không đưa về draft, không huỷ cron.
+1. **Every `update` reverts workflow to `draft` and removes the cron.** After editing,
+   `publish()` again or the run still uses the old active version.
+2. **`version` is optimistic locking**, every mutation (including `publish`) bumps it. Wrong version?
+   → 409 `Workflow version conflict` → `await wf.refresh()` then retry.
+3. **`setEnv` replaces the whole map**: names you don't send are gone. Keep old values with
+   the sentinel `WORKFLOW_ENV_KEEP` (`"[KEEP]"`). Changing env **doesn't** bump version,
+   doesn't revert to draft, doesn't cancel the cron.
 
-## 4. Đọc kết quả một run thật
+## 4. Reading results from a real run
 
 ```ts
-const run = await wf.runAndWait({ ngay: "2026-08-14" });
-runResult(run);   // giá trị main() trả về
-runLogs(run);     // console.log
+const run = await wf.runAndWait({ date: "2026-08-14" });
+runResult(run);   // value main() returned
+runLogs(run);     // console.log lines
 ```
 
-- `wf.run()` bị chặn khi client ở `ERP_ENV=development` (`DryRunUnsupportedError`)
-  — chạy workflow là ghi thật, server không có dry run cho nó. Cố ý:
+- `wf.run()` is blocked when the client is in `ERP_ENV=development` (`DryRunUnsupportedError`)
+  — running a workflow writes for real, no dry run on the server. To override:
   `wf.run(input, { dryRun: false })`.
-- Hết giờ chờ → `WorkflowRunTimeoutError`, **run không bị huỷ**, đọc tiếp bằng
+- Timeout waiting → `WorkflowRunTimeoutError`, **run is not cancelled**, query it again with
   `wf.getRun(runId)`.
-- Run **ngay sau `publish()`** thỉnh thoảng ERROR với message chung
-  `"Workflow run failed"`: runner chưa thấy version mới. Đợi vài giây, chạy lại.
-- Run ERROR **không có logs** — chỉ vài dòng cuối nhét trong `error`.
+- **Run right after `publish()`** sometimes ERROR with a generic `"Workflow run failed"`:
+  runner hasn't seen the new version yet. Wait a few seconds, retry.
+- ERROR runs **have no logs** — only the last few lines go into `error`.
 
-## Thứ tự làm việc, gọn lại
+## Workflow, condensed
 
 ```
-sửa file  →  check  →  test-run (input thật)  →  ok?
-                ↑          ↓ không                 ↓ có
-                └──── đọc error.line/logs      hỏi người dùng
+edit file  →  check  →  test-run (real input)  →  ok?
+                ↑          ↓ no                    ↓ yes
+                └──── read error.line/logs      ask user
                                                    ↓
-                                    create → publish → run thật nhỏ nhất
+                                    create → publish → smallest real run
 ```
 
-Không bao giờ nhảy cóc từ "viết xong" sang "create + publish": một cron đã
-publish là thứ tự chạy trên dữ liệu thật, mỗi ngày, dưới quyền của người publish.
+Never jump from "done writing" to "create + publish": a published cron is something
+running on real data, every day, under the publisher's permissions.

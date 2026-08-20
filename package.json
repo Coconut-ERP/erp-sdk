@@ -1,52 +1,52 @@
 {
-  "name": "erp-sdk",
-  "version": "0.4.1",
-  "description": "TypeScript SDK for the 1kk ERP backend — mini apps use the ERP as their core engine",
-  "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+    "name": "erp-sdk",
+    "version": "0.4.1",
+    "description": "TypeScript SDK for the Coconut ERP backend — mini apps use the ERP as their core engine",
+    "type": "module",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "require": "./dist/index.cjs"
+        }
+    },
+    "bin": {
+        "erp": "./dist/cli.js"
+    },
+    "files": [
+        "dist",
+        "skills"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Coconut-ERP/erp-sdk.git"
+    },
+    "scripts": {
+        "build": "tsup",
+        "test": "vitest run",
+        "coverage": "vitest run --coverage --coverage.include=src/**",
+        "typecheck": "tsc --noEmit",
+        "lint": "biome check .",
+        "format": "biome check --write .",
+        "prepare": "tsup",
+        "prepublishOnly": "node -e \"console.error('erp-sdk is installed from GitHub, not from npm. See README > Installation.'); process.exit(1)\""
+    },
+    "dependencies": {
+        "lodash": "^4.17.21"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "2.5.8",
+        "@types/lodash": "^4.17.7",
+        "@types/node": "^26.1.2",
+        "@vitest/coverage-v8": "2.1.9",
+        "tsup": "^8.2.4",
+        "typescript": "^5.5.4",
+        "vitest": "^2.0.5"
+    },
+    "engines": {
+        "node": ">=18"
     }
-  },
-  "bin": {
-    "erp": "./dist/cli.js"
-  },
-  "files": [
-    "dist",
-    "skills"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Coconut-ERP/erp-sdk.git"
-  },
-  "scripts": {
-    "build": "tsup",
-    "test": "vitest run",
-    "coverage": "vitest run --coverage --coverage.include=src/**",
-    "typecheck": "tsc --noEmit",
-    "lint": "biome check .",
-    "format": "biome check --write .",
-    "prepare": "tsup",
-    "prepublishOnly": "node -e \"console.error('erp-sdk is installed from GitHub, not from npm. See README > Installation.'); process.exit(1)\""
-  },
-  "dependencies": {
-    "lodash": "^4.17.21"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "2.5.8",
-    "@types/lodash": "^4.17.7",
-    "@types/node": "^26.1.2",
-    "@vitest/coverage-v8": "2.1.9",
-    "tsup": "^8.2.4",
-    "typescript": "^5.5.4",
-    "vitest": "^2.0.5"
-  },
-  "engines": {
-    "node": ">=18"
-  }
 }

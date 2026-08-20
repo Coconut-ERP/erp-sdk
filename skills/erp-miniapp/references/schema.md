@@ -1,28 +1,27 @@
-# `schema.json` — bảng app cần
+# `schema.json` — app's needed tables
 
-App **không tạo được bảng**. Nó khai báo, người deploy duyệt và tạo bằng quyền
-của chính họ. File nằm ở **gốc source** (gốc zip; nếu zip có đúng một thư mục
-gốc thì là gốc thư mục đó).
+Apps **cannot create tables**. They declare what they need, the deployer reviews and creates
+with their permissions. File lives at **project root** (repo root or zip root; if zip has one root directory, that's the root).
 
 ## Format
 
-Payload kế thừa nguyên từ object API: một phần tử `objects` = body của
-`POST /objects` (`name`, `position`) cộng `fields`; một phần tử `fields` = body
-của `POST /objects/:id/fields` (`name`, `type`, `config`, `position`).
+Payload inherits straight from the objects API: one `objects` element = body of
+`POST /objects` (`name`, `position`) plus `fields`; one `fields` element = body
+of `POST /objects/:id/fields` (`name`, `type`, `config`, `position`).
 
 ```json
 {
   "objects": [
     {
-      "name": "Đơn xin nghỉ",
+      "name": "Leave Request",
       "position": 0,
       "fields": [
-        { "name": "Người xin nghỉ", "type": "single_select",
+        { "name": "Requester", "type": "single_select",
           "config": { "source": "workspace_users" }, "position": 0 },
-        { "name": "Lý do", "type": "long_text", "position": 1 },
-        { "name": "Từ ngày", "type": "date", "position": 2 },
-        { "name": "Số ngày", "type": "number", "position": 3 },
-        { "name": "Trạng thái", "type": "single_select",
+        { "name": "Reason", "type": "long_text", "position": 1 },
+        { "name": "From Date", "type": "date", "position": 2 },
+        { "name": "Days", "type": "number", "position": 3 },
+        { "name": "Status", "type": "single_select",
           "config": { "source": "static",
                       "options": ["pending", "approved", "rejected"] },
           "position": 4 }
@@ -32,62 +31,61 @@ của `POST /objects/:id/fields` (`name`, `type`, `config`, `position`).
 }
 ```
 
-Key lạ trong JSON bị **từ chối** — chỉ `objects` ở gốc; `name`/`position`/`fields`
-ở object; `name`/`type`/`config`/`position` ở field.
+Unknown keys in JSON are **rejected** — only `objects` at root; `name`/`position`/`fields`
+on object; `name`/`type`/`config`/`position` on field.
 
-## Field type
+## Field types
 
-| Nhóm | Type |
+| Group | Type |
 | --- | --- |
-| Chữ | `text`, `long_text`, `url`, `email`, `phone` |
-| Số | `number`, `currency`, `percent` |
-| Ngày | `date`, `datetime` |
-| Chọn | `single_select`, `multi_select`, `checkbox` |
-| Khác | `relation`, `attachment` |
-| **Không khai báo được** | `formula`, `lookup`, `rollup` |
+| Text | `text`, `long_text`, `url`, `email`, `phone` |
+| Number | `number`, `currency`, `percent` |
+| Date | `date`, `datetime` |
+| Selection | `single_select`, `multi_select`, `checkbox` |
+| Other | `relation`, `attachment` |
+| **Can't declare** | `formula`, `lookup`, `rollup` |
 
-Computed (`formula`/`lookup`/`rollup`) không khai báo được vì config của chúng
-trỏ tới field khác bằng **key nội bộ** mà app không biết. Cần thì tạo tay trong
-workspace; app đọc chúng ở `record.computedData`.
+Computed fields (`formula`/`lookup`/`rollup`) can't be declared because their config
+references other fields by **internal key**, which apps don't know. Create them manually
+in the workspace if needed; apps read them from `record.computedData`.
 
-Hằng số tương ứng trong SDK: `FIELD_TYPES`, `DECLARABLE_FIELD_TYPES`,
+Constants in SDK: `FIELD_TYPES`, `DECLARABLE_FIELD_TYPES`,
 `COMPUTED_FIELD_TYPES`.
 
-### `config` hay dùng
+### Common `config`
 
 ```json
 { "type": "single_select", "config": { "source": "workspace_users" } }
 ```
-Giá trị lưu là **user id** — dùng cho field "người tạo", "người duyệt".
+Value stored is **user id** — for "created by" or "approver" fields.
 
 ```json
 { "type": "single_select", "config": { "source": "static", "options": ["a", "b"] } }
 ```
 
 ```json
-{ "type": "relation", "config": { "targetObject": "Khách hàng" } }
+{ "type": "relation", "config": { "targetObject": "Customer" } }
 ```
-`targetObject` là **tên bảng** (app không biết id). Target phải là bảng khai
-cùng file hoặc bảng đã có trong workspace — nếu không, `unresolvedRelations()`
-bắt được và backend trả 400.
+`targetObject` is **table name** (apps don't know ids). Target must be a table declared
+in this file or already in the workspace — if not, `unresolvedRelations()` catches it and backend returns 400.
 
-## Luật backend áp lúc upload
+## Backend rules on upload
 
-| Luật | Giới hạn |
+| Rule | Limit |
 | --- | --- |
-| Tên không trùng (không phân biệt hoa thường) | trong cùng file |
-| Độ dài tên | ≤ 255 (`MAX_NAME_LENGTH`) |
-| Số bảng | ≤ 50 (`MAX_SCHEMA_OBJECTS`) |
-| Số field / bảng | ≤ 200 (`MAX_SCHEMA_FIELDS`) |
-| Kích thước file | ≤ 256KB (`MAX_SCHEMA_BYTES`) |
-| `position` | số nguyên ≥ 0 |
+| Name not duplicate (case-insensitive) | within this file |
+| Name length | ≤ 255 (`MAX_NAME_LENGTH`) |
+| Table count | ≤ 50 (`MAX_SCHEMA_OBJECTS`) |
+| Fields per table | ≤ 200 (`MAX_SCHEMA_FIELDS`) |
+| File size | ≤ 256KB (`MAX_SCHEMA_BYTES`) |
+| `position` | non-negative integer |
 
-Sai bất kỳ điểm nào → **400 ngay lúc upload zip**. Message của backend chỉ đúng
-chỗ sai — hiện thẳng cho người dùng.
+Any violation → **400 on zip upload**. Backend message pinpoints the exact error —
+show it as-is to the user.
 
-## Kiểm trước, không cần credential
+## Validate before upload, no credentials needed
 
-Toàn bộ là **hàm thuần**, cùng bộ luật với backend:
+Pure functions, same rules as backend:
 
 ```js
 import { readFileSync } from "node:fs";
@@ -98,65 +96,60 @@ import {
 
 const schema = JSON.parse(readFileSync("schema.json", "utf8"));
 
-validateSchema(schema);        // string[] mọi lỗi backend sẽ bắt; [] = hợp lệ
+validateSchema(schema);        // string[] of all backend errors; [] = valid
 
-// Diff với workspace thật: npx erp schema dump --out workspace.json
+// Diff against real workspace: npx erp schema dump --out workspace.json
 const workspace = JSON.parse(readFileSync("workspace.json", "utf8")).objects;
 const plans = planSchema(schema, workspace);
-schemaConflicts(plans);        // [] = không xung đột kiểu
-schemaSettled(plans);          // true = không còn gì để duyệt
-unresolvedRelations(schema, workspace);   // relation trỏ bảng không tồn tại
+schemaConflicts(plans);        // [] = no type mismatches
+schemaSettled(plans);          // true = nothing left to review
+unresolvedRelations(schema, workspace);   // relations pointing to non-existent tables
 ```
 
-Có client rồi thì `await app.schemaPlan(schema)` làm cả hai bước (đọc workspace
-+ diff), không throw.
+With a client: `await app.schemaPlan(schema)` does both steps (reads workspace + diff), doesn't throw.
 
-`action` của mỗi bảng/field — đúng thứ màn duyệt hiển thị:
+Each table/field has an `action`:
 
-| action | Nghĩa |
+| action | Meaning |
 | --- | --- |
-| `create` | chưa có, sẽ được tạo |
-| `update` | (cấp bảng) bảng đã có nhưng thiếu field |
-| `unchanged` | đã có sẵn, không đụng tới |
-| `conflict` | (cấp field) trùng tên, **khác type** — kèm `currentType` |
+| `create` | new, will be created |
+| `update` | (table-level) exists but missing fields |
+| `unchanged` | already there, untouched |
+| `conflict` | (field-level) name exists, **different type** — includes `currentType` |
 
-## `assertSchema` lúc boot
+## `assertSchema` at boot
 
 ```ts
 const handles = await app.assertSchema(schema);
-const leaves = handles["Đơn xin nghỉ"];        // key = đúng tên đã khai báo
+const leaves = handles["Leave Request"];        // key = exact declared name
 ```
 
-Khớp → trả `Record<tên bảng, ObjectHandle>`. Lệch → throw `SchemaMismatchError`
-với `.missing` (bảng/field thiếu) và `.conflicts` (trùng tên khác type), message
-đã kèm hướng dẫn nhờ người deploy duyệt.
+Match → returns `Record<table name, ObjectHandle>`. Mismatch → throws `SchemaMismatchError`
+with `.missing` (tables/fields absent) and `.conflicts` (name exists, type differs), message includes guidance to ask deployer to approve.
 
-Gọi **một lần lúc boot**, không gọi trong route handler. `{ refresh: true }` để
-bỏ cache khi workspace vừa bị sửa.
+Call **once at boot**, not in route handlers. `{ refresh: true }` drops cache if workspace was just changed.
 
-## Đổi schema về sau
+## Evolving schema later
 
-1. Sửa `schema.json`
-2. Upload version mới (`PUT /mini-apps/:id/source`)
-3. Người deploy duyệt lại
+1. Edit `schema.json`
+2. Upload new version (`PUT /mini-apps/:id/source`)
+3. Deployer approves again
 
-Chỉ **thêm** được. Đổi kiểu field đã có là `conflict` → phải sửa tay trong
-workspace (hoặc sửa khai báo cho khớp) rồi duyệt lại. Xoá bảng/field cũng là
-việc làm tay trong workspace — gỡ app **không** xoá bảng dữ liệu.
+Only **adding** is supported. Changing an existing field's type is a `conflict` → requires manual fix
+in the workspace (or edit the declaration to match) then re-approve. Deleting tables/fields is also manual
+in the workspace — removing the app doesn't delete data tables.
 
-## Escape hatch: tạo bảng bằng key admin
+## Escape hatch: create tables with admin key
 
-`createObject` / `ensureObject` / `addField` vẫn còn trong SDK, nhưng **không
-dành cho app** — gọi từ app chỉ ra 403. Chúng dành cho script tooling chạy bằng
-**key admin**, ví dụ dựng workspace demo trước khi cài app:
+`createObject` / `ensureObject` / `addField` still exist in the SDK, but **not for apps** —
+calling from an app returns 403. They're for **admin-key tooling**, like pre-staging a demo workspace:
 
 ```js
-await adminClient.ensureObject("Đơn xin nghỉ", [
-  { name: "Lý do", type: "long_text" },
-  { name: "Số ngày", type: "number" },
+await adminClient.ensureObject("Leave Request", [
+  { name: "Reason", type: "long_text" },
+  { name: "Days", type: "number" },
 ]);
 ```
 
-Đổi cấu trúc workspace của người dùng là việc lớn — **hỏi trước khi làm**. Sau
-khi đổi phải `client.invalidate()`, nếu không handle cache còn giữ field cũ.
-Đổi cấu trúc **không có dry run**: `ERP_ENV=development` không bảo vệ được ở đây.
+Modifying the deployer's workspace structure is a big deal — **ask first**. After changing it, call `client.invalidate()`,
+or the handle cache keeps old fields. Schema changes **have no dry run**: `ERP_ENV=development` can't protect here.

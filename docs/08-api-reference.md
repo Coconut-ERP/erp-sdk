@@ -261,7 +261,7 @@ Chi tiết: [12 — Workflow](12-workflow.md).
 | `handle(nameOrId)` | Resolve theo tên như object → `WorkflowHandle` |
 
 **`WorkflowHandle`** — `id`, `name`, `version`, `status`, `isPublished`,
-`trigger`, `code`, `envNames`, `meta`
+`trigger`, `webhookUrl`, `code`, `envNames`, `meta`
 
 | Method | Mô tả |
 | --- | --- |
@@ -282,6 +282,24 @@ Chi tiết: [12 — Workflow](12-workflow.md).
 | `WORKFLOW_TRIGGER_TYPES` | `manual`, `cron` — chỉ có hai |
 | `assertWorkflowTrigger` · `assertWorkflowCode` · `assertWorkflowEnv` | Kiểm phía client → `WorkflowDefinitionError` |
 | `WORKFLOW_ENV_KEEP` · `MAX_WORKFLOW_ENV_ENTRIES` | `"[KEEP]"` · 50 |
+
+**`WorkflowVariablesApi`** (`erp.variables`) — kho key/value dùng chung cho
+workflow. Chi tiết: [12 — Workflow §4b](12-workflow.md).
+
+| Method | Mô tả |
+| --- | --- |
+| `list()` | Mọi biến caller được thấy; trong run là các biến workflow đó được cấp |
+| `get(key)` | `WorkflowVariableDto`; không đọc được → `UnknownWorkflowVariableError` |
+| `value(key)` | Chỉ giá trị, `undefined` khi chưa có — dùng cho run đầu tiên |
+| `set(key, value, { dryRun? })` | Đổi mỗi giá trị — write duy nhất một run được phép |
+| `create({ key, value?, description?, workflowIds? })` | Khai báo biến; `workflowIds` là danh sách workflow được đọc/ghi |
+| `update(key, { value?, description?, workflowIds? })` | Chỉ đổi field có gửi; `workflowIds` thay cả danh sách |
+| `delete(key, { dryRun? })` | Xoá và trả key về để dùng lại |
+
+| Export | Mô tả |
+| --- | --- |
+| `assertWorkflowVariableKey(key)` | Kiểm phía client → `WorkflowDefinitionError` |
+| `MAX_WORKFLOW_VARIABLE_LENGTH` · `MAX_WORKFLOW_VARIABLE_WORKFLOWS` | 16 384 ký tự · 100 workflow |
 
 ## Web app helpers (browser)
 
@@ -305,10 +323,11 @@ Chi tiết: [12 — Workflow](12-workflow.md).
 | `UnknownFieldError` | Tên field không khớp | `field`, `objectName`, `known: string[]` |
 | `FilterValueError` | `in`/`not_in` nhận giá trị server sẽ từ chối (không phải mảng, rỗng, > 200) | `field`, `operator`, `reason` |
 | `RelationValueError` | Field `relation` nhận thứ không phải mảng ≤ 100 record id | `field`, `reason` |
-| `DryRunUnsupportedError` | Gọi `delete`/`restore`/`createLink`/`deleteLink`/`workflow.run()` khi client đang ở chế độ development | `operation` |
+| `DryRunUnsupportedError` | Gọi `delete`/`restore`/`createLink`/`deleteLink`/`workflow.run()`/`variables.set()` khi client đang ở chế độ development | `operation` |
 | `UnknownWorkflowError` · `UnknownDashboardError` | Tên/id không khớp | `workflow` / `dashboard`, `known: string[]` |
 | `UnknownQueryError` | Query đã lưu không có trên dashboard đó | `query`, `dashboard`, `known` |
-| `WorkflowDefinitionError` | Trigger lạ, cron thiếu giây/timezone, code không có `main()`, tên env sai | `field: "trigger" \| "code" \| "env"`, `reason` |
+| `UnknownWorkflowVariableError` | Không có shared variable theo key đó, **hoặc** workflow đang chạy không được cấp | `key` |
+| `WorkflowDefinitionError` | Trigger lạ, cron thiếu giây/timezone, code không có `main()`, tên env sai, key/value shared variable sai | `field: "trigger" \| "code" \| "env" \| "variable"`, `reason` |
 | `WorkflowRunFailedError` | Run kết thúc ở `ERROR` | `workflow`, `run` (`run.error` = message script throw + log) |
 | `WorkflowRunTimeoutError` | Hết `timeoutMs` mà run chưa xong — **run không bị huỷ** | `workflow`, `run`, `timeoutMs` |
 | `SqlQueryError` | SQL không phải một câu `SELECT` duy nhất | `reason` |

@@ -16,8 +16,8 @@ workflow là một script không giao diện, chạy theo lượt.
 tạo (draft, version 1) ──► publish ──► version active
         ▲                                   │
         │ mỗi lần update → quay lại draft    ├─ chạy tay: POST /runs
-        └────────────────────────────────────┤
-                                             └─ cron: server tự chạy
+        └────────────────────────────────────┼─ cron: server tự chạy
+                                             └─ webhook: bên ngoài POST tới URL bí mật
 ```
 
 - **Code** là một file, có `async function main(input)`. `input` là payload lúc
@@ -87,13 +87,13 @@ await wf.delete();
 
 ### Trigger
 
-Chỉ có **hai** loại (`WORKFLOW_TRIGGER_TYPES`) — không có webhook, không có
-trigger theo sự kiện record:
+Ba loại (`WORKFLOW_TRIGGER_TYPES`) — không có trigger theo sự kiện record:
 
 | Trigger | Config |
 | --- | --- |
 | `{ type: "manual" }` | không cần gì; chỉ chạy khi có người gọi |
 | `{ type: "cron", config: { schedule, timezone } }` | `schedule` **6 trường (có giây)** hoặc descriptor; `timezone` là tên IANA |
+| `{ type: "webhook" }` | không cần gì; server cấp URL bí mật khi publish |
 
 ```
 "0 0 9 * * *"      → 9:00 mỗi ngày        (giây phút giờ ngày tháng thứ)
@@ -105,6 +105,49 @@ trigger theo sự kiện record:
 Sai trigger hoặc code thiếu `main()` → `WorkflowDefinitionError` ném ngay ở
 client, chưa gửi request.
 
+### Webhook
+
+```ts
+const wf = await erp.workflows.create({ name: "Nhận thanh toán", code, trigger: { type: "webhook" } });
+await wf.publish();
+wf.webhookUrl;                 // "https://…/api/v1/webhooks/<token>" — draft thì URL trả 404
+```
+
+SDK **chỉ đọc** `webhookUrl`, không xoay nó. URL lỡ lộ thì thu hồi bằng
+`POST /workflows/{id}/webhook/rotate` từ phiên của người dùng (cần quyền
+manage) — code đang cầm URL cũ không được tự cấp cho mình URL mới.
+
+`webhookUrl` **là credential**, không phải một cái id: ai POST tới đó cũng khởi
+động được một run, server không kiểm chữ ký và không biết bên gọi là ai. Đừng
+log nó, và đổi trigger sang `manual`/`cron` là URL bị thu hồi.
+
+`main(input)` nhận nguyên vẹn delivery, `body` là **chuỗi thô chưa parse** — đó
+là điều kiện để verify được chữ ký (Stripe, GitHub… ký trên bytes gốc):
+
+```ts
+async function main(input) {
+  // { source: "webhook", method, query, headers, body, receivedAt }
+  const event = JSON.parse(input.body);
+}
+```
+
+Thử trước khi publish bằng **cùng URL thêm `/test`**:
+
+```bash
+curl -X POST "$WEBHOOK_URL/test" -H "x-signature: $CHU_KY" -d '{"amount":1250.50}'
+# → 202 { id: "hooktest-…", status: "ENQUEUED" }
+```
+
+`/test` chạy được cả khi workflow còn draft và ghi record được validate đủ rồi
+rollback. Nó trả lời **giống hệt** URL thật — run id, không phải output — nên
+log và kết quả đọc bằng `wf.waitForRun(id)` / `wf.getRun(id)`, tức là cần quyền
+read trên workflow. Người cầm URL chỉ khởi động được, không đọc được.
+
+Verify là việc của code trong workflow — server chỉ nhận request rồi xếp hàng,
+trả `202` kèm run id chứ không chờ script chạy xong. Payload lớn hơn
+`WORKFLOW_MAX_INPUT_BYTES` (mặc định 64KB) bị từ chối `413`. Run chạy bằng quyền
+của **người publish**, y như cron.
+
 ### Thử code trước khi lưu
 
 Hai endpoint **không lưu gì** — không workflow, không run — nên đừng tạo draft
@@ -115,16 +158,23 @@ await erp.http.request("POST", "/workflows/check", { body: { code } });
 // → { valid: true }, hoặc ErpApiError nêu dòng/cột lỗi hoặc module ngoài registry
 
 const t = await erp.http.request("POST", "/workflows/test-run", {
-  body: { code, input: {} },
+  body: { code, input: {}, workflowId: wf.id },   // tùy chọn
 });
 // → { ok, dryRun: true, result, logs, durationMs, error? }
 ```
 
 `test-run` chạy trong đúng runner thật nhưng SDK ở chế độ `development`: mọi
-lệnh ghi record được validate rồi rollback. Nó **không** được cấp env, tối đa 1
-phút, và những gì gửi ra ngoài (mail, bot, webhook) là gửi thật. `ok: false` là
-script lỗi (đọc `error.message`/`error.line`); `503` là runner bận, gửi lại.
-Cần quyền `workflow:run:create`.
+lệnh ghi record được validate rồi rollback. Tối đa 1 phút, và những gì gửi ra
+ngoài (mail, bot, webhook) là gửi thật. `ok: false` là script lỗi (đọc
+`error.message`/`error.line`); `503` là runner bận, gửi lại. Cần quyền
+`workflow:run:create`.
+
+`workflowId` cho script mượn danh nghĩa của một workflow đã có: env đã lưu của
+nó được giải mã đưa cho run, và các shared variable nó được cấp trả lời — đó là
+điều kiện để test được script verify chữ ký hoặc gọi API bằng key. Cần quyền
+**manage** trên workflow đó, đúng bằng quyền đã set env cho nó; env vẫn không
+bao giờ trả về cho người gọi. Không truyền `workflowId` thì code không thuộc
+workflow nào: `process.env` là `{}`, và request cũng không được gửi kèm env.
 
 ## 4. Env: nơi duy nhất cất secret
 
@@ -150,6 +200,52 @@ Ba điều dễ mất dữ liệu nếu không nhớ:
 3. Đổi env **không** tăng version, không đưa workflow về draft, không huỷ lịch
    cron; run kế tiếp tự lấy giá trị mới. Tối đa 50 entry, tên theo
    `[A-Za-z_][A-Za-z0-9_]*`.
+
+## 4b. Shared variable: chỗ run này để lại cho run sau
+
+Env là nơi cất **secret**; shared variable là nơi cất **trạng thái**: checkpoint,
+con trỏ đồng bộ, id của thứ vừa xử lý. Chỉ chuỗi, đọc lại được nguyên văn, và
+một biến có thể dùng chung cho nhiều workflow.
+
+```ts
+await erp.variables.create({
+  key: "invoice.cursor",
+  value: "2026-08-01",
+  description: "Hoá đơn đã đồng bộ tới đâu",
+  workflowIds: [wf.id, other.id],       // ai được đọc/ghi nó
+});
+```
+
+Trong script thì chỉ có hai dòng đáng nhớ:
+
+```ts
+const since = (await erp.variables.value("invoice.cursor")) ?? "2026-01-01";
+// … xử lý …
+await erp.variables.set("invoice.cursor", moc_moi);
+```
+
+`value(key)` trả `undefined` khi chưa có gì để đọc — đúng cảnh run đầu tiên —
+còn `get(key)` ném `UnknownWorkflowVariableError`.
+
+Bốn điều quyết định cách dùng:
+
+1. **`workflowIds` là toàn bộ mô hình quyền**, và không tách đọc với ghi:
+   workflow nào được tin để đọc checkpoint của mình thì cũng được tin để dời nó.
+   Danh sách rỗng = không run nào chạm tới. Mọi id phải là workflow **cùng
+   workspace**; không có biến dùng chung giữa hai workspace.
+2. **Trong run, danh sách đó thu hẹp quyền của chính người chạy.** Token của run
+   nói rõ nó là workflow nào, nên script chỉ thấy biến workflow đó được cấp —
+   key không được cấp trả 404 y như key không tồn tại.
+3. **Run chỉ được đặt `value`.** Tạo, xoá, đổi `description` hay `workflowIds`
+   là việc của người dùng qua session của họ; script gọi sẽ nhận 403.
+4. **Ghi đè, không khoá lạc quan.** Ai ghi sau thắng — đúng thứ một checkpoint
+   cần. Trần: key ≤ 128 ký tự theo `[A-Za-z][A-Za-z0-9_.-]*`, value ≤ 16 384 ký
+   tự, ≤ 100 workflow một biến.
+
+Ở `ERP_ENV=development` (test-run là chế độ này), **đọc vẫn chạy còn ghi bị từ
+chối** bằng `DryRunUnsupportedError`: server không có dry run cho nó, mà một
+lần diễn tập âm thầm dời con trỏ thật thì run thật sau đó sẽ bỏ sót dữ liệu.
+Muốn dời thật thì `erp.variables.set(key, value, { dryRun: false })`.
 
 ## 5. Chạy và chờ kết quả
 
@@ -231,6 +327,8 @@ mà người bấm chạy không có `object:record:create` sẽ fail ngay trong
 | Run `ERROR` mà `output` rỗng | Script throw — đọc `run.error`, không phải `runResult` |
 | Run **ngay sau `publish()`** trả `ERROR` với message chung `"Workflow run failed"` | Lỗi phía runner (chưa thấy version vừa publish), không phải code sai — đợi vài giây rồi chạy lại; message do script throw ra bao giờ cũng cụ thể hơn thế |
 | `run()` ném `DryRunUnsupportedError` | Đang `ERP_ENV=development` (§5) |
+| `variables.set()` ném `DryRunUnsupportedError` | Cũng là development mode — ghi biến không có dry run (§4b); `{ dryRun: false }` nếu thật sự muốn ghi |
+| Script đọc biến ra `undefined` dù UI thấy có | Workflow này không nằm trong `workflowIds` của biến (§4b) |
 
 ---
 

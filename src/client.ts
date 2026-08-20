@@ -31,6 +31,7 @@ import type {
   RequiredPermission,
   UserDto,
 } from "./types";
+import { WorkflowVariablesApi } from "./variables";
 import { type WorkflowHandle, WorkflowsApi } from "./workflows";
 
 export interface MiniAppConfig {
@@ -71,6 +72,13 @@ export class ErpClient {
   /** Saved SQL and ad-hoc SQL over the workspace — see {@link sql}. */
   readonly dashboards: DashboardsApi;
 
+  /**
+   * The workspace's shared key/value store for workflows — where a run leaves
+   * a checkpoint the next run reads. Text only; secrets stay in a workflow's
+   * env.
+   */
+  readonly variables: WorkflowVariablesApi;
+
   constructor(
     readonly http: Http,
     private readonly required: RequiredPermission[] = [],
@@ -80,6 +88,7 @@ export class ErpClient {
     this.mode = modeOverride ?? config?.mode ?? resolveMode(config?.env);
     this.workflows = new WorkflowsApi(http, { dryRun: this.dryRun });
     this.dashboards = new DashboardsApi(http);
+    this.variables = new WorkflowVariablesApi(http, { dryRun: this.dryRun });
   }
 
   /** Whether record writes through this client are dry runs by default. */
