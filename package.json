@@ -1,6 +1,6 @@
 {
   "name": "erp-sdk",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "description": "TypeScript SDK for the Coconut ERP backend — mini apps use the ERP as their core engine",
   "type": "module",
   "main": "./dist/index.cjs",
