@@ -150,24 +150,46 @@ của **người publish**, y như cron.
 
 ### Thử code trước khi lưu
 
-Hai endpoint **không lưu gì** — không workflow, không run — nên đừng tạo draft
-chỉ để xem code chạy được không. SDK chưa bọc chúng, gọi thẳng qua `erp.http`:
+Hai lệnh dưới đây **không lưu gì** — không workflow, không draft, không run —
+nên đừng tạo workflow chỉ để xem code chạy được không:
 
 ```ts
-await erp.http.request("POST", "/workflows/check", { body: { code } });
-// → { valid: true }, hoặc ErpApiError nêu dòng/cột lỗi hoặc module ngoài registry
+const report = await erp.workflows.check(code);
+// → { valid: true }
+// → { valid: false, error: { message: 'Expected ";"', line: 12, column: 8 } }
 
-const t = await erp.http.request("POST", "/workflows/test-run", {
-  body: { code, input: {}, workflowId: wf.id },   // tùy chọn
-});
+const t = await erp.workflows.testRun({ code, input: { date: "2026-08-29" } });
 // → { ok, dryRun: true, result, logs, durationMs, error? }
 ```
 
-`test-run` chạy trong đúng runner thật nhưng SDK ở chế độ `development`: mọi
-lệnh ghi record được validate rồi rollback. Tối đa 1 phút, và những gì gửi ra
-ngoài (mail, bot, webhook) là gửi thật. `ok: false` là script lỗi (đọc
-`error.message`/`error.line`); `503` là runner bận, gửi lại. Cần quyền
-`workflow:run:create`.
+`check` transpile rồi vứt đi: **code sai là một câu trả lời, không phải
+exception** — nó chỉ throw khi chính request hỏng (thiếu quyền, hoặc runner
+chết → 503). Nó bắt được lỗi cú pháp, thiếu `main()`, import ngoài registry
+module, code quá lớn; nó **không** bắt được sai tên bảng/field hay lỗi logic —
+đó là việc của `test-run`. Chạy `check` sau mỗi lần sửa: một round trip, không
+tốn slot runner.
+
+Với workflow đã tồn tại, `wf.testRun(code?, input?)` chạy code **dưới danh
+nghĩa workflow đó** (xem `workflowId` bên dưới); không truyền `code` thì nó
+diễn tập đúng code workflow đang giữ:
+
+```ts
+const wf = await erp.workflow("Nhắc đơn quá hạn");
+const t = await wf.testRun(codeMoi, { date: "2026-08-29" });
+if (!t.ok) console.error(t.error?.message, "dòng", t.error?.line, t.logs);
+else await wf.update({ code: codeMoi }).then(() => wf.publish());
+```
+
+`testRun` chạy trong đúng runner thật nhưng SDK bên trong ở chế độ
+`development`: mọi lệnh ghi record được validate rồi rollback (id trả về là id
+giả, đừng dùng lại), `delete`/`restore`/link từ chối chạy, còn `createObject`/
+`addField` và mọi thứ gửi ra ngoài (mail, bot, webhook) là **thật**. Tối đa
+1 phút. `ok: false` là script lỗi trong khi request vẫn 200 (đọc
+`error.message`/`error.line`); `503` là runner bận — gửi lại đúng code đó, đừng
+viết lại script. Cần quyền `workflow:run:create`.
+
+Khác `wf.run()`, `testRun` **không** bị chặn khi `ERP_ENV=development` — diễn
+tập chính là mục đích của nó.
 
 `workflowId` cho script mượn danh nghĩa của một workflow đã có: env đã lưu của
 nó được giải mã đưa cho run, và các shared variable nó được cấp trả lời — đó là

@@ -293,11 +293,11 @@ curl -X POST "$ERP/api/v1/auth/miniapp/init-data" \
 zip -r leave-request.zip . -x "node_modules/*" -x ".git/*"   # schema.json phải nằm trong zip
 curl -X POST "$ERP/api/v1/mini-apps" \
   -H "Authorization: Bearer <admin token>" -H "X-Workspace-Id: <ws>" \
-  -F "name=Đơn xin nghỉ" -F "port=3000" -F "role=member" \
+  -F "name=Đơn xin nghỉ" -F "port=3000" -F "role=writer" \
   -F "file=@leave-request.zip;type=application/zip"
 ```
 
-`role=member` là mặc định và đủ dùng — app chỉ đọc/ghi record ([06](06-phan-quyen.md#chọn-role-lúc-cài-app--siết-quyền)).
+`role=writer` là mặc định và đủ dùng — app chỉ đọc/ghi record ([06](06-phan-quyen.md#chọn-role-lúc-cài-app--siết-quyền)).
 
 Đọc `schemaStatus` trong response:
 

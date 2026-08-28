@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ErpClient } from "../src/client";
+import { ObjectDefinitionError } from "../src/errors";
 import { ObjectHandle } from "../src/objects";
 import type { FieldDto, ObjectDto, RecordDto, RecordPage } from "../src/types";
 import { FakeHttp } from "./helpers/http";
@@ -8,6 +9,7 @@ const meta: ObjectDto = {
   id: "obj-1",
   workspaceId: "ws-1",
   name: "Hóa đơn bán hàng",
+  groups: [],
   position: 0,
   createdAt: "",
   updatedAt: "",
@@ -219,6 +221,7 @@ describe("schema management", () => {
 
     expect(http.body(0)).toEqual({
       name: "Đơn đặt hàng",
+      groups: [],
       position: 0,
     });
     expect(http.body(1)).toEqual({
@@ -228,6 +231,71 @@ describe("schema management", () => {
       position: 0,
     });
     expect(http.body(2)).toEqual({ data: { qty: 3 } });
+  });
+
+  it("changes the name, the groups and the position of a table", async () => {
+    const updated: ObjectDto = {
+      ...meta,
+      name: "Hoá đơn",
+      groups: ["Bán hàng", "Kế toán"],
+      position: 3,
+    };
+    const http = new FakeHttp({ "PUT /objects/obj-1": [updated] });
+    const handle = new ObjectHandle(http, { ...meta }, []);
+
+    await handle.updateDefinition({
+      name: "Hoá đơn",
+      groups: ["Bán hàng", "Kế toán"],
+      position: 3,
+    });
+
+    expect(http.body(0)).toEqual({
+      name: "Hoá đơn",
+      groups: ["Bán hàng", "Kế toán"],
+      position: 3,
+    });
+    expect(handle.name).toBe("Hoá đơn");
+    expect(handle.groups).toEqual(["Bán hàng", "Kế toán"]);
+  });
+
+  it("adds a group by sending the current ones plus it", async () => {
+    const start: ObjectDto = { ...meta, groups: ["Bán hàng"] };
+    const http = new FakeHttp({
+      "PUT /objects/obj-1": [{ ...start, groups: ["Bán hàng", "Kho"] }],
+    });
+    const handle = new ObjectHandle(http, start, []);
+
+    await handle.setGroups([...handle.groups, "Kho"]);
+    expect(http.body(0)).toEqual({ groups: ["Bán hàng", "Kho"] });
+  });
+
+  it("refuses an empty change or more groups than the server stores", async () => {
+    const handle = new ObjectHandle(new FakeHttp({}), { ...meta }, []);
+
+    await expect(handle.updateDefinition({})).rejects.toBeInstanceOf(
+      ObjectDefinitionError,
+    );
+    await expect(handle.rename("  ")).rejects.toThrow(/cannot be empty/);
+    await expect(
+      handle.setGroups(Array.from({ length: 11 }, (_, i) => `G${i}`)),
+    ).rejects.toThrow(/at most 10/);
+  });
+
+  it("drops the client's name-keyed caches when a table is renamed", async () => {
+    const http = new FakeHttp({
+      "GET /objects": [[{ ...meta }], [{ ...meta, name: "Hoá đơn" }]],
+      "GET /objects/obj-1/fields": [[field("total", "Tổng tiền")]],
+      "PUT /objects/obj-1": [{ ...meta, name: "Hoá đơn" }],
+    });
+    const client = new ErpClient(http);
+
+    const handle = await client.object("Hóa đơn bán hàng");
+    await handle.rename("Hoá đơn");
+
+    // The stale name is gone from the cache, so the next lookup re-reads.
+    await expect(client.object("Hóa đơn bán hàng")).rejects.toThrow(
+      /Object not found/,
+    );
   });
 
   it("re-indexes a field after rename via updateField", async () => {

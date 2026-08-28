@@ -67,6 +67,9 @@ function describeObject(handle: ObjectHandle) {
   return {
     id: handle.id,
     name: handle.name,
+    // The sidebar folders. Presentation, but the thing people mean by "which
+    // part of the workspace is this table in".
+    groups: handle.groups,
     fields: handle.fields.map(describeField),
   };
 }
@@ -283,6 +286,7 @@ export const COMMANDS: CommandSpec[] = [
           objects.map((o) => ({
             id: o.id,
             name: o.name,
+            groups: o.groups ?? [],
             position: o.position,
           })),
         );

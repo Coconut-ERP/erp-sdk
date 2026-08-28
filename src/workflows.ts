@@ -1,5 +1,6 @@
 import {
   DryRunUnsupportedError,
+  ErpApiError,
   UnknownWorkflowError,
   WorkflowDefinitionError,
   WorkflowRunFailedError,
@@ -16,6 +17,8 @@ import type {
   WorkflowDto,
   WorkflowRunDto,
   WorkflowRunOutput,
+  WorkflowScriptError,
+  WorkflowTestRunDto,
   WorkflowTrigger,
   WorkflowTriggerType,
 } from "./types";
@@ -52,6 +55,32 @@ const MAIN_FUNCTION = /\bmain\s*\(/;
 
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 const DEFAULT_RUN_POLL_MS = 1_000;
+
+/**
+ * A test run is capped at one minute on the server, whatever the workspace's
+ * run timeout is. A script that needs longer is proved as a real run.
+ */
+export const MAX_TEST_RUN_MS = 60_000;
+
+/**
+ * The server reports a rejected script as one sentence — `Workflow code is
+ * invalid: Expected ";" (line 12, column 8)`. Pulling the position back out is
+ * what makes {@link WorkflowsApi.check} usable by an editor or an agent.
+ */
+const CODE_POSITION = /\(line (\d+), column (\d+)\)\s*$/;
+
+const CHECK_PREFIX = /^Workflow code is invalid:\s*/;
+
+function parseCodeError(message: string): WorkflowScriptError {
+  const position = CODE_POSITION.exec(message);
+  const text = message.replace(CHECK_PREFIX, "");
+  if (!position) return { message: text };
+  return {
+    message: text.replace(CODE_POSITION, "").trim(),
+    line: Number(position[1]),
+    column: Number(position[2]),
+  };
+}
 
 /** A finished run: nothing further will change on it. */
 export function isRunFinished(status: string): boolean {
@@ -166,6 +195,25 @@ export interface WorkflowSpec {
   env?: Record<string, string>;
 }
 
+/** What {@link WorkflowsApi.check} answers — invalid code included. */
+export interface WorkflowCodeCheck {
+  valid: boolean;
+  /** Absent when `valid`. Carries the line and column when the server named one. */
+  error?: WorkflowScriptError;
+}
+
+export interface WorkflowTestRunRequest {
+  code: string;
+  /** What `main(input)` receives. */
+  input?: Record<string, unknown>;
+  /**
+   * Run the script as this workflow: its env and granted shared variables are
+   * handed to the run. Takes `manage` on it. Nothing about the workflow is
+   * changed — its saved code stays where it is.
+   */
+  workflowId?: string;
+}
+
 export interface WorkflowChanges {
   name?: string;
   description?: string;
@@ -235,6 +283,85 @@ export class WorkflowsApi {
     return all;
   }
 
+  /**
+   * Transpiles a script and **stores nothing** — no workflow, no draft, no
+   * version. It is the same check `create` and `update` run before saving
+   * code, on its own, so a script can be fixed without leaving anything
+   * behind. Run it after every edit: it costs a round trip and no runner slot.
+   *
+   * Invalid code is an answer, not a failure — `{ valid: false, error }` with
+   * the line and column the transpiler named. It still throws when the
+   * *request* fails: no permission, or the runner itself being down (503).
+   *
+   * It catches syntax, a missing `main()`, an import outside the runner's
+   * module registry and code over the size cap. It cannot catch a wrong object
+   * or field name, a logic error, or a permission the script lacks — that is
+   * what {@link testRun} is for.
+   *
+   * ```ts
+   * const report = await erp.workflows.check(code);
+   * if (!report.valid) throw new Error(`${report.error?.message} at line ${report.error?.line}`);
+   * ```
+   */
+  async check(code: string): Promise<WorkflowCodeCheck> {
+    try {
+      await this.http.request<{ valid: boolean }>("POST", "/workflows/check", {
+        body: { code },
+      });
+      return { valid: true };
+    } catch (error) {
+      if (error instanceof ErpApiError && error.status === 400) {
+        return { valid: false, error: parseCodeError(error.message) };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Runs a script that is not saved as a workflow and answers with what it
+   * did — its return value, its `console.log` lines, how long it took, or the
+   * error it threw. Nothing is stored: no workflow, no run, no version.
+   *
+   * A script that throws comes back as `{ ok: false, error }` on a **200**:
+   * the request worked, the script did not. Only the request failing throws
+   * here — 403 without `workflow:run:create`, or 503 when the runner is busy,
+   * which means *resend the same code in a moment*, not rewrite it.
+   *
+   * The run is a rehearsal, so the script's own SDK is in development mode:
+   * `create`, `createMany`, `update` and filtered bulk updates are validated
+   * in full and rolled back, and the ids they return are not real. What has no
+   * dry run does not pretend: `delete`, `restore` and the link calls refuse to
+   * run, schema writes execute, and anything the script sends out — mail, a
+   * webhook, an API call — is sent.
+   *
+   * `workflowId` decides what the script runs *as*. With it, the workflow's
+   * stored env and the shared variables it was granted are handed to the
+   * script — which is the only way a script that verifies a signature or calls
+   * an API with a key is testable at all — and it takes `manage` on that
+   * workflow. Without it, the script is handed no credential: `process.env` is
+   * empty. Env values are given to the runner and never returned here, so
+   * never `return` or `console.log` one.
+   *
+   * Unlike {@link WorkflowHandle.run}, this is **not** blocked in development
+   * mode. Rehearsing is the whole point of it.
+   */
+  async testRun<T = unknown>(
+    request: WorkflowTestRunRequest,
+  ): Promise<WorkflowTestRunDto<T>> {
+    assertWorkflowCode(request.code);
+    return this.http.request<WorkflowTestRunDto<T>>(
+      "POST",
+      "/workflows/test-run",
+      {
+        body: {
+          code: request.code,
+          input: request.input ?? {},
+          workflowId: request.workflowId,
+        },
+      },
+    );
+  }
+
   /** The definition including `code`, by id. */
   async get(workflowId: string): Promise<WorkflowDto> {
     return this.http.request<WorkflowDto>("GET", `/workflows/${workflowId}`);
@@ -285,11 +412,16 @@ export class WorkflowsApi {
 
 /** One workflow: its definition, its env, its sharing, and its runs. */
 export class WorkflowHandle {
+  /** Shares the one implementation of `check`/`testRun` with the API object. */
+  private readonly api: WorkflowsApi;
+
   constructor(
     private readonly http: Http,
     private dto: WorkflowDto,
     private readonly options: WriteOptions = {},
-  ) {}
+  ) {
+    this.api = new WorkflowsApi(http, options);
+  }
 
   get id(): string {
     return this.dto.id;
@@ -354,6 +486,41 @@ export class WorkflowHandle {
       `/workflows/${this.id}`,
     );
     return this.dto;
+  }
+
+  /**
+   * {@link WorkflowsApi.check} on a candidate script — or, with no argument,
+   * on the code this workflow already carries.
+   */
+  async check(code?: string): Promise<WorkflowCodeCheck> {
+    return this.api.check(code ?? this.code);
+  }
+
+  /**
+   * {@link WorkflowsApi.testRun} **as this workflow**: its saved env and the
+   * shared variables it was granted are handed to the script, so a script that
+   * needs a secret is testable. Takes `manage` on the workflow.
+   *
+   * Nothing is saved — not the code, not a run. The workflow's stored version
+   * stays exactly where it was, and its published version keeps running.
+   * Called with no code, it rehearses what the workflow currently holds:
+   *
+   * ```ts
+   * const wf = await erp.workflow("Nhắc đơn quá hạn");
+   * const t = await wf.testRun(newCode, { date: "2026-08-28" });
+   * if (!t.ok) console.error(t.error?.message, t.logs?.join("\n"));
+   * else await wf.update({ code: newCode }).then(() => wf.publish());
+   * ```
+   */
+  async testRun<T = unknown>(
+    code?: string,
+    input: Record<string, unknown> = {},
+  ): Promise<WorkflowTestRunDto<T>> {
+    return this.api.testRun<T>({
+      code: code ?? this.code,
+      input,
+      workflowId: this.id,
+    });
   }
 
   /**

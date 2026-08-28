@@ -19,8 +19,8 @@ thao tác.
 **Dùng terminal hoặc AI agent** — [CLI `erp` & AI agent](10-cli-va-ai-agent.md):
 `erp doctor` để chẩn đoán kết nối/quyền, `erp objects show` / `erp schema dump`
 để xem schema thật, `erp init` để sinh app chạy được, `erp skill install` để cài
-ba skill `erp-miniapp` (dựng app), `erp-data` (khai thác dữ liệu) và
-`erp-workflow` (viết code workflow) vào
+bốn skill `erp-miniapp` (dựng app), `erp-data` (khai thác dữ liệu),
+`erp-workflow` (viết code workflow) và `erp-wiki` (viết/khai thác wiki) vào
 `~/.agents/skills` cho mọi agent (claude, codex, opencode, pi). CLI **không làm CRUD dữ liệu** — đọc/ghi/phân tích đều viết bằng SDK.
 
 **Tra cứu khi viết code:**
@@ -33,9 +33,11 @@ ba skill `erp-miniapp` (dựng app), `erp-data` (khai thác dữ liệu) và
 | [06 — Phân quyền](06-phan-quyen.md) | Service account, khai báo permission, `can()`/`assertPermissions()`, các tầng IAM |
 | [07 — Triển khai & vận hành](07-trien-khai-van-hanh.md) | Cài app (template/repo/zip), duyệt `schema.json` khi deploy, vòng đời deploy, ENV được inject, logs, logo, lỗi thường gặp |
 | [08 — API reference](08-api-reference.md) | Toàn bộ export của SDK: chữ ký hàm, kiểu dữ liệu, error |
-| [10 — CLI `erp` & AI agent](10-cli-va-ai-agent.md) | Khám phá workspace từ terminal (`doctor`, `whoami`, `objects show`, `schema dump`), sinh app bằng `erp init`, cài skill `erp-miniapp` + `erp-data` + `erp-workflow` cho agent |
+| [10 — CLI `erp` & AI agent](10-cli-va-ai-agent.md) | Khám phá workspace từ terminal (`doctor`, `whoami`, `objects show`, `schema dump`), sinh app bằng `erp init`, cài skill `erp-miniapp` + `erp-data` + `erp-workflow` + `erp-wiki` cho agent |
 | [11 — Truy vấn SQL & dashboard](11-truy-van-sql-dashboard.md) | `erp.sql()` chạy `SELECT` read-only trên tên bảng/cột hiển thị, tham số `@name`, dashboard và query đã lưu, biểu đồ, chia sẻ |
-| [12 — Workflow](12-workflow.md) | Script chạy trên server ERP: trigger `manual`/`cron`, version & publish, env chứa secret, khởi chạy và chờ kết quả run |
+| [12 — Workflow](12-workflow.md) | Script chạy trên server ERP: trigger `manual`/`cron`, version & publish, env chứa secret, `check`/`testRun` trước khi lưu, khởi chạy và chờ kết quả run |
+| [13 — Tệp & thư mục](13-tep-va-thu-muc.md) | Drive của workspace: thư mục hệ thống, upload ba bước, tải về, chia sẻ, thùng rác 7 ngày |
+| [14 — Wiki & RAG](14-wiki.md) | Trí nhớ chung của workspace: bốn loại trang, slug, draft → publish, nguồn & tài liệu đính kèm, `ask` truy hồi theo trang, lint |
 
 ## Bức tranh 30 giây
 
@@ -66,7 +68,9 @@ ba skill `erp-miniapp` (dựng app), `erp-data` (khai thác dữ liệu) và
 - Dữ liệu của app nằm trong **object engine** của ERP (bảng + field + record
   trong workspace) — app không cần database riêng. Cần tổng hợp nặng thì hỏi
   bằng **SQL read-only** ([11](11-truy-van-sql-dashboard.md)); cần việc chạy
-  định kỳ trên server thì viết **workflow** ([12](12-workflow.md)).
+  định kỳ trên server thì viết **workflow** ([12](12-workflow.md)); tài liệu
+  (PDF, bảng tính) nằm trong **drive** ([13](13-tep-va-thu-muc.md)), còn những
+  gì workspace đã kết luận thì viết vào **wiki** ([14](14-wiki.md)).
 - App **không tự tạo bảng**: nó khai báo trong `schema.json` ở gốc source,
   người deploy duyệt bản so sánh rồi áp dụng bằng quyền của chính họ.
 

@@ -10,6 +10,7 @@ import {
   SchemaMismatchError,
   UnknownObjectError,
 } from "./errors";
+import { FilesApi } from "./files";
 import { FetchHttp, type Http } from "./http";
 import { type ErpMode, isDryRunMode, resolveMode } from "./mode";
 import { ObjectHandle } from "./objects";
@@ -32,6 +33,7 @@ import type {
   UserDto,
 } from "./types";
 import { WorkflowVariablesApi } from "./variables";
+import { WikiApi, type WikiPageHandle } from "./wiki";
 import { type WorkflowHandle, WorkflowsApi } from "./workflows";
 
 export interface MiniAppConfig {
@@ -79,6 +81,18 @@ export class ErpClient {
    */
   readonly variables: WorkflowVariablesApi;
 
+  /**
+   * The workspace's drive: folders, files, sharing and the trash. An upload is
+   * three steps the SDK does in one — see {@link FilesApi.upload}.
+   */
+  readonly files: FilesApi;
+
+  /**
+   * The workspace's knowledge base: pages, the sources they cite, and
+   * retrieval over the documents attached to them ({@link WikiApi.ask}).
+   */
+  readonly wiki: WikiApi;
+
   constructor(
     readonly http: Http,
     private readonly required: RequiredPermission[] = [],
@@ -89,6 +103,11 @@ export class ErpClient {
     this.workflows = new WorkflowsApi(http, { dryRun: this.dryRun });
     this.dashboards = new DashboardsApi(http);
     this.variables = new WorkflowVariablesApi(http, { dryRun: this.dryRun });
+    this.files = new FilesApi(http, {
+      dryRun: this.dryRun,
+      fetch: config?.fetch,
+    });
+    this.wiki = new WikiApi(http, { dryRun: this.dryRun });
   }
 
   /** Whether record writes through this client are dry runs by default. */
@@ -205,6 +224,9 @@ export class ErpClient {
     );
     const handle = new ObjectHandle(this.http, meta, fields ?? [], {
       dryRun: this.dryRun,
+      // A renamed or regrouped object is cached under a name that no longer
+      // addresses it, and in a list whose copy is now stale.
+      onSchemaChange: () => this.invalidate(),
     });
     this.handleCache.set(nameOrId, handle);
     this.handleCache.set(meta.id, handle);
@@ -223,6 +245,14 @@ export class ErpClient {
   /** A dashboard by name or id, with its saved queries. */
   async dashboard(nameOrId: string): Promise<DashboardHandle> {
     return this.dashboards.handle(nameOrId);
+  }
+
+  /**
+   * A wiki page by **slug** — the wiki's one address, since a title can move
+   * and a slug does not. `wikiSlug(title)` predicts it.
+   */
+  async wikiPage(slug: string): Promise<WikiPageHandle> {
+    return this.wiki.handle(slug);
   }
 
   /**
@@ -334,14 +364,19 @@ export class ErpClient {
    */
   async createObject(
     name: string,
-    options: { position?: number } = {},
+    options: { groups?: string[]; position?: number } = {},
   ): Promise<ObjectHandle> {
     const meta = await this.http.request<ObjectDto>("POST", "/objects", {
-      body: { name, position: options.position ?? 0 },
+      body: {
+        name,
+        groups: options.groups ?? [],
+        position: options.position ?? 0,
+      },
     });
     this.objectsCache = undefined;
     const handle = new ObjectHandle(this.http, meta, [], {
       dryRun: this.dryRun,
+      onSchemaChange: () => this.invalidate(),
     });
     this.handleCache.set(meta.id, handle);
     this.handleCache.set(meta.name, handle);

@@ -57,9 +57,9 @@ tự chọn workspace khác; backend tự scope mọi request theo key.
 ### 2. Service account — danh tính của app
 
 Lúc cài, ERP tạo một service account (một "user máy") riêng cho app, gắn
-membership vào workspace với role `member` (mặc định — đọc/ghi record) hoặc
-`viewer` (chỉ đọc) do người cài chọn. **Không còn role `admin`**: app không bao
-giờ được tự tạo bảng.
+membership vào workspace với role `writer`: toàn quyền trên record, file và
+dashboard, chỉ đọc với `object`/`object:field` và với wiki. **Không có role
+`admin`**: app không bao giờ được tự tạo bảng.
 Record do app tạo mang `createdBy` = service account đó. API key `erp_sk_…`
 chính là credential của service account này.
 

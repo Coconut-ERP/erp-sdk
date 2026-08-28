@@ -1,14 +1,13 @@
 # Testing Workflow Code Before It Becomes a Workflow
 
-The two endpoints below **save nothing**: no workflow, no run, no version.
+The two calls below **save nothing**: no workflow, no run, no version.
 They're where you fix bugs — creating a workflow just to see if code runs leaves trash for others,
 and if the trigger is cron, publish even activates the schedule.
 
-Neither has an SDK method yet, but `erp.http` is public so you can call them directly,
-still going through proper auth and unwrapping the `{success, data}` envelope:
+Both are SDK methods, and both take `workflow:run:create`:
 
 ```ts
-import { createMiniApp, ErpApiError } from "erp-sdk";
+import { createMiniApp } from "erp-sdk";
 
 const erp = await createMiniApp({
   baseUrl: process.env.ERP_BASE_URL,
@@ -19,55 +18,62 @@ const erp = await createMiniApp({
 const code = await readFile("reminder-overdue-orders.ts", "utf8");
 ```
 
-## 1. `POST /workflows/check` — transpile, don't run
+## 1. `erp.workflows.check(code)` — transpile, don't run
 
 ```ts
-try {
-  await erp.http.request("POST", "/workflows/check", { body: { code } });
-  // → { valid: true }
-} catch (e) {
-  if (e instanceof ErpApiError) console.error(e.message);
-  // "Workflow code is invalid: Expected ";" (line 12, column 8)"
-  // "Workflow code is invalid: Module "node:fs" is not available to workflows — available modules: …"
-  // "Workflow code must define "async function main()""
+const report = await erp.workflows.check(code);
+if (!report.valid) {
+  console.error(report.error?.message, "line", report.error?.line, "col", report.error?.column);
+  // 'Expected ";"' · 'Module "node:fs" is not available to workflows — available modules: …'
+  // 'Workflow code must define "async function main()"'
 }
 ```
 
 Cheap and fast. Run after every edit, before spending a test-run.
 
+**Invalid code is a return value, not a throw** — `{ valid: false, error }`.
+It only throws when the *request* fails: 403 without the permission, or 503 when
+the runner itself is down (that one means "the runner is broken", not "your code is").
+
 It catches: TypeScript syntax, missing `main`, modules outside the registry, code > 128KB.
 It **doesn't** catch: wrong object/field names, logic errors, missing permissions — that's test-run's job.
 
-## 2. `POST /workflows/test-run` — run in the actual runner
+## 2. `erp.workflows.testRun({ code, input, workflowId })` — run in the actual runner
 
 ```ts
-interface TestRun {
-  ok: boolean;
-  dryRun: true;
-  result: unknown;
-  logs: string[];
-  durationMs: number;
-  error?: { message: string; line?: number; column?: number; timeout?: boolean };
-}
-
-const t = await erp.http.request<TestRun>("POST", "/workflows/test-run", {
-  body: { code, input: { date: "2026-08-14" }, workflowId: wf?.id },
+const t = await erp.workflows.testRun({
+  code,
+  input: { date: "2026-08-29" },
+  workflowId: wf?.id,                 // optional — see "Env" below
 });
 
 if (!t.ok) {
   console.error(t.error?.message, "line", t.error?.line, t.error?.column);
-  console.error(t.logs.join("\n"));
+  console.error(t.logs?.join("\n"));
 }
+t.result;        // what main() returned
+t.durationMs;
+```
+
+On a workflow you already have, `wf.testRun(code?, input?)` is the same call with
+`workflowId` filled in — and with no `code` it rehearses the code that workflow currently holds:
+
+```ts
+const wf = await erp.workflow("Nhắc đơn quá hạn");
+const t = await wf.testRun(newCode, { date: "2026-08-29" });
+if (t.ok) await wf.update({ code: newCode }).then(() => wf.publish());
 ```
 
 - `ok: false` means **script is broken**, request still 200. Read `error.message`,
   `error.line`, `logs` → fix → retry. `error.timeout: true` means you hit the limit.
 - **503 `Workflow runner is busy`** means the runner is overloaded, **not** a code error:
   wait a few seconds then resend the exact same code, don't rewrite the script.
-- Hard **1 minute limit** for test-run (even if admins extended `WORKFLOW_RUN_TIMEOUT`).
-- Requires `workflow:run:create` permission — same as running a real workflow.
+- Hard **1 minute limit** for test-run (`MAX_TEST_RUN_MS`), even if admins extended
+  `WORKFLOW_RUN_TIMEOUT`.
 - Runs under **your token**: the script can only reach what your key can reach. Reading 0 rows?
   Check `npx erp whoami` first before blaming the filter.
+- Unlike `wf.run()`, it is **not** blocked when `ERP_ENV=development` — rehearsing is the point.
+- Nothing is stored either way: no workflow, no draft, no run, no version bump.
 
 ### What rehearses, what runs for real
 
@@ -156,10 +162,10 @@ runLogs(run);     // console.log lines
 ## Workflow, condensed
 
 ```
-edit file  →  check  →  test-run (real input)  →  ok?
-                ↑          ↓ no                    ↓ yes
-                └──── read error.line/logs      ask user
-                                                   ↓
+edit file  →  workflows.check  →  workflows.testRun (real input)  →  ok?
+                ↑                      ↓ no                          ↓ yes
+                └──── read error.line/logs                        ask user
+                                                                     ↓
                                     create → publish → smallest real run
 ```
 

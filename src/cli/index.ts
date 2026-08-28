@@ -2,8 +2,10 @@ import { createMiniApp, type ErpClient } from "../client";
 import {
   DryRunUnsupportedError,
   ErpApiError,
+  FileUploadError,
   FilterValueError,
   MissingPermissionsError,
+  ObjectDefinitionError,
   RelationValueError,
   SchemaMismatchError,
   SqlQueryError,
@@ -11,7 +13,9 @@ import {
   UnknownFieldError,
   UnknownObjectError,
   UnknownQueryError,
+  UnknownWikiPageError,
   UnknownWorkflowError,
+  WikiPageError,
   WorkflowDefinitionError,
   WorkflowRunFailedError,
   WorkflowRunTimeoutError,
@@ -77,6 +81,40 @@ function serializeError(error: unknown): Record<string, unknown> {
       hint:
         "Compare the declaration with `erp schema dump`, or diff it in code with " +
         "planSchema() from erp-sdk; applying it is the deployer's step",
+    };
+  }
+  if (error instanceof ObjectDefinitionError) {
+    return {
+      type: "ObjectDefinitionError",
+      message: error.message,
+      object: error.object,
+      hint: "A table stores a name, its groups and its position — there is no description",
+    };
+  }
+  if (error instanceof FileUploadError) {
+    return {
+      type: "FileUploadError",
+      message: error.message,
+      file: error.file,
+      status: error.status,
+      hint: 'The file row is left in status "uploading" — delete it or re-PUT the bytes',
+    };
+  }
+  if (error instanceof UnknownWikiPageError) {
+    return {
+      type: "UnknownWikiPageError",
+      message: error.message,
+      slug: error.slug,
+      known: error.known,
+      hint: "Wiki pages are addressed by slug — find one with erp.wiki.search(text)",
+    };
+  }
+  if (error instanceof WikiPageError) {
+    return {
+      type: "WikiPageError",
+      message: error.message,
+      field: error.field,
+      hint: "Page type is entity|concept|comparison|query; confidence is high|medium|low",
     };
   }
   if (error instanceof FilterValueError) {

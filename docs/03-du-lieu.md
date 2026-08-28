@@ -25,8 +25,9 @@ Handle được cache theo cả tên lẫn id. Nếu schema bị đổi từ bê
 
 ## Khai báo schema — `schema.json`
 
-Mini app **không tự tạo được bảng/field**. Service account của app là `member`
-(hoặc `viewer`), gọi `POST /objects` là ăn `403`. Thay vào đó app *khai báo*
+Mini app **không tự tạo được bảng/field**. Service account của app là `writer`
+— đầy đủ quyền trên record nhưng chỉ đọc với `object`/`object:field` — nên gọi
+`POST /objects` là ăn `403`. Thay vào đó app *khai báo*
 bảng nó cần trong file `schema.json` ở **gốc source** (gốc zip; nếu zip có một
 thư mục gốc duy nhất thì là gốc thư mục đó):
 
@@ -116,12 +117,48 @@ bằng key admin — ví dụ dựng sẵn workspace demo trước khi cài app:
 ```ts
 const orders = await admin.ensureObject("Đơn đặt hàng", [{ name: "Số lượng", type: "number" }]);
 await orders.updateField("Số lượng", { name: "SL" });   // đổi tên/config/position/isArchived
-await orders.rename("Đơn hàng");
+await admin.createObject("Phiếu nhập", { groups: ["Kho"] });
 await admin.deleteObject("Đơn hàng");
 ```
 
 Gọi chúng từ mini app lúc boot chỉ nhận `403` — đó là lý do `assertSchema` tồn
 tại.
+
+### Sửa định nghĩa bảng — tên, nhóm, vị trí
+
+Bản thân một bảng chỉ giữ ba thứ: **tên**, **groups** (thư mục trên sidebar) và
+**position**. `updateDefinition` đổi những gì nó mang theo, bỏ trống cái còn
+lại:
+
+```ts
+const orders = await admin.object("Đơn đặt hàng");
+await orders.updateDefinition({ name: "Đơn hàng", groups: ["Bán hàng"], position: 2 });
+
+await orders.rename("Đơn hàng");                       // = updateDefinition({ name })
+await orders.setGroups([...orders.groups, "Kế toán"]);  // thêm một nhóm
+await orders.setGroups([]);                             // bỏ khỏi mọi nhóm
+orders.groups;                                          // ["Bán hàng", "Kế toán"]
+```
+
+Bốn điều dễ vấp:
+
+- **`groups` thay cả danh sách**, không cộng thêm — muốn thêm thì gửi danh sách
+  hiện có kèm phần tử mới, như ví dụ trên. Tối đa 10 nhóm, mỗi nhóm ≤ 255 ký
+  tự; server tự bỏ khoảng trắng thừa và phần tử trùng.
+- **Không có mô tả.** Object engine không lưu description cho bảng hay field —
+  workflow, dashboard và shared variable thì có, bảng thì không. Chỗ để giải
+  thích một bảng là wiki của workspace ([14](14-wiki.md)) hoặc `schema.json`
+  của app.
+- **Tên là địa chỉ.** Đổi tên là làm hỏng mọi `client.object("tên cũ")`, mọi
+  SQL dashboard trích dẫn `"tên cũ"`, và `assertSchema` của app nào khai báo
+  tên đó. SDK tự gọi `client.invalidate()` sau khi đổi, nhưng code đang chạy
+  ở nơi khác thì không biết.
+- **Structural nên ghi thật**, kể cả khi `ERP_ENV=development` — dry run chỉ
+  áp cho ghi record. Cần quyền `object:update`, mà service account của mini
+  app (`writer`) không có.
+
+`updateDefinition` khác `update` một chữ và khác nhau hoàn toàn: cái này sửa
+**bảng**, cái kia sửa **một dòng** trong bảng.
 
 ### 18 kiểu field
 

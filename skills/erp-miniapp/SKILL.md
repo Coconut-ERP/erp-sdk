@@ -16,7 +16,8 @@ Two halves: **server** (required — holds API key, calls ERP via SDK, serves fr
 
 Read these three lines carefully before writing any code — they are the source of most mistakes:
 
-1. **Apps cannot create tables.** The app's service account is `member`/`viewer`,
+1. **Apps cannot create tables.** The app's service account is a `writer` — full
+   access to records, files and dashboards, read-only on `object`/`object:field` — so
    calling `POST /objects` gets 403. Apps **declare** tables they need in `schema.json`;
    the deployer reviews and creates them with *their* permissions. → §2
 2. **Apps don't receive user JWTs.** They receive signed `initData` and trade it for

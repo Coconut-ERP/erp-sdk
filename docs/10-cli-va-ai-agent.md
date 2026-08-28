@@ -6,7 +6,7 @@ tên bảng, tên field rồi chết lúc runtime.
 
 - `erp` — CLI đi kèm gói `erp-sdk`: dựng môi trường, kiểm kết nối/quyền, in
   schema thật. **Không có lệnh CRUD dữ liệu.**
-- Hai skill `erp-miniapp` và `erp-data` — gói hướng dẫn cài vào Claude Code
+- Bốn skill `erp-miniapp`, `erp-data`, `erp-workflow` và `erp-wiki` — gói hướng dẫn cài vào Claude Code
   (hoặc agent khác đọc được thư mục skill) để agent biết dựng mini app và biết
   dùng SDK đọc/ghi/phân tích dữ liệu ERP.
 
@@ -171,7 +171,7 @@ erp init don-xin-nghi --sdk "file:../erp-sdk"
 ### Cài skill
 
 ```bash
-erp skill install                        # → ~/.agents/skills/{erp-miniapp,erp-data,erp-workflow}
+erp skill install                        # → ~/.agents/skills/{erp-miniapp,erp-data,erp-workflow,erp-wiki}
 erp skill install --skill erp-data       # chỉ một cái
 erp skill install --dir .claude/skills   # hoặc bó gọn trong một repo
 erp skill path                           # chỉ in đường dẫn để agent tự đọc
@@ -186,32 +186,34 @@ và chỉ nạp từ thư mục của nó — nên mỗi skill cần một symli
 mkdir -p ~/.claude/skills \
   && ln -sfn ~/.agents/skills/erp-data ~/.claude/skills/erp-data \
   && ln -sfn ~/.agents/skills/erp-miniapp ~/.claude/skills/erp-miniapp \
-  && ln -sfn ~/.agents/skills/erp-workflow ~/.claude/skills/erp-workflow
+  && ln -sfn ~/.agents/skills/erp-workflow ~/.claude/skills/erp-workflow \
+  && ln -sfn ~/.agents/skills/erp-wiki ~/.claude/skills/erp-wiki
 ```
 
 ```markdown
 <!-- AGENTS.md ở gốc repo (hoặc ~/.codex/AGENTS.md cho mọi repo) — codex, opencode, pi -->
 ERP tasks (erp-sdk): read the SKILL.md files under ~/.agents/skills first —
 erp-miniapp (dựng app), erp-data (khai thác dữ liệu), erp-workflow (viết code
-workflow chạy trên server ERP).
+workflow chạy trên server ERP), erp-wiki (viết và truy hồi wiki của workspace).
 ```
 
 Một bản duy nhất nên `erp skill install --force` sau khi nâng SDK là mọi agent
 cùng thấy bản mới; không có chuyện bốn bản chép rời nhau rồi lệch dần.
 
-### Ba skill, ba việc
+### Bốn skill, bốn việc
 
 | Skill | Dạy agent |
 | --- | --- |
 | **`erp-miniapp`** | Dựng app trên nền ERP: khai báo `schema.json` + `assertSchema`, nhận diện người dùng qua initData, hai mô hình quyền, hợp đồng runtime khi deploy. References: `schema.md`, `identity.md`, `deploy.md` |
-| **`erp-data`** | Khai thác workspace có sẵn: đọc schema thật, query có filter/sort/phân trang, tránh N+1 qua `relation`, tổng hợp bằng `DataFrame` hoặc SQL read-only, ghi và ghi hàng loạt an toàn sau dry run. References: `api.md`, `recipes.md`, `sql.md`, `workflows.md` |
-| **`erp-workflow`** | Viết code **bên trong** workflow: sandbox của runner, registry module cố định (`node:fs` bị chặn), các trần định hình cách viết (60s, không retry, result 256KB), và vòng lặp `check` → `test-run` để chứng minh script mà không để lại draft. References: `runtime.md`, `authoring.md`, `testing.md` |
+| **`erp-data`** | Khai thác workspace có sẵn: đọc schema thật, query có filter/sort/phân trang, tránh N+1 qua `relation`, tổng hợp bằng `DataFrame` hoặc SQL read-only, ghi và ghi hàng loạt an toàn sau dry run, và drive (tệp/thư mục). References: `api.md`, `recipes.md`, `sql.md`, `workflows.md`, `files.md` |
+| **`erp-workflow`** | Viết code **bên trong** workflow: sandbox của runner, registry module cố định (`node:fs` bị chặn), các trần định hình cách viết (60s, không retry, result 256KB), và vòng lặp `check` → `testRun` để chứng minh script mà không để lại draft. References: `runtime.md`, `authoring.md`, `testing.md` |
+| **`erp-wiki`** | Viết và bảo trì wiki của workspace: bốn loại trang, slug là địa chỉ, draft → publish, phân biệt source với tài liệu đính kèm, vòng lint, và `ask` truy hồi trong tài liệu của một trang. References: `writing.md`, `retrieval.md` |
 
 Mỗi skill là một `SKILL.md` gọn cộng `references/` — agent chỉ nạp phần chi tiết
 khi thật sự cần, thay vì nuốt cả nghìn dòng mỗi lần.
 
 `erp skill install` tự phát hiện mọi thư mục có `SKILL.md` trong gói, nên thêm
-skill thứ tư về sau không phải sửa CLI.
+skill thứ năm về sau không phải sửa CLI.
 
 Bộ `docs/` này (01→09) vẫn là nguồn đầy đủ nhất cho người đọc; skill
 `erp-miniapp` là bản chắt lọc cho agent.
@@ -233,7 +235,7 @@ Bộ `docs/` này (01→09) vẫn là nguồn đầy đủ nhất cho người �
 - Muốn agent chỉ đọc, cấp cho nó một service account chỉ có `*:read`. Đó là
   hàng rào chắc chắn hơn mọi quy ước trong prompt.
 - Xóa record qua SDK là **soft delete** (`handle.restore(id, version)` để hoàn
-  tác); xóa object thì mất cả record — service account `member` không làm được
+  tác); xóa object thì mất cả record — service account `writer` không làm được
   việc đó, và cũng không nên làm hộ người dùng.
 - Bulk update chạm tới hàng nghìn dòng trong một request: đếm trước, chạy thử
   bằng `ERP_ENV=development` (hoặc `{ dryRun: true }`), hỏi trước.

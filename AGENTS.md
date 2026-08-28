@@ -115,6 +115,8 @@ write the app's `schema.json` and validate its format with `validateSchema`.
 | `src/dashboards.ts` | `DashboardsApi`/`DashboardHandle` and `QueryResult` — read-only SQL (`client.sql`) plus saved queries, their params and chart config |
 | `src/workflows.ts` | `WorkflowsApi`/`WorkflowHandle` — server-side scripts: versions, publish, write-only env, queued runs and the helpers that unpack a run's output |
 | `src/variables.ts` | `WorkflowVariablesApi` — the workspace's shared key/value store for workflow scripts (checkpoints, cursors): plain text, granted per workflow, and refusing to write in development mode |
+| `src/files.ts` | `FilesApi` — the workspace drive: the two system folders at the root, the three-step upload (row → presigned PUT → complete) done in one call, downloads, sharing and a trash whose only irreversible calls refuse to run in development mode |
+| `src/wiki.ts` | `WikiApi`/`WikiPageHandle` — the workspace wiki: pages addressed by slug (`wikiSlug` mirrors the server's Vietnamese-aware folding), immutable sources, drive documents attached and indexed, and `ask` retrieving the passages of one page's documents |
 | `src/schema.ts` | The `schema.json` model plus the backend's validation and diff rules as **pure functions** (`validateSchema`, `planSchema`, `schemaConflicts`, `unresolvedRelations`) — no I/O, so the CLI, the SDK and build scripts all share one source of truth |
 | `src/frame.ts` | `DataFrame`/`GroupedFrame` — immutable pandas-style analysis over fetched records; every method returns a new frame |
 | `src/permissions.ts` | `isAllowed`/`missingPermissions`, mirroring the backend enforcer (deny beats allow, `*` wildcards, `manage` implies nothing) |
@@ -123,7 +125,7 @@ write the app's `schema.json` and validate its format with `validateSchema`.
 | `src/errors.ts` | Error classes that carry the fix, not just a message |
 | `src/mode.ts` | `ERP_ENV` → `production` \| `development`, the switch that makes every record write a server-side dry run |
 | `src/cli/` | `args` (parsing), `commands` (the registry), `index` (`runCli`), `help`, `main` (bin entry), `scaffold` (`erp init`), `skill` (`erp skill install`) |
-| `skills/` | Three agent skills shipped inside the package, split by job: `erp-miniapp/` (build an app on the ERP — `schema.json`, initData, deploy), `erp-data/` (read, write and analyse workspace data with the SDK) and `erp-workflow/` (write the code *inside* a workflow — the runner's sandbox, its module registry, its limits, and the `check`/`test-run` loop that proves a script without saving one). Each is a lean `SKILL.md` plus `references/` loaded on demand. `erp skill install` discovers every directory holding a `SKILL.md`, copies them to `~/.agents/skills/` (tool-neutral, one copy per machine) and prints how each agent reaches them — adding a fourth skill needs no code change |
+| `skills/` | Four agent skills shipped inside the package, split by job: `erp-miniapp/` (build an app on the ERP — `schema.json`, initData, deploy), `erp-data/` (read, write and analyse workspace data with the SDK, plus the drive), `erp-workflow/` (write the code *inside* a workflow — the runner's sandbox, its module registry, its limits, and the `check`/`testRun` loop that proves a script without saving one) and `erp-wiki/` (write and maintain the workspace wiki, and retrieve from the documents attached to it). Each is a lean `SKILL.md` plus `references/` loaded on demand. `erp skill install` discovers every directory holding a `SKILL.md`, copies them to `~/.agents/skills/` (tool-neutral, one copy per machine) and prints how each agent reaches them — adding a fifth skill needs no code change |
 
 Two cross-cutting ideas explain most of the code:
 
@@ -136,7 +138,8 @@ never see internal keys (`toFrame({ by: "key" })` opts out). Mutations must call
 resolves through `resolveByName` too — do not hand-roll a fourth copy.
 
 **A mini app has no schema authority.** Its service account joins the workspace as
-`member`, so it cannot create objects or fields. It declares what it needs in a
+`writer` — everything on records, files and dashboards, read-only on `object`,
+`object:field` and the wiki — so it cannot create objects or fields. It declares what it needs in a
 `schema.json` at the root of its source; the deployer reviews and applies that under
 *their* permissions before the first build; the app only calls `assertSchema(schema)` at
 boot, which diffs and throws `SchemaMismatchError` naming exactly what is missing or
@@ -154,7 +157,22 @@ write method takes `{ dryRun }` to override per call. What has no dry run on the
 structural — throws `DryRunUnsupportedError` in that mode rather than silently doing
 the real thing. A new write path must decide which of those two it is. Workflow and
 dashboard *definitions* are structural, so they write for real in either mode, the
-same as `createObject`.
+same as `createObject` and `updateDefinition`.
+
+The drive and the wiki settled the same question the same way: a document and a wiki
+page are definitions rather than records, so uploading, renaming, trashing and editing
+a page all write for real in development mode. Only what cannot be undone refuses —
+`purgeFile`/`purgeFolder`/`emptyTrash` and `wiki.deletePage`. A workflow **test run** is
+the inverse: it is a rehearsal by construction (the server puts the script's own SDK in
+development mode), so it is never blocked by the mode, unlike `run()`.
+
+**Two stores that are not the object engine.** `src/files.ts` is the drive —
+documents, not rows — and `src/wiki.ts` is the workspace's knowledge base, where a
+page is addressed by an immutable **slug** (`wikiSlug` reimplements the server's
+Vietnamese-aware folding, so it must stay in step with `pkg/util/slug.go`) rather
+than through `resolveByName`. The two meet at attachments: a drive file copied into
+the wiki and indexed is what `wiki.ask` retrieves over, and copying it there drops the
+file's own sharing — say so wherever the call is documented.
 
 **Names are the address beyond records too.** `client.workflow()`,
 `client.dashboard()` and `DashboardHandle.query()` resolve id → exact name →

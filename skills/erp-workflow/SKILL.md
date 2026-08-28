@@ -1,6 +1,6 @@
 ---
 name: erp-workflow
-description: Write and edit code that runs inside Coconut ERP workflows — a TypeScript file with `async function main(input)` that the ERP server stores and runs on a schedule, when triggered manually, or via webhook. Use when the task involves writing/editing workflow code, `async function main`, workflow sandbox/runtime, which modules can be imported (node:fs is blocked), 6-field cron with seconds, webhooks and signature verification in code, draft/publish/version, `POST /workflows/check` or `/workflows/test-run`, workflow write-only env, shared variables/checkpoints between runs (`erp.variables`), runs with ERROR/timeout/no retry, or when users want to "run scheduled scripts on ERP", "send reminder emails each morning", "sync nightly", "automate on ERP". Managing workflows via SDK (create/publish/run/setEnv) is in the erp-data skill; building web apps uses erp-miniapp.
+description: Write and edit code that runs inside Coconut ERP workflows — a TypeScript file with `async function main(input)` that the ERP server stores and runs on a schedule, when triggered manually, or via webhook. Use when the task involves writing/editing workflow code, `async function main`, workflow sandbox/runtime, which modules can be imported (node:fs is blocked), 6-field cron with seconds, webhooks and signature verification in code, draft/publish/version, `workflows.check` / `workflows.testRun`, workflow write-only env, shared variables/checkpoints between runs (`erp.variables`), runs with ERROR/timeout/no retry, or when users want to "run scheduled scripts on ERP", "send reminder emails each morning", "sync nightly", "automate on ERP". Managing workflows via SDK (create/publish/run/setEnv) is in the erp-data skill; building web apps uses erp-miniapp.
 ---
 
 # Writing ERP Workflow Code
@@ -63,21 +63,27 @@ the signature, but `/test` goes through the same HTTP path the provider would ta
 
 ## 1. The mandatory loop: check → test-run → save → publish
 
-**Never create a workflow just to see if the code runs.** There are two endpoints that
-don't save anything, and they're where you fix bugs:
+**Never create a workflow just to see if the code runs.** Two SDK calls save nothing,
+and they're where you fix bugs:
 
 ```ts
-// erp.http is public — check/test-run don't have dedicated SDK methods yet
-await erp.http.request("POST", "/workflows/check", { body: { code } });
-// → { valid: true }, or throws ErpApiError with line/column or forbidden module
+const report = await erp.workflows.check(code);
+// → { valid: true } | { valid: false, error: { message, line?, column? } }
 
-const t = await erp.http.request("POST", "/workflows/test-run", {
-  body: { code, input: {}, workflowId: wf?.id },   // workflowId is optional — see below
+const t = await erp.workflows.testRun({
+  code,
+  input: {},
+  workflowId: wf?.id,          // optional — see below
 });
 // → { ok, dryRun: true, result, logs, durationMs, error }
+
+// On a workflow that already exists, this is the same call with its id filled in:
+const t2 = await wf.testRun(code, {});
 ```
 
-- `check` only transpiles: cheap, run after **every edit**.
+- `check` only transpiles: cheap, run after **every edit**. Invalid code comes back as
+  `{ valid: false }` rather than throwing; a throw means the *request* failed (403, or
+  503 = the runner is down).
 - `test-run` **runs in the actual runner**, with `ERP_ENV=development` so
   create/update/bulk update get full server validation then **rollback**. This is how
   you catch wrong field names before bothering users.

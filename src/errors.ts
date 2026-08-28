@@ -254,3 +254,72 @@ export class UnknownFieldError extends Error {
     this.name = "UnknownFieldError";
   }
 }
+
+/**
+ * A change to an object *definition* the server would refuse anyway — an empty
+ * body, a blank name, more groups than it stores. Caught here so the fix
+ * arrives without a round trip.
+ */
+export class ObjectDefinitionError extends Error {
+  constructor(
+    readonly object: string,
+    readonly reason: string,
+  ) {
+    super(`Object "${object}" cannot be updated: ${reason}`);
+    this.name = "ObjectDefinitionError";
+  }
+}
+
+/**
+ * The bytes never reached storage. An upload is three steps — start, PUT the
+ * bytes to the presigned URL, complete — and this is the middle one failing,
+ * which leaves a file row stuck in `uploading` that nothing will complete.
+ */
+export class FileUploadError extends Error {
+  constructor(
+    readonly file: string,
+    readonly status: number,
+    readonly detail: string,
+  ) {
+    super(
+      `Uploading "${file}" to storage failed with HTTP ${status}: ${detail}. ` +
+        'The file row exists but stays in status "uploading" — delete it, or ' +
+        "PUT the bytes to the presigned URL again with the same Content-Type " +
+        "and call files.completeUpload(fileId).",
+    );
+    this.name = "FileUploadError";
+  }
+}
+
+/**
+ * A wiki page addressed by a slug the workspace does not hold. A page's slug
+ * *is* its address — the title is not — so a page created as "Chính sách kho"
+ * answers to `chinh-sach-kho`. Search for it with `wiki.search(text)`.
+ */
+export class UnknownWikiPageError extends Error {
+  constructor(
+    readonly slug: string,
+    readonly known: string[] = [],
+  ) {
+    super(
+      `Wiki page not found: "${slug}"` +
+        (known.length > 0 ? `. Known: ${known.join(", ")}` : "") +
+        ". Pages are addressed by slug, not title — wiki.search(text) finds one.",
+    );
+    this.name = "UnknownWikiPageError";
+  }
+}
+
+/**
+ * A wiki page the server would refuse anyway: a type or confidence outside the
+ * enums, a summary past the cap, an update carrying no change.
+ */
+export class WikiPageError extends Error {
+  constructor(
+    readonly field: string,
+    readonly reason: string,
+  ) {
+    super(`Wiki page ${field} is invalid: ${reason}`);
+    this.name = "WikiPageError";
+  }
+}

@@ -1,6 +1,7 @@
 import {
   DryRunUnsupportedError,
   FilterValueError,
+  ObjectDefinitionError,
   RelationValueError,
   UnknownFieldError,
 } from "./errors";
@@ -43,7 +44,21 @@ export const MAX_FILTER_VALUES = 200;
  */
 export const MAX_RELATION_IDS = 100;
 
+/** Server cap on how many sidebar groups one object may be filed under. */
+export const MAX_OBJECT_GROUPS = 10;
+
 const MEMBERSHIP_OPERATORS: readonly FilterOperator[] = ["in", "not_in"];
+
+/**
+ * What `PUT /objects/{id}` accepts. There is no description: the object engine
+ * stores a name, its groups and its position, and nothing else about a table.
+ */
+export interface ObjectChanges {
+  name?: string;
+  /** Replaces the list whole — see {@link ObjectHandle.update}. */
+  groups?: string[];
+  position?: number;
+}
 
 /** {@link WriteOptions} plus the optimistic-lock version, for record updates. */
 export type VersionedWriteOptions = WriteOptions & { version?: number };
@@ -61,6 +76,15 @@ export interface WriteOptions {
    * in development mode. Omitted, the client's mode decides.
    */
   dryRun?: boolean;
+}
+
+/** {@link WriteOptions} plus what only `ErpClient` supplies. */
+export interface ObjectHandleOptions extends WriteOptions {
+  /**
+   * Called after a change to the object *definition*, so the client can drop
+   * caches keyed by a name that no longer addresses this object.
+   */
+  onSchemaChange?: () => void;
 }
 
 /**
@@ -136,7 +160,7 @@ export class ObjectHandle {
     private readonly http: Http,
     readonly meta: ObjectDto,
     readonly fields: FieldDto[],
-    private readonly options: WriteOptions = {},
+    private readonly options: ObjectHandleOptions = {},
   ) {
     for (const field of fields) {
       this.index(field);
@@ -175,6 +199,11 @@ export class ObjectHandle {
 
   get name(): string {
     return this.meta.name;
+  }
+
+  /** The sidebar folders this object is filed under. Presentation only. */
+  get groups(): string[] {
+    return this.meta.groups ?? [];
   }
 
   /** Internal key first, then display name (case-insensitive) — the one lookup. */
@@ -230,14 +259,68 @@ export class ObjectHandle {
     return resolved;
   }
 
-  async rename(name: string): Promise<ObjectDto> {
+  /**
+   * Renames the object, files it under different sidebar groups, or moves it
+   * in the list — the three things an object definition holds besides its
+   * fields. Only the keys present are changed; the server refuses a body with
+   * none of them. Named apart from {@link ObjectHandle.update}, which writes a
+   * **record** — one changes the table, the other a row in it.
+   *
+   * `groups` replaces the list **whole**, so add one by sending the current
+   * ones plus it: `updateDefinition({ groups: [...invoices.groups, "Kho"] })`. `[]`
+   * files the object under nothing. Blanks and duplicates are dropped by the
+   * server, and an object carries at most {@link MAX_OBJECT_GROUPS}.
+   *
+   * Structural, so it writes for real in development mode too — dry runs
+   * cover record writes only. The name is an **address**: renaming breaks
+   * every `client.object("old name")` and every dashboard SQL that quotes it,
+   * so `client.invalidate()` runs afterwards to drop the stale cache entries.
+   */
+  async updateDefinition(changes: ObjectChanges): Promise<ObjectDto> {
+    if (
+      changes.name === undefined &&
+      changes.groups === undefined &&
+      changes.position === undefined
+    ) {
+      throw new ObjectDefinitionError(
+        this.meta.name,
+        "nothing to change — pass name, groups or position",
+      );
+    }
+    if (changes.name !== undefined && changes.name.trim() === "") {
+      throw new ObjectDefinitionError(
+        this.meta.name,
+        "the name cannot be empty",
+      );
+    }
+    if (changes.groups && changes.groups.length > MAX_OBJECT_GROUPS) {
+      throw new ObjectDefinitionError(
+        this.meta.name,
+        `${changes.groups.length} groups, but an object takes at most ` +
+          `${MAX_OBJECT_GROUPS}`,
+      );
+    }
     const updated = await this.http.request<ObjectDto>(
       "PUT",
       `/objects/${this.id}`,
-      { body: { name } },
+      { body: changes },
     );
-    this.meta.name = updated.name;
+    Object.assign(this.meta, updated);
+    this.options.onSchemaChange?.();
     return updated;
+  }
+
+  /** `updateDefinition({ name })`. */
+  async rename(name: string): Promise<ObjectDto> {
+    return this.updateDefinition({ name });
+  }
+
+  /**
+   * `updateDefinition({ groups })` — replaces the sidebar folders whole. Pass the
+   * current ones plus the new one to add rather than replace.
+   */
+  async setGroups(groups: string[]): Promise<ObjectDto> {
+    return this.updateDefinition({ groups });
   }
 
   async addField(

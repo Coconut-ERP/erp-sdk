@@ -53,12 +53,15 @@ không được đọc. Chi tiết và các bẫy: [03 — Dữ liệu](03-du-li
 | `dashboard(nameOrId)` | `DashboardHandle` kèm query của nó; không thấy → `UnknownDashboardError` |
 | `workflows` | `WorkflowsApi` (thuộc tính) — script chạy trên server |
 | `workflow(nameOrId)` | `WorkflowHandle` (đã nạp `code`); không thấy → `UnknownWorkflowError`. Không cache: version đổi sau mỗi lần ghi |
+| `files` | `FilesApi` (thuộc tính) — drive của workspace. Chi tiết: [13](13-tep-va-thu-muc.md) |
+| `wiki` | `WikiApi` (thuộc tính) — wiki + RAG. Chi tiết: [14](14-wiki.md) |
+| `wikiPage(slug)` | `WikiPageHandle`; sai slug → `UnknownWikiPageError` |
 | `objects(refresh?)` | `ObjectDto[]` mọi object trong workspace. Cache |
 | `object(nameOrId)` | `ObjectHandle` — resolve theo id, tên, tên không phân biệt hoa thường. Không thấy → `UnknownObjectError`. Cache |
 | `hasObject(nameOrId)` | `boolean` |
 | `assertSchema(schema, { refresh? })` | Đối chiếu `schema.json` với workspace; khớp → `Record<tên bảng, ObjectHandle>`, lệch → `SchemaMismatchError`. **Cách kiểm tra schema dành cho mini app** |
 | `schemaPlan(schema, { refresh? })` | `SchemaObjectPlan[]` — diff y như màn duyệt, không throw |
-| `createObject(name, { position? })` | Tạo object mới → handle. **Cần key admin** — mini app không có `object:create` |
+| `createObject(name, { groups?, position? })` | Tạo object mới → handle. **Cần key admin** — mini app không có `object:create` |
 | `ensureObject(name, fields?)` | Idempotent: lấy hoặc tạo object, thêm field còn thiếu (`EnsureFieldSpec[]`). Cùng giới hạn quyền như trên |
 | `deleteObject(nameOrId)` | Xoá object (key admin) |
 | `myPermissions(refresh?)` | `PermissionDto[]` hiệu lực. Cache |
@@ -72,7 +75,8 @@ không được đọc. Chi tiết và các bẫy: [03 — Dữ liệu](03-du-li
 
 ## ObjectHandle
 
-Thuộc tính: `id`, `name`, `meta: ObjectDto`, `fields: FieldDto[]`.
+Thuộc tính: `id`, `name`, `groups: string[]`, `meta: ObjectDto`,
+`fields: FieldDto[]`.
 
 **Schema:**
 
@@ -83,7 +87,8 @@ Thuộc tính: `id`, `name`, `meta: ObjectDto`, `fields: FieldDto[]`.
 | `filterKey(nameOrKey)` | Như `fieldKey`, nhưng `"id"` (khi không có field trùng tên) trả `"id"` — id của chính record |
 | `addField(name, type, { config?, position? })` | Thêm field (key admin) |
 | `updateField(nameOrKey, { name?, config?, position?, isArchived? })` | Sửa field (key admin) |
-| `rename(name)` | Đổi tên object (key admin) |
+| `updateDefinition({ name?, groups?, position? })` | Sửa **định nghĩa bảng** (key admin). `groups` thay cả danh sách, ≤ 10; không có description — object engine không lưu. Ghi thật kể cả ở development. Sau đó client tự `invalidate()` vì tên là địa chỉ |
+| `rename(name)` · `setGroups(groups)` | Lối tắt của `updateDefinition` |
 
 **Record:** (mọi key data nhận tên hiển thị hoặc key)
 
@@ -259,6 +264,8 @@ Chi tiết: [12 — Workflow](12-workflow.md).
 | `get(id)` | Định nghĩa đầy đủ kèm `code` |
 | `create(spec)` | `{ name, code, trigger, description?, env? }` → `WorkflowHandle` ở trạng thái **draft** |
 | `handle(nameOrId)` | Resolve theo tên như object → `WorkflowHandle` |
+| `check(code)` | Transpile rồi vứt đi, **không lưu gì** → `{ valid, error? { message, line?, column? } }`. Code sai **không** throw; chỉ throw khi request hỏng (403, 503 runner chết) |
+| `testRun({ code, input?, workflowId? })` | Chạy code chưa lưu trong runner thật → `WorkflowTestRunDto { ok, dryRun: true, result?, logs?, durationMs, error? }`. `ok: false` là script lỗi trên response 200. Tối đa 1 phút. Không bị chặn ở chế độ development |
 
 **`WorkflowHandle`** — `id`, `name`, `version`, `status`, `isPublished`,
 `trigger`, `webhookUrl`, `code`, `envNames`, `meta`
@@ -271,6 +278,8 @@ Chi tiết: [12 — Workflow](12-workflow.md).
 | `run(input?, { dryRun? })` | Đưa vào hàng đợi → `WorkflowRunDto` (`ENQUEUED`). Ở chế độ development ném `DryRunUnsupportedError` |
 | `waitForRun(runId, { timeoutMs?, intervalMs?, throwOnError? })` | Poll đến khi xong; `ERROR` → `WorkflowRunFailedError`, hết giờ → `WorkflowRunTimeoutError` (run **vẫn chạy**) |
 | `runAndWait(input?, options?)` | `run` + `waitForRun` |
+| `check(code?)` | `WorkflowsApi.check`; bỏ trống thì kiểm code workflow đang giữ |
+| `testRun(code?, input?)` | `WorkflowsApi.testRun` **dưới danh nghĩa workflow này** — env đã lưu và shared variable của nó được đưa cho script. Cần quyền `manage`. Không lưu gì, không đổi version |
 | `runs({ limit?, offset? })` · `getRun(runId)` | Lịch sử run |
 | `sharing()` · `setSharing(visibility, entries?)` · `delete(version?)` · `refresh()` | |
 
@@ -279,7 +288,8 @@ Chi tiết: [12 — Workflow](12-workflow.md).
 | `runOutput(run)` | Parse `run.output` (chuỗi JSON) → `{ workflowId, version, result, logs, durationMs }` |
 | `runResult(run)` · `runLogs(run)` | Lối tắt lấy giá trị `main()` trả về / các dòng log |
 | `isRunFinished(status)` · `WORKFLOW_RUN_PENDING_STATUSES` | `ENQUEUED` · `PENDING` là chưa xong; `SUCCESS` · `ERROR` là xong |
-| `WORKFLOW_TRIGGER_TYPES` | `manual`, `cron` — chỉ có hai |
+| `WORKFLOW_TRIGGER_TYPES` | `manual`, `cron`, `webhook` |
+| `MAX_TEST_RUN_MS` | 60 000 — trần cứng của một test run |
 | `assertWorkflowTrigger` · `assertWorkflowCode` · `assertWorkflowEnv` | Kiểm phía client → `WorkflowDefinitionError` |
 | `WORKFLOW_ENV_KEEP` · `MAX_WORKFLOW_ENV_ENTRIES` | `"[KEEP]"` · 50 |
 
@@ -300,6 +310,77 @@ workflow. Chi tiết: [12 — Workflow §4b](12-workflow.md).
 | --- | --- |
 | `assertWorkflowVariableKey(key)` | Kiểm phía client → `WorkflowDefinitionError` |
 | `MAX_WORKFLOW_VARIABLE_LENGTH` · `MAX_WORKFLOW_VARIABLE_WORKFLOWS` | 16 384 ký tự · 100 workflow |
+
+## Files (drive)
+
+Chi tiết: [13 — Tệp & thư mục](13-tep-va-thu-muc.md).
+
+**`FilesApi`** (`erp.files`)
+
+| Method | Mô tả |
+| --- | --- |
+| `folders(parentId?)` | Thư mục con; không có `parentId` → gốc drive: đúng hai thư mục hệ thống |
+| `personalFolder()` · `publicFolder()` | Thư mục `personal` của caller · cây `Public` của workspace |
+| `folder(id)` · `createFolder(name, parentId)` · `updateFolder(id, { name?, parentId? })` · `deleteFolder(id)` | `parentId` bắt buộc — gốc không chứa gì mới. Xoá là vào thùng rác cùng cả cây con |
+| `folderSharing(id)` · `setFolderSharing(id, visibility, entries?)` | `inherit` \| `workspace` \| `restricted`; `entries` chỉ nhận cùng `restricted`. Cần **manage** |
+| `list({ folderId, search?, recursive?, page?, perPage? })` | `{ files, meta }`. `folderId` bắt buộc; có `search` thì mặc định quét cả cây con |
+| `listAll({ folderId, search?, recursive?, perPage? })` | Đi hết `meta.totalPages` |
+| `get(id)` | `FileDto` |
+| `upload({ folderId, name, content, mimeType? })` | Ba bước trong một lệnh → `FileDto` ở `available`. `content`: `string \| Uint8Array \| ArrayBuffer \| Blob`. Bytes PUT thẳng lên storage, không qua ERP |
+| `startUpload({ folderId, name, mimeType?, sizeBytes? })` · `completeUpload(fileId)` | Hai bước rời, khi client tự PUT bytes |
+| `downloadUrl(id)` | `{ downloadUrl, expiresInSeconds }` — URL ký tạm, **không mang credential ERP** |
+| `download(id)` · `downloadText(id)` | `Uint8Array` · `string` |
+| `update(id, { name?, folderId? })` · `delete(id)` | Đổi tên/di chuyển · vào thùng rác |
+| `sharing(id)` · `setSharing(id, visibility, entries?)` | Tệp chỉ nhận `inherit` \| `restricted` |
+| `trash({ page?, perPage? })` | `{ items, meta }` — **một dòng là một lần xoá**, không phải một file |
+| `restoreFile(id)` · `restoreFolder(id)` | Khôi phục; tên đã bị chiếm → 409 |
+| `purgeFile(id, { dryRun? })` · `purgeFolder(id, { dryRun? })` · `emptyTrash({ dryRun? })` | Xoá hẳn — **không hoàn tác**, nên throw `DryRunUnsupportedError` ở chế độ development. `emptyTrash` → `{ purged, skipped, freedBytes, hasMore }` |
+
+| Export | Mô tả |
+| --- | --- |
+| `mimeTypeForName(name)` | MIME suy từ đuôi tên; lạ → `DEFAULT_MIME_TYPE` |
+| `DEFAULT_MIME_TYPE` · `TRASH_RETENTION_DAYS` | `"application/octet-stream"` · 7 |
+
+## Wiki & RAG
+
+Chi tiết: [14 — Wiki & RAG](14-wiki.md).
+
+**`WikiApi`** (`erp.wiki`)
+
+| Method | Mô tả |
+| --- | --- |
+| `catalog({ type?, status?, tag? })` | Toàn bộ trang gom theo `type`, kèm summary một dòng. Sinh theo request |
+| `search(text, { limit? })` | Full-text trên tiêu đề/summary/body → `WikiPageMatchDto[]` (≤ 50) |
+| `page(slug)` · `findPage(slug)` | Trang kèm body, nguồn, link hai chiều. Sai slug → `UnknownWikiPageError` · `undefined` |
+| `handle(slug)` | `WikiPageHandle` |
+| `createPage(spec)` | `{ title, type, summary, body?, slug?, tags?, confidence?, contested?, sourceIds? }` → luôn ở `draft` |
+| `updatePage(slug, changes)` | Chỉ đổi field có gửi; trang đã publish **quay lại draft** |
+| `publishPage(slug)` · `archivePage(slug)` · `deletePage(slug, { dryRun? })` | Publish cần `wiki:manage`. Xoá làm link trỏ vào thành link gãy và **không dry-run được** |
+| `sources({ page?, perPage? })` · `source(id)` | Nguồn đã nạp (list bỏ body) · một nguồn kèm body và các trang biên từ nó |
+| `ingestSource({ kind, title, body, sourceUrl? })` | Nạp văn bản gốc — **bất biến**, sửa nghĩa là nạp bản mới |
+| `attachFile(slug, fileId)` | Sao một tệp drive vào wiki và xếp hàng index (202). **Chia sẻ riêng của tệp hết hiệu lực** |
+| `detachFile(slug, sourceId)` | Gỡ; bản sao không trang nào trỏ tới sẽ bị xoá kèm passage/ảnh |
+| `waitForIndex(sourceId, { timeoutMs?, intervalMs? })` | Poll `pending`/`indexing` → trả về dù `ready` hay `failed` |
+| `ask(slug, query, { limit? })` | **RAG**: các đoạn trong tài liệu đã gắn của *trang đó* trả lời được câu hỏi → `WikiPassageDto[]` (≤ 20). Truy hồi, không viết câu trả lời |
+| `settings()` · `setSettings({ domain?, conventions?, taxonomy? })` | Quy ước cả wiki; set cần `wiki:manage` |
+| `lint()` | Soi link gãy, trang mồ côi, `contested`, trang cũ, nguồn mỏng, tag ngoài taxonomy. Cần `wiki:update` |
+| `log({ page?, perPage? })` | Nhật ký append-only |
+
+**`WikiPageHandle`** — `slug`, `title`, `status`, `isPublished`, `body`,
+`sources`, `meta`, `brokenLinks`
+
+| Method | Mô tả |
+| --- | --- |
+| `update(changes)` · `publish()` · `archive()` · `delete({ dryRun? })` | Như trên, rồi tự `refresh()` |
+| `attach(fileId)` · `detach(sourceId)` · `ask(query, { limit? })` | Trong phạm vi trang này |
+
+| Export | Mô tả |
+| --- | --- |
+| `wikiSlug(text)` | Đoán slug server sẽ sinh — gấp dấu tiếng Việt ("Hoá đơn" → `hoa-don`) |
+| `WIKI_PAGE_TYPES` | `entity`, `concept`, `comparison`, `query` |
+| `WIKI_CONFIDENCE_LEVELS` · `WIKI_SOURCE_KINDS` | `high\|medium\|low` · `article\|paper\|transcript\|note` |
+| `WIKI_INDEX_PENDING_STATUSES` | `pending`, `indexing` — hết hai cái đó là xong (`ready`/`failed`) |
+| `MAX_WIKI_*` | `SLUG_LENGTH` 160 · `TITLE_LENGTH` 255 · `SUMMARY_LENGTH` 500 · `BODY_LENGTH` 200 000 · `SOURCE_BODY_LENGTH` 2 000 000 · `TAGS` 20 · `PAGE_SOURCES` 50 · `ASK_PASSAGES` 20 |
 
 ## Web app helpers (browser)
 
@@ -323,7 +404,11 @@ workflow. Chi tiết: [12 — Workflow §4b](12-workflow.md).
 | `UnknownFieldError` | Tên field không khớp | `field`, `objectName`, `known: string[]` |
 | `FilterValueError` | `in`/`not_in` nhận giá trị server sẽ từ chối (không phải mảng, rỗng, > 200) | `field`, `operator`, `reason` |
 | `RelationValueError` | Field `relation` nhận thứ không phải mảng ≤ 100 record id | `field`, `reason` |
-| `DryRunUnsupportedError` | Gọi `delete`/`restore`/`createLink`/`deleteLink`/`workflow.run()`/`variables.set()` khi client đang ở chế độ development | `operation` |
+| `DryRunUnsupportedError` | Gọi `delete`/`restore`/`createLink`/`deleteLink`/`workflow.run()`/`variables.set()`/`files.purge*()`/`files.emptyTrash()`/`wiki.deletePage()` khi client đang ở chế độ development | `operation` |
+| `ObjectDefinitionError` | `updateDefinition` không mang thay đổi nào, tên rỗng, hoặc > 10 groups | `object`, `reason` |
+| `FileUploadError` | Bước PUT bytes lên storage hỏng — row nằm lại ở `uploading` | `file`, `status`, `detail` |
+| `UnknownWikiPageError` | Slug wiki không có (hoặc bị ẩn) | `slug`, `known: string[]` |
+| `WikiPageError` | `type`/`confidence` ngoài enum, summary/body/tags vượt trần, update rỗng | `field`, `reason` |
 | `UnknownWorkflowError` · `UnknownDashboardError` | Tên/id không khớp | `workflow` / `dashboard`, `known: string[]` |
 | `UnknownQueryError` | Query đã lưu không có trên dashboard đó | `query`, `dashboard`, `known` |
 | `UnknownWorkflowVariableError` | Không có shared variable theo key đó, **hoặc** workflow đang chạy không được cấp | `key` |
@@ -374,7 +459,19 @@ string tuỳ ý) · `Action` (`"create" | "read" | "update" | "delete" | "manage
 `WorkflowSpec` · `WorkflowChanges` · `WaitForRunOptions` · `DashboardDto` ·
 `DashboardQueryDto` · `QueryResultDto` · `QueryParamSpec` · `QueryParamType` ·
 `QuerySpec` · `QueryChanges` · `SqlOptions` · `ChartType` · `SharingDto` ·
-`SharingEntry` · `SharingVisibility` · `SharingAccess` · `SharingSubjectType`.
+`SharingEntry` · `SharingVisibility` · `SharingAccess` · `SharingSubjectType` ·
+`WorkflowTestRunDto` · `WorkflowScriptError` · `WorkflowCodeCheck` ·
+`WorkflowTestRunRequest` · `ObjectChanges` · `FolderDto` · `FolderKind` ·
+`FileDto` · `FileStatus` · `FileVisibility` · `FileUploadDto` ·
+`FileDownloadDto` · `FileSharingDto` · `TrashItemDto` · `EmptyTrashResult` ·
+`UploadSpec` · `FileContent` · `ListFilesOptions` · `FolderChanges` ·
+`FileChanges` · `WikiPageDto` · `WikiPageDetailDto` · `WikiPageType` ·
+`WikiPageStatus` · `WikiConfidence` · `WikiPageLink` · `WikiSourceDto` ·
+`WikiSourceDetailDto` · `WikiSourceKind` · `WikiPassageDto` · `WikiCatalogDto` ·
+`WikiCatalogEntry` · `WikiPageMatchDto` · `WikiLintReportDto` ·
+`WikiLintFinding` · `WikiSettingsDto` · `WikiLogEntryDto` · `WikiPageSpec` ·
+`WikiPageChanges` · `WikiSourceSpec` · `WikiCatalogFilter` ·
+`WikiSettingsChanges`.
 
 Chi tiết từng field: xem `src/types.ts` (được ship kèm `.d.ts`).
 

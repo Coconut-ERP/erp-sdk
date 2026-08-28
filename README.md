@@ -91,20 +91,21 @@ Errors carry what you need to fix them — `UnknownObjectError` names the object
 ## For AI agents
 
 `erp help --json` returns the entire command surface as machine-readable JSON,
-and the package ships **three agent skills**, split by the jobs this SDK is used
+and the package ships **four agent skills**, split by the jobs this SDK is used
 for:
 
 | Skill | Teaches |
 | --- | --- |
 | **`erp-miniapp`** | Building an app on the ERP: declaring `schema.json` and `assertSchema`, identifying users through initData, the two authority models, and the deploy contract |
-| **`erp-data`** | Working a live workspace: reading the real schema first, querying with filters/sorting/pagination, walking `relation` fields without N+1, aggregating with `DataFrame` or read-only SQL, and writing (and bulk-writing) safely behind a dry run |
-| **`erp-workflow`** | Writing the code *inside* a workflow: the runner's sandbox and its fixed module registry, the limits that shape the script (60s, no retry, 256KB result), and the `check` → `test-run` loop that proves a script without saving a draft |
+| **`erp-data`** | Working a live workspace: reading the real schema first, querying with filters/sorting/pagination, walking `relation` fields without N+1, aggregating with `DataFrame` or read-only SQL, writing (and bulk-writing) safely behind a dry run, and the drive |
+| **`erp-workflow`** | Writing the code *inside* a workflow: the runner's sandbox and its fixed module registry, the limits that shape the script (60s, no retry, 256KB result), and the `check` → `testRun` loop that proves a script without saving a draft |
+| **`erp-wiki`** | Writing and maintaining the workspace wiki: the four page types, slugs as addresses, draft → publish, sources versus attached documents, the lint pass, and `ask` retrieval over a page's documents |
 
 Each is a lean `SKILL.md` plus `references/` the agent loads only when it needs
 the detail.
 
 ```bash
-npx erp skill install                    # → ~/.agents/skills/{erp-miniapp,erp-data,erp-workflow}
+npx erp skill install                    # → ~/.agents/skills/{erp-miniapp,erp-data,erp-workflow,erp-wiki}
 npx erp skill install --skill erp-data   # just one
 npx erp skill path                       # or point an agent at the files in place
 ```
@@ -117,7 +118,8 @@ one that autoloads a `SKILL.md`, and only from its own directory:
 mkdir -p ~/.claude/skills \
   && ln -sfn ~/.agents/skills/erp-data ~/.claude/skills/erp-data \
   && ln -sfn ~/.agents/skills/erp-miniapp ~/.claude/skills/erp-miniapp \
-  && ln -sfn ~/.agents/skills/erp-workflow ~/.claude/skills/erp-workflow
+  && ln -sfn ~/.agents/skills/erp-workflow ~/.claude/skills/erp-workflow \
+  && ln -sfn ~/.agents/skills/erp-wiki ~/.claude/skills/erp-wiki
 # codex / opencode / pi — one line in AGENTS.md:
 #   ERP tasks (erp-sdk): read the SKILL.md files under ~/.agents/skills first.
 ```
@@ -390,7 +392,7 @@ per query and 50 related records per row by default (`{ limit }`, max 100).
 ### Declaring the tables an app needs: `schema.json`
 
 A mini app **cannot create objects or fields** — its service account is a
-`member`. It declares what it needs in a `schema.json` at the root of its
+`writer`, which is read-only on `object` and `object:field`. It declares what it needs in a `schema.json` at the root of its
 source; whoever deploys the app reviews the declaration against the workspace
 and applies it under *their* permissions, before the first build runs.
 
@@ -448,9 +450,26 @@ boot they only return 403, which is what `assertSchema` exists to prevent.
 ```ts
 const orders = await admin.ensureObject("Đơn đặt hàng", [{ name: "Số lượng", type: "number" }]);
 await orders.updateField("Số lượng", { name: "SL" });
-await orders.rename("Đơn hàng");
 await admin.deleteObject("Đơn hàng");
 ```
+
+A table itself holds three things and no more — a **name**, the sidebar
+**groups** it is filed under, and a **position**:
+
+```ts
+await orders.updateDefinition({ name: "Đơn hàng", groups: ["Bán hàng"], position: 2 });
+await orders.rename("Đơn hàng");                        // updateDefinition({ name })
+await orders.setGroups([...orders.groups, "Kế toán"]);  // groups replace whole
+```
+
+`groups` replaces the list rather than adding to it, so send the current ones
+plus the new one (at most 10). There is **no description**: the object engine
+stores none for a table or a field — workflows, dashboards and shared variables
+have one, tables do not, and where a table needs explaining that belongs in the
+workspace wiki or in the app's `schema.json`. The name is an *address*, so
+renaming breaks `object("old name")` and any dashboard SQL quoting it; the
+client drops its name-keyed caches afterwards. `updateDefinition` is one word
+away from `update`, which writes a **record** — the table versus a row in it.
 
 A complete runnable app built on this flow lives in
 `examples/miniapp-leave-request` (Express + form UI + initData bridge).
@@ -696,6 +715,40 @@ Starting a run writes real data and the server has no dry run for it, so in
 development mode `run()` throws `DryRunUnsupportedError` instead. Pass
 `{ dryRun: false }` to run it anyway.
 
+### Proving a script before it becomes a workflow
+
+Two calls that **store nothing** — no workflow, no draft, no run — so fixing a
+script leaves nothing behind:
+
+```ts
+const report = await app.workflows.check(code);
+// { valid: true } | { valid: false, error: { message: 'Expected ";"', line: 12, column: 8 } }
+
+const t = await app.workflows.testRun({ code, input: { ngay: "2026-08-29" } });
+if (!t.ok) console.error(t.error?.message, t.logs?.join("\n"));
+```
+
+`check` transpiles and throws the result away. **Invalid code is an answer, not
+an exception** — it only throws when the request itself fails (no permission, or
+a 503 runner). It catches syntax, a missing `main()`, an import outside the
+runner's registry and oversized code; it cannot catch a wrong table name or a
+logic error, which is what a test run is for. Run it after every edit: one round
+trip, no runner slot.
+
+`testRun` executes in the real runner with the script's own SDK in development
+mode — record writes are validated in full and rolled back (the ids it returns
+are not real), `delete`/`restore`/link calls refuse to run, schema writes
+execute, and anything sent outward is sent. Capped at one minute. `ok: false` is
+a script that threw on an otherwise-200 response; a 503 means the runner is
+busy — resend the same code rather than rewriting it. Unlike `run()`, it is
+**not** blocked in development mode: rehearsing is the point of it.
+
+On an existing workflow, `wf.testRun(code?, input?)` runs the script **as that
+workflow**, so its stored env and granted shared variables reach the script —
+the only way a script that verifies a signature or calls an API with a key is
+testable at all. It takes `manage` on the workflow, changes nothing about it,
+and with no `code` rehearses what the workflow currently holds.
+
 One backend quirk worth knowing: a run started immediately after `publish()`
 sometimes comes back `ERROR` with the generic message `"Workflow run failed"` —
 the runner has not picked the new version up. Anything the script itself throws
@@ -738,6 +791,89 @@ Reads work in development mode, writes refuse with `DryRunUnsupportedError`:
 the server has no dry run for them, and a rehearsal that quietly moved the real
 cursor would make the next real run skip data. `{ dryRun: false }` writes anyway.
 
+## Files — the workspace drive
+
+Documents (a signed PDF, an exported spreadsheet) are not records, and they live
+in the drive instead: folders, files, sharing, and a trash that keeps a deletion
+for 7 days.
+
+```ts
+const folder = await app.files.personalFolder();      // or publicFolder()
+const file = await app.files.upload({
+  folderId: folder.id,
+  name: "bao-cao-thang-8.csv",
+  content: csv,                                       // string | Uint8Array | ArrayBuffer | Blob
+});
+
+const { files } = await app.files.list({ folderId: folder.id, search: "báo cáo" });
+const bytes = await app.files.download(file.id);
+await app.files.update(file.id, { name: "bao-cao.csv" });
+await app.files.delete(file.id);                      // to the trash
+```
+
+Four things shape it:
+
+- **The root is not writable.** Listing folders with no parent returns exactly
+  two — the caller's personal folder and the workspace's shared `Public` tree
+  (which also takes `file:public`) — and everything created lives inside one of
+  them, so `folderId`/`parentId` is always required.
+- **An upload is three steps**: the row is created, the bytes are PUT to a
+  presigned S3 URL that never passes through the ERP, then the upload is
+  completed. `upload()` does all three; `startUpload`/`completeUpload` expose
+  the halves for a browser that PUTs the bytes itself. The `Content-Type` must
+  match what the presign was asked for, so a name with an unknown extension
+  uploads as `application/octet-stream` — which stores fine but the wiki will
+  not index it.
+- **Deleting is trashing.** One trash entry is one *deletion*, so a deleted
+  folder appears once and restores with everything it took down.
+- **The drive has no server dry run**, and a document is not a record: uploads
+  and edits write for real in development mode too. Only the irreversible calls
+  refuse there — `purgeFile`/`purgeFolder`/`emptyTrash`.
+
+## Wiki — shared memory, and retrieval over it
+
+One wiki per workspace: pages people and agents write, the sources those pages
+cite, and RAG over documents attached to them. Four page types (`entity`,
+`concept`, `comparison`, `query`), `[[slug]]` wikilinks, a catalog generated per
+request, an append-only log, and a lint pass over the whole thing.
+
+```ts
+const page = await app.wiki.createPage({
+  title: "Chính sách tồn kho",
+  type: "concept",
+  summary: "Mức tồn tối thiểu theo nhóm hàng và ai được duyệt vượt mức.",
+  body: "Nhóm A giữ 30 ngày. Quy trình nhập xem [[quy-trinh-nhap-kho]].",
+  tags: ["kho"],
+});
+page.slug;                                   // "chinh-sach-ton-kho" — the address
+await app.wiki.publishPage(page.slug);       // takes wiki:manage
+
+const attached = await app.wiki.attachFile(page.slug, file.id);
+await app.wiki.waitForIndex(attached.id);
+const passages = await app.wiki.ask(page.slug, "Nhóm A giữ tồn bao nhiêu ngày?");
+```
+
+- **A page is addressed by its slug, never its title.** The slug is folded once
+  at creation and stays put when the title changes; `wikiSlug(title)` predicts
+  it, folding Vietnamese accents rather than dropping them ("Hoá đơn" →
+  `hoa-don`). The first page to claim a name keeps the readable slug, so keep
+  the slug a create returns.
+- **Everything lands as `draft`**, including every edit to a published page.
+  Publishing and setting the conventions take `wiki:manage`; reading is the
+  floor every role holds, and a mini app's service account (`writer`) reads the
+  wiki without writing it.
+- **Sources and attachments are different things.** A source is immutable text
+  the page cites; an attachment is a drive file copied into the wiki and
+  indexed. Attaching hands the document to everyone who may read the wiki — the
+  file's own sharing stops applying at that moment.
+- **`ask` retrieves, it does not answer.** It returns the passages of *that
+  page's* documents that match the question, by meaning and wording together,
+  each carrying the source to cite. Widening means searching the catalog first
+  and asking inside the page you land on.
+- `lint()` reports broken links, orphans, contested and stale pages, thin
+  provenance and tags outside the taxonomy; `archivePage` retires a page without
+  turning what links to it into broken links, which `deletePage` does.
+
 ## Permissions at runtime
 
 ```ts
@@ -762,7 +898,11 @@ source of truth; the SDK check is a fast preflight.
 | `UnknownObjectError` | `app.object(name)` doesn't match any object in the workspace |
 | `UnknownFieldError` | a filter/sort/data key doesn't match any field (`.known` lists fields) |
 | `RelationValueError` | a relation was written as something other than ≤ 100 record ids (`.field`, `.reason`) |
-| `DryRunUnsupportedError` | a delete/restore/link call, or `workflow.run()`, while the client is in development mode (`.operation`) |
+| `DryRunUnsupportedError` | a delete/restore/link call, `workflow.run()`, a trash purge or `wiki.deletePage()`, while the client is in development mode (`.operation`) |
+| `ObjectDefinitionError` | `updateDefinition` with no change, a blank name, or more than 10 groups (`.object`, `.reason`) |
+| `FileUploadError` | the bytes never reached storage; the file row is stuck in `uploading` (`.file`, `.status`) |
+| `UnknownWikiPageError` | no wiki page under that slug — pages are addressed by slug, not title (`.slug`) |
+| `WikiPageError` | a page type or confidence outside the enum, a summary/body/tag list past the cap (`.field`, `.reason`) |
 | `SqlQueryError` | SQL that is not a single read-only `SELECT` (`.reason`) |
 | `UnknownWorkflowError` / `UnknownDashboardError` / `UnknownQueryError` | name or id doesn't match (`.known` lists what does) |
 | `UnknownWorkflowVariableError` | no shared variable under that key, or this workflow was not granted it (`.key`) |
@@ -778,8 +918,8 @@ the permissions the app declares. The key's workspace membership defines its
 tenant; row scopes on `object:record` further narrow what it can read.
 
 Installing through the Mini App module does this for you: the app's service
-account joins the workspace as `member` (or `viewer`) — never `admin`, since
-schema changes go through the `schema.json` review instead.
+account joins the workspace as `writer` — never `admin`, since schema changes go
+through the `schema.json` review instead.
 
 ## Development
 

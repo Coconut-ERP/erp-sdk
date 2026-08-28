@@ -6,7 +6,13 @@ import { parseArgv } from "../src/cli/args";
 import { runCli } from "../src/cli/index";
 
 const OBJECTS = [
-  { id: "obj-1", workspaceId: "ws-1", name: "Hóa đơn", position: 0 },
+  {
+    id: "obj-1",
+    workspaceId: "ws-1",
+    name: "Hóa đơn",
+    groups: ["Bán hàng"],
+    position: 0,
+  },
 ];
 const FIELDS = [
   {
@@ -163,7 +169,9 @@ describe("objects", () => {
   it("lists objects without touching their fields", async () => {
     const cli = harness(SCHEMA_ROUTES);
     expect(await cli.run(["objects", "list"])).toBe(0);
-    expect(cli.json()).toEqual([{ id: "obj-1", name: "Hóa đơn", position: 0 }]);
+    expect(cli.json()).toEqual([
+      { id: "obj-1", name: "Hóa đơn", groups: ["Bán hàng"], position: 0 },
+    ]);
     expect(cli.calls.some((call) => call.url.endsWith("/fields"))).toBe(false);
   });
 
@@ -375,7 +383,12 @@ describe("scaffolding", () => {
       .json()
       .skills.map((s: { skill: string }) => s.skill)
       .sort();
-    expect(names).toEqual(["erp-data", "erp-miniapp", "erp-workflow"]);
+    expect(names).toEqual([
+      "erp-data",
+      "erp-miniapp",
+      "erp-wiki",
+      "erp-workflow",
+    ]);
     for (const name of names) {
       const skill = await readFile(
         join(dir, "skills", name, "SKILL.md"),
@@ -482,6 +495,7 @@ describe("scaffolding", () => {
     expect(skills.map((s) => s.skill).sort()).toEqual([
       "erp-data",
       "erp-miniapp",
+      "erp-wiki",
       "erp-workflow",
     ]);
     expect(skills[0]?.entry).toMatch(/erp-data[\\/]SKILL\.md$/);

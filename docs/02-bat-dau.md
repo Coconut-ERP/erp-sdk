@@ -99,7 +99,7 @@ cố ý không đọc `NODE_ENV`.
 
 Nếu boot ném `MissingPermissionsError`: gắn IAM rule cấp các quyền còn thiếu
 cho service account (hoặc tạo SA với role admin khi dev cho nhanh — nhưng nhớ
-app thật chạy bằng `member`, đừng dựa vào quyền dev không có ở production).
+app thật chạy bằng `writer`, đừng dựa vào quyền dev không có ở production).
 
 ## 4. Cài lên ERP
 
@@ -113,7 +113,7 @@ zip -r hello.zip . -x "node_modules/*" -x ".git/*"
 
 curl -X POST "$ERP/api/v1/mini-apps" \
   -H "Authorization: Bearer <token>" -H "X-Workspace-Id: <ws>" \
-  -F "name=Hello" -F "port=3000" -F "role=member" \
+  -F "name=Hello" -F "port=3000" -F "role=writer" \
   -F "file=@hello.zip;type=application/zip"
 ```
 
@@ -125,15 +125,15 @@ Zip tối đa 25MB — luôn loại `node_modules/` và `.git/`.
 curl -X POST "$ERP/api/v1/mini-apps" \
   -H "Authorization: Bearer <token>" -H "X-Workspace-Id: <ws>" \
   -H "Content-Type: application/json" \
-  -d '{"name":"Hello","source":"repo","repoUrl":"https://github.com/you/hello-miniapp","repoBranch":"main","port":3000,"role":"member"}'
+  -d '{"name":"Hello","source":"repo","repoUrl":"https://github.com/you/hello-miniapp","repoBranch":"main","port":3000,"role":"writer"}'
 ```
 
 **Từ template có sẵn:** `GET /mini-apps/templates` rồi
 `{"source":"builtin","templateKey":"..."}`.
 
-Về `role`: quyền của service account app, chỉ còn `member` (đọc/ghi record —
-mặc định, hợp với hầu hết app) hoặc `viewer` (chỉ đọc — app dashboard/báo cáo).
-`admin` đã bị loại bỏ; truyền vào là `400`.
+Về `role`: quyền của service account app — chỉ nhận `writer` (mặc định, và là
+giá trị hợp lệ duy nhất): đọc/ghi record, file, dashboard; chỉ đọc metadata
+bảng và wiki. `admin` đã bị loại bỏ; truyền role khác là `400`.
 
 App cần bảng riêng thì **không tự tạo** mà khai trong `schema.json` ở gốc zip:
 

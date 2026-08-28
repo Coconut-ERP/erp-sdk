@@ -62,7 +62,7 @@ is in development; changing table structure always runs for real.
 | `issueInitData(serviceAccountId)` | Host-side: issue initData string (→ skill `erp-miniapp`) |
 | `assertSchema(schema, { refresh? })` | Match `schema.json` → `Record<table name, ObjectHandle>` (→ skill `erp-miniapp`) |
 | `schemaPlan(schema, { refresh? })` | Diff like review UI, doesn't throw → `SchemaObjectPlan[]` |
-| `createObject(name, { position? })` | **Needs admin key** — `member` service account gets 403 |
+| `createObject(name, { groups?, position? })` | **Needs admin key** — a `writer` service account gets 403 |
 | `ensureObject(name, fields[])` | Idempotent create table + missing fields (admin key) |
 | `deleteObject(nameOrId)` | Delete table and its records (admin key) |
 | `invalidate()` | Clear all caches (objects, fields, permissions, me) |
@@ -92,7 +92,8 @@ Properties: `id`, `name`, `meta` (`ObjectDto`), `fields` (`FieldDto[]`).
 | `linkedIds(record, field)` | Array of ids in `data` of `relation` field (record must be from query, not `get`) |
 | `rowFromRecord(record, by?)` | `RecordDto` → flat row; `by = "name"` (default) or `"key"` |
 | `listLinks` · `createLink` · `deleteLink` | Modify links individually — only needed for relations > 100 ids |
-| `addField` · `updateField` · `rename` | **Admin key** — change table structure |
+| `addField` · `updateField` | **Admin key** — change table structure |
+| `updateDefinition({ name?, groups?, position? })` · `rename` · `setGroups` | **Admin key** (`object:update`) — the whole of a table's own definition; `groups` replaces the list (≤ 10). No description exists. Writes for real in development mode; drops the client's name caches afterwards |
 
 Field types: `text`, `long_text`, `number`, `currency`, `percent`, `checkbox`,
 `date`, `datetime`, `single_select`, `multi_select`, `url`, `email`, `phone`,

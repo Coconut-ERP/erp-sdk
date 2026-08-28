@@ -21,12 +21,19 @@ export type Resource =
   | "object:rule"
   | "workflow"
   | "workflow:run"
-  | "iam:rule"
+  | "iam:group"
   | "iam:service_account"
   | "file"
-  | "file:folder"
+  /**
+   * The workspace's shared Public folder tree, on top of `file`. It grants
+   * nothing on its own — `file` is what opens the module at all.
+   */
+  | "file:public"
   | "dashboard"
   | "dashboard:query"
+  | "miniapp"
+  | "ai"
+  | "wiki"
   | (string & {});
 
 export type Action =
@@ -59,6 +66,12 @@ export interface ObjectDto {
   id: string;
   workspaceId: string;
   name: string;
+  /**
+   * The folders this object is filed under in the workspace sidebar — free
+   * text, at most 10, and an object may sit in several at once. Purely how it
+   * is presented; nothing about the data depends on them.
+   */
+  groups: string[];
   position: number;
   createdAt: string;
   updatedAt: string;
@@ -446,4 +459,266 @@ export interface QueryResultDto {
   truncated: boolean;
   /** The SQL actually executed, with every object name expanded into a CTE. */
   compiledSql?: string;
+}
+
+/** Where a script that failed broke, as the transpiler or the runner saw it. */
+export interface WorkflowScriptError {
+  message: string;
+  line?: number;
+  column?: number;
+  /** The script was still running when the runner's clock ran out. */
+  timeout?: boolean;
+}
+
+/**
+ * What `POST /workflows/test-run` answers: the script ran, and this is what it
+ * did. `ok: false` is a script that threw — the request itself succeeded.
+ */
+export interface WorkflowTestRunDto<T = unknown> {
+  ok: boolean;
+  /** Always `true`: a test run puts the script's SDK in development mode. */
+  dryRun: true;
+  /** What `main()` returned. */
+  result?: T;
+  logs?: string[];
+  durationMs: number;
+  error?: WorkflowScriptError;
+}
+
+/** Files and folders carry `inherit` as well — a file follows its folder. */
+export type FileVisibility = "inherit" | "workspace" | "restricted";
+
+/**
+ * `personal` is one member's own folder and `public` the workspace's shared
+ * tree — both are system folders the server provisions and refuses to rename,
+ * move or delete. Everything anyone creates is `normal`.
+ */
+export type FolderKind = "normal" | "personal" | "public";
+
+export interface FolderDto {
+  id: string;
+  workspaceId: string;
+  /** Absent only on the two system folders, which sit at the drive root. */
+  parentId?: string;
+  name: string;
+  visibility: FileVisibility;
+  kind: FolderKind;
+  /** Set on a `personal` folder: whose it is. */
+  ownerUserId?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** `uploading` until the bytes land and the upload is completed. */
+export type FileStatus = "uploading" | "available" | (string & {});
+
+export interface FileDto {
+  id: string;
+  workspaceId: string;
+  folderId?: string;
+  name: string;
+  visibility: FileVisibility;
+  mimeType: string;
+  sizeBytes: number;
+  version: number;
+  status: FileStatus;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * A started upload: the row exists, the bytes do not. PUT them to `uploadUrl`
+ * — a presigned S3 URL that carries no ERP credentials and expires — then
+ * complete the file. {@link FilesApi.upload} does all three.
+ */
+export interface FileUploadDto {
+  file: FileDto;
+  uploadUrl: string;
+  expiresInSeconds: number;
+}
+
+export interface FileDownloadDto {
+  downloadUrl: string;
+  expiresInSeconds: number;
+}
+
+/** Sharing on a file or a folder — the ACL endpoints answer with this. */
+export interface FileSharingDto {
+  visibility: FileVisibility;
+  entries: SharingEntry[];
+  fileId?: string;
+  folderId?: string;
+}
+
+/**
+ * One **deletion**, not one deleted row: a folder that took a subtree with it
+ * appears once, and restoring or purging it takes the subtree along.
+ */
+export interface TrashItemDto {
+  id: string;
+  type: "file" | "folder" | (string & {});
+  name: string;
+  parentId?: string;
+  mimeType?: string;
+  sizeBytes: number;
+  deletedBy?: string;
+  deletedAt: string;
+  /** When the sweep removes it and the stored bytes for good. */
+  purgeAt: string;
+}
+
+/** One bounded pass of emptying the trash. `hasMore`: call again for the rest. */
+export interface EmptyTrashResult {
+  purged: number;
+  /** Deletions the caller may not finish — somebody else's — left alone. */
+  skipped: number;
+  freedBytes: number;
+  hasMore: boolean;
+}
+
+/** What a wiki page is *for*, which is also how the catalog groups it. */
+export type WikiPageType = "entity" | "concept" | "comparison" | "query";
+
+/** `draft` until published; `archived` retires it without breaking links. */
+export type WikiPageStatus = "draft" | "published" | "archived" | (string & {});
+
+export type WikiConfidence = "high" | "medium" | "low";
+
+/** Raw material a page cites. `file` sources are attached drive documents. */
+export type WikiSourceKind = "article" | "paper" | "transcript" | "note";
+
+export interface WikiPageDto {
+  id: string;
+  workspaceId: string;
+  createdBy?: string;
+  updatedBy?: string;
+  /** The page's address — every other call takes this, not the id. */
+  slug: string;
+  title: string;
+  type: WikiPageType | (string & {});
+  summary: string;
+  tags: string[];
+  confidence?: WikiConfidence;
+  /** The workspace does not agree on this page yet. Lint reports it. */
+  contested: boolean;
+  status: WikiPageStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A `[[slug]]` link out of or into a page. `resolved: false` is a broken link. */
+export interface WikiPageLink {
+  slug: string;
+  title?: string;
+  resolved: boolean;
+}
+
+export interface WikiPageDetailDto extends WikiPageDto {
+  body: string;
+  sources: WikiSourceDto[];
+  outbound: WikiPageLink[];
+  inbound: WikiPageLink[];
+  passages?: WikiPassageDto[];
+}
+
+export interface WikiSourceDto {
+  id: string;
+  workspaceId: string;
+  createdBy?: string;
+  kind: WikiSourceKind | (string & {});
+  title: string;
+  sourceUrl: string;
+  sha256: string;
+  sizeBytes: number;
+  createdAt: string;
+  /** Set on a source that came from a drive file, not from pasted text. */
+  fileId?: string;
+  mimeType?: string;
+  pageCount?: number;
+  /** Indexing is queued: `pending` → `ready`, or `failed` with `indexError`. */
+  indexStatus?: string;
+  indexError?: string;
+}
+
+export interface WikiSourceDetailDto extends WikiSourceDto {
+  body: string;
+  /** The pages compiled from this source. */
+  pages: WikiPageDto[];
+}
+
+/**
+ * One retrieved chunk of an attached document — what `ask` answers with.
+ * `link` points back at the page and passage so a citation is clickable.
+ */
+export interface WikiPassageDto {
+  kind: string;
+  text: string;
+  /** The source's title, ready to be cited. */
+  source: string;
+  sourceId: string;
+  fileId?: string;
+  headingPath?: string;
+  pageNumber?: number;
+  imageUrl?: string;
+  link?: string;
+  score: number;
+}
+
+export interface WikiCatalogEntry {
+  slug: string;
+  title: string;
+  summary: string;
+  status: WikiPageStatus;
+  tags: string[];
+  updatedAt: string;
+}
+
+/** The whole wiki, grouped by page type. Generated per request. */
+export interface WikiCatalogDto {
+  totalPages: number;
+  sections: Record<string, WikiCatalogEntry[]>;
+}
+
+export interface WikiPageMatchDto {
+  slug: string;
+  title: string;
+  type: WikiPageType | (string & {});
+  summary: string;
+  status: WikiPageStatus;
+  rank: number;
+}
+
+export interface WikiLintFinding {
+  kind: string;
+  severity: string;
+  /** The page slug or tag the finding is about. */
+  subject: string;
+  detail: string;
+}
+
+export interface WikiLintReportDto {
+  totalPages: number;
+  totalSources: number;
+  findings: WikiLintFinding[];
+  lintedAt: string;
+}
+
+/** The house style every page is held to, and what lint measures against. */
+export interface WikiSettingsDto {
+  workspaceId: string;
+  domain: string;
+  conventions: string;
+  taxonomy: string[];
+  lintedAt?: string;
+}
+
+export interface WikiLogEntryDto {
+  id: string;
+  userId?: string;
+  action: string;
+  subject: string;
+  details: Record<string, unknown>;
+  createdAt: string;
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ErpClient } from "../src/client";
 import {
   DryRunUnsupportedError,
+  ErpApiError,
   UnknownWorkflowError,
   WorkflowDefinitionError,
   WorkflowRunFailedError,
@@ -316,5 +317,131 @@ describe("run status helpers", () => {
   it("survives an output that is not the JSON it expects", () => {
     expect(runResult(run({ output: "not json" }))).toBeUndefined();
     expect(runLogs(run())).toEqual([]);
+  });
+});
+
+describe("check", () => {
+  it("answers valid without storing anything", async () => {
+    const http = new FakeHttp({ "POST /workflows/check": [{ valid: true }] });
+    const report = await new WorkflowsApi(http).check(CODE);
+
+    expect(report.valid).toBe(true);
+    expect(http.calls).toHaveLength(1);
+    expect(http.body(0)).toEqual({ code: CODE });
+  });
+
+  it("reads the line and column back out of a rejection", async () => {
+    const http = new FakeHttp({
+      "POST /workflows/check": [
+        new ErpApiError(
+          400,
+          'Workflow code is invalid: Expected ";" (line 12, column 8)',
+        ),
+      ],
+    });
+    const report = await new WorkflowsApi(http).check(CODE);
+
+    expect(report).toEqual({
+      valid: false,
+      error: { message: 'Expected ";"', line: 12, column: 8 },
+    });
+  });
+
+  it("keeps a rejection with no position as a plain message", async () => {
+    const http = new FakeHttp({
+      "POST /workflows/check": [
+        new ErpApiError(
+          400,
+          'Workflow code is invalid: Module "node:fs" is not available',
+        ),
+      ],
+    });
+    const report = await new WorkflowsApi(http).check("main()");
+
+    expect(report.valid).toBe(false);
+    expect(report.error?.message).toBe('Module "node:fs" is not available');
+    expect(report.error?.line).toBeUndefined();
+  });
+
+  it("still throws when the runner itself is down", async () => {
+    const http = new FakeHttp({
+      "POST /workflows/check": [
+        new ErpApiError(503, "Workflow runner is not working"),
+      ],
+    });
+    await expect(new WorkflowsApi(http).check(CODE)).rejects.toBeInstanceOf(
+      ErpApiError,
+    );
+  });
+});
+
+describe("test run", () => {
+  it("sends the code, the input and no workflow when there is none", async () => {
+    const http = new FakeHttp({
+      "POST /workflows/test-run": [
+        {
+          ok: true,
+          dryRun: true,
+          result: { rows: 3 },
+          logs: ["x"],
+          durationMs: 42,
+        },
+      ],
+    });
+    const result = await new WorkflowsApi(http).testRun({
+      code: CODE,
+      input: { date: "2026-08-28" },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(http.body(0)).toEqual({
+      code: CODE,
+      input: { date: "2026-08-28" },
+      workflowId: undefined,
+    });
+  });
+
+  it("a script that threw is an answer, not a rejection", async () => {
+    const http = new FakeHttp({
+      "POST /workflows/test-run": [
+        {
+          ok: false,
+          dryRun: true,
+          logs: ["bắt đầu"],
+          durationMs: 8,
+          error: { message: "x is not defined", line: 4, column: 3 },
+        },
+      ],
+    });
+    const result = await new WorkflowsApi(http).testRun({ code: CODE });
+
+    expect(result.ok).toBe(false);
+    expect(result.error?.line).toBe(4);
+  });
+
+  it("refuses code with no main() before spending a runner slot", async () => {
+    await expect(
+      new WorkflowsApi(new FakeHttp({})).testRun({ code: "const a = 1" }),
+    ).rejects.toBeInstanceOf(WorkflowDefinitionError);
+  });
+
+  it("runs as the workflow — its env — and rehearses even in development", async () => {
+    const http = new FakeHttp({
+      "GET /workflows": [[workflow()]],
+      "GET /workflows/wf-1": [workflow()],
+      "POST /workflows/test-run": [{ ok: true, dryRun: true, durationMs: 5 }],
+    });
+    const handle = await new WorkflowsApi(http, { dryRun: true }).handle(
+      "wf-1",
+    );
+
+    const result = await handle.testRun(undefined, { date: "2026-08-28" });
+
+    expect(result.ok).toBe(true);
+    expect(http.writeBodies()[0]).toEqual({
+      code: CODE,
+      input: { date: "2026-08-28" },
+      workflowId: "wf-1",
+    });
   });
 });

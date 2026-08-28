@@ -11,6 +11,7 @@ const meta: ObjectDto = {
   id: "obj-1",
   workspaceId: "ws-1",
   name: "Đơn hàng",
+  groups: [],
   position: 0,
   createdAt: "",
   updatedAt: "",

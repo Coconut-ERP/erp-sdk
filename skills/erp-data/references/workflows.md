@@ -18,7 +18,8 @@ Anything not in that list — **including `node:fs`** — is off-limits.
 
 Secrets are read from `process.env.NAME` (set via `setEnv`).
 
-Writing/editing the code itself (runtime, limits, `check`/`test-run`) → **`erp-workflow`** skill.
+Writing/editing the code itself (runtime, limits, `workflows.check`/`workflows.testRun`) →
+**`erp-workflow`** skill.
 
 ## Lifecycle
 
