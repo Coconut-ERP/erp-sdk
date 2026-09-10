@@ -51,11 +51,12 @@ không được đọc. Chi tiết và các bẫy: [03 — Dữ liệu](03-du-li
 | `sql(sql, { params?, values? })` | Chạy một `SELECT` read-only trên tên bảng/cột hiển thị → `QueryResult`. Chi tiết: [11](11-truy-van-sql-dashboard.md) |
 | `dashboards` | `DashboardsApi` (thuộc tính) — dashboard và query đã lưu |
 | `dashboard(nameOrId)` | `DashboardHandle` kèm query của nó; không thấy → `UnknownDashboardError` |
-| `workflows` | `WorkflowsApi` (thuộc tính) — script chạy trên server |
+| `workflows` | `WorkflowsApi` (thuộc tính) — tự động hoá chạy trên server: script hoặc agent |
 | `workflow(nameOrId)` | `WorkflowHandle` (đã nạp `code`); không thấy → `UnknownWorkflowError`. Không cache: version đổi sau mỗi lần ghi |
 | `files` | `FilesApi` (thuộc tính) — drive của workspace. Chi tiết: [13](13-tep-va-thu-muc.md) |
 | `wiki` | `WikiApi` (thuộc tính) — wiki + RAG. Chi tiết: [14](14-wiki.md) |
 | `wikiPage(slug)` | `WikiPageHandle`; sai slug → `UnknownWikiPageError` |
+| `conversations` | `ConversationsApi` (thuộc tính) — hội thoại copilot, chỉ đọc; nơi agent workflow để lại kết quả |
 | `objects(refresh?)` | `ObjectDto[]` mọi object trong workspace. Cache |
 | `object(nameOrId)` | `ObjectHandle` — resolve theo id, tên, tên không phân biệt hoa thường. Không thấy → `UnknownObjectError`. Cache |
 | `hasObject(nameOrId)` | `boolean` |
@@ -262,24 +263,25 @@ Chi tiết: [12 — Workflow](12-workflow.md).
 | `list({ limit?, offset? })` | `WorkflowDto[]`, mới nhất trước — **không kèm `code`** |
 | `listAll({ pageSize?, maxPages? })` | Đi hết offset cho tới trang ngắn/rỗng |
 | `get(id)` | Định nghĩa đầy đủ kèm `code` |
-| `create(spec)` | `{ name, code, trigger, description?, env? }` → `WorkflowHandle` ở trạng thái **draft** |
+| `create(spec)` | Script: `{ name, code, trigger, description?, env? }`. Agent: `{ name, kind: "agent", prompt, trigger, description? }` — không nhận `code`, không nhận `env`. Cả hai → `WorkflowHandle` ở trạng thái **draft** |
 | `handle(nameOrId)` | Resolve theo tên như object → `WorkflowHandle` |
 | `check(code)` | Transpile rồi vứt đi, **không lưu gì** → `{ valid, error? { message, line?, column? } }`. Code sai **không** throw; chỉ throw khi request hỏng (403, 503 runner chết) |
 | `testRun({ code, input?, workflowId? })` | Chạy code chưa lưu trong runner thật → `WorkflowTestRunDto { ok, dryRun: true, result?, logs?, durationMs, error? }`. `ok: false` là script lỗi trên response 200. Tối đa 1 phút. Không bị chặn ở chế độ development |
 
 **`WorkflowHandle`** — `id`, `name`, `version`, `status`, `isPublished`,
-`trigger`, `webhookUrl`, `code`, `envNames`, `meta`
+`trigger`, `webhookUrl`, `code`, `envNames`, `meta`, `kind`, `isAgent`,
+`prompt`
 
 | Method | Mô tả |
 | --- | --- |
-| `update(changes)` | `{ name?, description?, trigger?, code?, version? }`; thiếu `version` thì lấy của handle. Mọi thay đổi đưa workflow **về draft** |
+| `update(changes)` | `{ name?, description?, trigger?, code?, prompt?, kind?, version? }`; thiếu `version` thì lấy của handle. Mọi thay đổi đưa workflow **về draft**. Đổi `kind` phải gửi kèm nội dung mới trong cùng lệnh |
 | `publish(version?)` | Draft → active |
-| `setEnv(env)` | **Thay cả map**; `WORKFLOW_ENV_KEEP` (`"[KEEP]"`) giữ giá trị không đọc lại được; ≤ 50 entry |
-| `run(input?, { dryRun? })` | Đưa vào hàng đợi → `WorkflowRunDto` (`ENQUEUED`). Ở chế độ development ném `DryRunUnsupportedError` |
+| `setEnv(env)` | **Thay cả map**; `WORKFLOW_ENV_KEEP` (`"[KEEP]"`) giữ giá trị không đọc lại được; ≤ 50 entry. Agent workflow không có env → `WorkflowDefinitionError` |
+| `run(input?, { dryRun? })` | Đưa vào hàng đợi → `WorkflowRunDto` (`ENQUEUED`). Ở chế độ development ném `DryRunUnsupportedError`. Agent workflow: mở hội thoại ẩn rồi kết thúc, cần thêm quyền `ai:create` |
 | `waitForRun(runId, { timeoutMs?, intervalMs?, throwOnError? })` | Poll đến khi xong; `ERROR` → `WorkflowRunFailedError`, hết giờ → `WorkflowRunTimeoutError` (run **vẫn chạy**) |
 | `runAndWait(input?, options?)` | `run` + `waitForRun` |
-| `check(code?)` | `WorkflowsApi.check`; bỏ trống thì kiểm code workflow đang giữ |
-| `testRun(code?, input?)` | `WorkflowsApi.testRun` **dưới danh nghĩa workflow này** — env đã lưu và shared variable của nó được đưa cho script. Cần quyền `manage`. Không lưu gì, không đổi version |
+| `check(code?)` | `WorkflowsApi.check`; bỏ trống thì kiểm code workflow đang giữ. Agent workflow → `WorkflowDefinitionError` |
+| `testRun(code?, input?)` | `WorkflowsApi.testRun` **dưới danh nghĩa workflow này** — env đã lưu và shared variable của nó được đưa cho script. Cần quyền `manage`. Không lưu gì, không đổi version. Agent workflow → `WorkflowDefinitionError` |
 | `runs({ limit?, offset? })` · `getRun(runId)` | Lịch sử run |
 | `sharing()` · `setSharing(visibility, entries?)` · `delete(version?)` · `refresh()` | |
 
@@ -287,10 +289,13 @@ Chi tiết: [12 — Workflow](12-workflow.md).
 | --- | --- |
 | `runOutput(run)` | Parse `run.output` (chuỗi JSON) → `{ workflowId, version, result, logs, durationMs }` |
 | `runResult(run)` · `runLogs(run)` | Lối tắt lấy giá trị `main()` trả về / các dòng log |
+| `agentRunResult(run)` | `{ conversationId, turnId }` của một agent run, `undefined` nếu không phải |
 | `isRunFinished(status)` · `WORKFLOW_RUN_PENDING_STATUSES` | `ENQUEUED` · `PENDING` là chưa xong; `SUCCESS` · `ERROR` là xong |
 | `WORKFLOW_TRIGGER_TYPES` | `manual`, `cron`, `webhook` |
+| `WORKFLOW_KINDS` | `code`, `agent` |
 | `MAX_TEST_RUN_MS` | 60 000 — trần cứng của một test run |
-| `assertWorkflowTrigger` · `assertWorkflowCode` · `assertWorkflowEnv` | Kiểm phía client → `WorkflowDefinitionError` |
+| `assertWorkflowTrigger` · `assertWorkflowCode` · `assertWorkflowEnv` · `assertWorkflowPrompt` | Kiểm phía client → `WorkflowDefinitionError` |
+| `workflowPromptChars(prompt)` · `MAX_WORKFLOW_PROMPT_CHARS` | Đếm ký tự theo code point · 8 000 |
 | `WORKFLOW_ENV_KEEP` · `MAX_WORKFLOW_ENV_ENTRIES` | `"[KEEP]"` · 50 |
 
 **`WorkflowVariablesApi`** (`erp.variables`) — kho key/value dùng chung cho
@@ -310,6 +315,19 @@ workflow. Chi tiết: [12 — Workflow §4b](12-workflow.md).
 | --- | --- |
 | `assertWorkflowVariableKey(key)` | Kiểm phía client → `WorkflowDefinitionError` |
 | `MAX_WORKFLOW_VARIABLE_LENGTH` · `MAX_WORKFLOW_VARIABLE_WORKFLOWS` | 16 384 ký tự · 100 workflow |
+
+## Conversations (copilot)
+
+Chỉ đọc, và chỉ hội thoại **của chính caller**. Đây là nơi đọc lại việc mà một
+agent workflow đã giao đi. Chi tiết: [12 — Workflow §1b](12-workflow.md).
+
+**`ConversationsApi`** (`erp.conversations`)
+
+| Method | Mô tả |
+| --- | --- |
+| `list({ visibility?, page?, perPage? })` | `{ conversations, meta }`. `visibility`: `visible` (mặc định) \| `hidden` \| `all`; giá trị lạ → 400 |
+| `listAll({ visibility?, perPage? })` | Đi hết `meta.totalPages` |
+| `get(conversationId)` | `ConversationDetailDto` — toàn bộ transcript, kèm `activeTurn` khi agent còn đang làm |
 
 ## Files (drive)
 
@@ -456,7 +474,12 @@ string tuỳ ý) · `Action` (`"create" | "read" | "update" | "delete" | "manage
 `FieldType` · `DeclarableFieldType` · `PageMeta` · `Paged` ·
 `WorkflowDto` · `WorkflowTrigger` · `WorkflowTriggerType` · `CronTriggerConfig` ·
 `WorkflowStatus` · `WorkflowRunDto` · `WorkflowRunStatus` · `WorkflowRunOutput` ·
-`WorkflowSpec` · `WorkflowChanges` · `WaitForRunOptions` · `DashboardDto` ·
+`WorkflowSpec` (`CodeWorkflowSpec` \| `AgentWorkflowSpec`) · `WorkflowChanges` ·
+`WorkflowKind` · `AgentRunResult` · `ConversationDto` ·
+`ConversationDetailDto` · `ConversationMessageDto` ·
+`ConversationToolStepDto` · `ConversationAttachmentDto` ·
+`ConversationActiveTurnDto` · `ConversationVisibility` ·
+`ConversationListOptions` · `WaitForRunOptions` · `DashboardDto` ·
 `DashboardQueryDto` · `QueryResultDto` · `QueryParamSpec` · `QueryParamType` ·
 `QuerySpec` · `QueryChanges` · `SqlOptions` · `ChartType` · `SharingDto` ·
 `SharingEntry` · `SharingVisibility` · `SharingAccess` · `SharingSubjectType` ·

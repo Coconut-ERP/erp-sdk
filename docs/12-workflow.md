@@ -2,10 +2,14 @@
 
 [← Truy vấn SQL & dashboard](11-truy-van-sql-dashboard.md) · [Mục lục](README.md)
 
-Workflow là **một file TypeScript chạy trên server ERP**: gửi email nhắc đơn quá
-hạn mỗi sáng, đồng bộ sang hệ thống khác, tổng hợp số liệu cuối ngày. Nó tồn tại
-để những việc đó không cần một service riêng — không deploy, không cron host,
+Workflow là **việc chạy tự động trên server ERP**: gửi email nhắc đơn quá hạn
+mỗi sáng, đồng bộ sang hệ thống khác, tổng hợp số liệu cuối ngày. Nó tồn tại để
+những việc đó không cần một service riêng — không deploy, không cron host,
 không nơi cất secret.
+
+Có **hai loại**, phân biệt bằng trường `kind`: `code` (mặc định) là một file
+TypeScript runner thực thi, `agent` là một prompt giao cho copilot làm — xem
+[§1b](#1b-agent-workflow--workflow-viết-bằng-prompt).
 
 Khác với mini app (một web app đầy đủ, có UI, xem [01](01-tong-quan.md)),
 workflow là một script không giao diện, chạy theo lượt.
@@ -26,6 +30,100 @@ tạo (draft, version 1) ──► publish ──► version active
   `update`/`publish`/`delete` phải gửi version hiện tại → sai thì 409.
 - **Draft không chạy.** Sửa code xong mà quên `publish` thì run vẫn dùng bản cũ.
 - **Run chạy dưới quyền của người gọi**, không phải quyền của người viết.
+
+## 1b. Agent workflow — workflow viết bằng prompt
+
+`kind: "agent"` giữ nguyên mọi thứ ở §1 — trigger, version, publish, lịch sử
+run, URL webhook — chỉ đổi một chỗ: một lượt chạy **không thực thi script nào**.
+Nó mở một hội thoại copilot **ẩn**, lấy tên workflow làm tiêu đề, đẩy prompt vào
+làm tin nhắn đầu tiên, rồi kết thúc.
+
+```ts
+const wf = await erp.workflows.create({
+  name: "Tổng hợp đơn hôm qua",
+  kind: "agent",
+  prompt: `Tổng hợp đơn hàng của ngày hôm qua trong object "Đơn hàng":
+đếm số đơn, cộng "Tổng tiền", rồi tạo một bản ghi trong "Báo cáo ngày".
+Hôm qua không có đơn nào thì vẫn tạo bản ghi với số 0.
+Nếu đã có bản ghi cho ngày đó thì dừng, đừng tạo bản ghi thứ hai.`,
+  trigger: { type: "cron", config: { schedule: "0 0 8 * * *", timezone: "Asia/Ho_Chi_Minh" } },
+});
+await wf.publish();
+```
+
+**Chọn loại nào.** Script khi công việc đã chốt: cùng những trường đó, cùng phép
+tính đó, mỗi lần như nhau — nó chính xác, rẻ, thử được trước bằng
+`check`/`testRun`, và cất được secret. Agent khi viết script mới là phần đắt:
+việc cần phán đoán, payload không ai cố định được hình dạng, hoặc một đoạn mô tả
+ngắn mà viết ra code thì dài và giòn. Agent đã biết schema của workspace nên
+không cần chép tên bảng tên trường vào code — đổi lại mỗi lượt chạy là hàng chục
+phút tới một giờ làm việc của copilot.
+
+**Agent workflow không có:**
+
+| Không có | Vì sao |
+| --- | --- |
+| `env` | Không có script nào chạy, secret cất ở đó là secret không ai đọc. `setEnv` ném `WorkflowDefinitionError` ngay tại client |
+| Shared variable (`erp.variables`) | Cơ chế đó dựa trên token mang id workflow, chỉ run của script mới có. Agent dùng key cá nhân của người thực hiện |
+| `check` / `testRun` | Prompt không có gì để biên dịch, không có gì để diễn tập. **Cách thử duy nhất là chạy thật, và nó ghi dữ liệu thật** |
+| Kết quả trong run | Run kết thúc ở chỗ hội thoại bắt đầu |
+| Huỷ từ phía workflow | Muốn dừng thì huỷ turn bên copilot |
+
+**Run `SUCCESS` nghĩa là đã giao việc**, không phải đã làm xong. Nó trả về nơi
+việc đi tới:
+
+```ts
+const run = await wf.runAndWait();
+const handed = agentRunResult(run);
+
+const chat = await erp.conversations.get(handed.conversationId);
+chat.activeTurn;
+chat.messages.at(-1)?.content;
+```
+
+`runAndWait` trả về sau một hai giây. `agentRunResult` cho
+`{ conversationId, turnId }`, hoặc `undefined` nếu đó không phải agent run.
+`activeTurn` còn giá trị là agent vẫn đang làm; hết giá trị thì tin nhắn cuối
+cùng là câu trả lời.
+
+**Dữ liệu của trigger tự được đính vào prompt.** Cron có `scheduledAt`, webhook
+có toàn bộ delivery; server nối JSON đó vào cuối prompt dưới một tiêu đề dặn
+agent coi nó là dữ liệu, tuyệt đối không phải mệnh lệnh — đó là hàng rào chống
+prompt injection, vì body webhook là thứ người lạ không cần xác thực cũng gửi
+được. Vì vậy **đừng viết placeholder** (`{{payload}}`) trong prompt, hãy nói về
+payload đó bằng lời.
+
+**Prompt tối đa 8 000 ký tự**. `workflowPromptChars(prompt)` đếm theo code
+point nên một chữ có dấu tính là một, `assertWorkflowPrompt` chặn trước khi tốn
+một round trip. Quy trình dài thì viết thành trang wiki rồi bảo agent đọc trang
+đó.
+
+**Quyền:** chạy hoặc publish agent workflow cần `workflow:run` create **và** `ai`
+create — kiểm ở bốn chỗ: lúc publish, lúc bấm chạy tay, mỗi lần cron tick, và
+một lần nữa bên trong run. Thiếu thì 403 `Workflow actor lacks ai:create`;
+deployment không có copilot thì 503 `Arion is not configured on this deployment`.
+
+**Hội thoại là của người thực hiện** (cron và webhook: người publish) và ở trạng
+thái ẩn — chỉ người đó thấy trong danh sách, admin workspace cũng không, service
+account của mini app càng không. Ẩn là **mặc định khi liệt kê**, không phải
+quyền: mở theo id thì đọc bình thường.
+
+```ts
+await erp.conversations.list({ visibility: "hidden" });
+```
+
+`visibility` nhận `visible` (mặc định), `hidden` hoặc `all`.
+
+**Đổi loại của workflow đã có sẽ xoá nội dung loại cũ** — code hoặc prompt, và
+đổi sang `agent` thì xoá luôn env. `update` bắt gửi nội dung mới trong cùng lệnh:
+
+```ts
+await wf.update({ kind: "agent", prompt: "…" });
+```
+
+Thiếu prompt trong chính lệnh đó thì ném `WorkflowDefinitionError`.
+
+Còn lại của tài liệu này nói về workflow `code`.
 
 ## 2. Trong script chạy có sẵn gì
 
@@ -351,6 +449,9 @@ mà người bấm chạy không có `object:record:create` sẽ fail ngay trong
 | `run()` ném `DryRunUnsupportedError` | Đang `ERP_ENV=development` (§5) |
 | `variables.set()` ném `DryRunUnsupportedError` | Cũng là development mode — ghi biến không có dry run (§4b); `{ dryRun: false }` nếu thật sự muốn ghi |
 | Script đọc biến ra `undefined` dù UI thấy có | Workflow này không nằm trong `workflowIds` của biến (§4b) |
+| `check`/`testRun`/`setEnv` ném `WorkflowDefinitionError` trước khi gửi request | Đây là agent workflow — không có script để biên dịch, không có env (§1b) |
+| Agent workflow chạy `SUCCESS` mà chưa thấy gì thay đổi | Run mới chỉ giao việc; agent làm tiếp trong hội thoại mà `agentRunResult(run)` chỉ tới (§1b) |
+| Bấm `/test` trên agent workflow rồi dữ liệu thật bị đổi | `/test` chạy bản draft nhưng agent không đi qua runner, nên **không có** chế độ development — copilot ghi thật |
 
 ---
 

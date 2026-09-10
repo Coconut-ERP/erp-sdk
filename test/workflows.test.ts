@@ -10,12 +10,15 @@ import {
 } from "../src/errors";
 import type { WorkflowDto, WorkflowRunDto } from "../src/types";
 import {
+  agentRunResult,
   isRunFinished,
+  MAX_WORKFLOW_PROMPT_CHARS,
   runLogs,
   runResult,
   WORKFLOW_ENV_KEEP,
   WorkflowHandle,
   WorkflowsApi,
+  workflowPromptChars,
 } from "../src/workflows";
 import { FakeHttp } from "./helpers/http";
 
@@ -27,6 +30,7 @@ function workflow(overrides: Partial<WorkflowDto> = {}): WorkflowDto {
     workspaceId: "ws-1",
     name: "Nhắc đơn quá hạn",
     description: "",
+    kind: "code",
     status: "active",
     visibility: "workspace",
     trigger: { type: "manual" },
@@ -443,5 +447,191 @@ describe("test run", () => {
       input: { date: "2026-08-28" },
       workflowId: "wf-1",
     });
+  });
+});
+
+function agentWorkflow(overrides: Partial<WorkflowDto> = {}): WorkflowDto {
+  return workflow({
+    id: "wf-2",
+    name: "Tổng hợp đơn hôm qua",
+    kind: "agent",
+    code: undefined,
+    prompt: "Tổng hợp đơn hàng hôm qua rồi ghi vào bảng Báo cáo ngày.",
+    env: {},
+    trigger: {
+      type: "cron",
+      config: { schedule: "0 0 8 * * *", timezone: "Asia/Ho_Chi_Minh" },
+    },
+    ...overrides,
+  });
+}
+
+describe("agent workflows", () => {
+  it("creates one from a prompt, and sends no code", async () => {
+    const http = new FakeHttp({ "POST /workflows": [agentWorkflow()] });
+
+    const handle = await new WorkflowsApi(http).create({
+      name: "Tổng hợp đơn hôm qua",
+      kind: "agent",
+      prompt: "Tổng hợp đơn hàng hôm qua rồi ghi vào bảng Báo cáo ngày.",
+      trigger: {
+        type: "cron",
+        config: { schedule: "0 0 8 * * *", timezone: "Asia/Ho_Chi_Minh" },
+      },
+    });
+
+    expect(handle.isAgent).toBe(true);
+    expect(handle.prompt).toContain("Báo cáo ngày");
+    expect(http.body(0)).toMatchObject({ kind: "agent" });
+    expect(http.body(0).code).toBeUndefined();
+  });
+
+  it("still creates script workflows as code, with no prompt", async () => {
+    const http = new FakeHttp({ "POST /workflows": [workflow()] });
+
+    const handle = await new WorkflowsApi(http).create({
+      name: "Nhắc đơn quá hạn",
+      code: CODE,
+      trigger: { type: "manual" },
+    });
+
+    expect(handle.kind).toBe("code");
+    expect(http.body(0)).toMatchObject({ kind: "code", code: CODE });
+    expect(http.body(0).prompt).toBeUndefined();
+  });
+
+  it("refuses an empty prompt and one over the character cap", async () => {
+    const api = new WorkflowsApi(new FakeHttp({}));
+    const spec = {
+      name: "x",
+      kind: "agent",
+      trigger: { type: "manual" },
+    } as const;
+
+    await expect(api.create({ ...spec, prompt: "  " })).rejects.toBeInstanceOf(
+      WorkflowDefinitionError,
+    );
+    await expect(
+      api.create({
+        ...spec,
+        prompt: "đ".repeat(MAX_WORKFLOW_PROMPT_CHARS + 1),
+      }),
+    ).rejects.toBeInstanceOf(WorkflowDefinitionError);
+  });
+
+  it("counts the cap in characters, so dấu costs one each", async () => {
+    const http = new FakeHttp({ "POST /workflows": [agentWorkflow()] });
+    const prompt = "đ".repeat(MAX_WORKFLOW_PROMPT_CHARS);
+
+    expect(workflowPromptChars(prompt)).toBe(MAX_WORKFLOW_PROMPT_CHARS);
+    await expect(
+      new WorkflowsApi(http).create({
+        name: "x",
+        kind: "agent",
+        prompt,
+        trigger: { type: "manual" },
+      }),
+    ).resolves.toBeInstanceOf(WorkflowHandle);
+  });
+
+  it("refuses env on an agent workflow, at create and at setEnv", async () => {
+    const http = new FakeHttp({
+      "GET /workflows": [[agentWorkflow()]],
+      "GET /workflows/wf-2": [agentWorkflow()],
+    });
+    const api = new WorkflowsApi(http);
+
+    await expect(
+      api.create({
+        name: "x",
+        kind: "agent",
+        prompt: "làm gì đó",
+        trigger: { type: "manual" },
+        env: { BOT_TOKEN: "t" },
+      } as never),
+    ).rejects.toBeInstanceOf(WorkflowDefinitionError);
+
+    const handle = await api.handle("wf-2");
+    await expect(handle.setEnv({ BOT_TOKEN: "t" })).rejects.toBeInstanceOf(
+      WorkflowDefinitionError,
+    );
+  });
+
+  it("refuses check and testRun — a prompt has nothing to rehearse", async () => {
+    const http = new FakeHttp({
+      "GET /workflows": [[agentWorkflow()]],
+      "GET /workflows/wf-2": [agentWorkflow()],
+    });
+    const handle = await new WorkflowsApi(http).handle("wf-2");
+
+    await expect(handle.check()).rejects.toBeInstanceOf(
+      WorkflowDefinitionError,
+    );
+    await expect(handle.testRun()).rejects.toBeInstanceOf(
+      WorkflowDefinitionError,
+    );
+  });
+
+  it("refuses code on an agent workflow and a prompt on a script one", async () => {
+    const http = new FakeHttp({
+      "GET /workflows": [[workflow(), agentWorkflow()]],
+      "GET /workflows/wf-1": [workflow()],
+      "GET /workflows/wf-2": [agentWorkflow()],
+    });
+    const api = new WorkflowsApi(http);
+
+    const script = await api.handle("wf-1");
+    await expect(script.update({ prompt: "làm gì đó" })).rejects.toBeInstanceOf(
+      WorkflowDefinitionError,
+    );
+
+    const agent = await api.handle("wf-2");
+    await expect(agent.update({ code: CODE })).rejects.toBeInstanceOf(
+      WorkflowDefinitionError,
+    );
+  });
+
+  it("will not switch kind without the replacement content in the same call", async () => {
+    const http = new FakeHttp({
+      "GET /workflows": [[workflow()]],
+      "GET /workflows/wf-1": [workflow()],
+      "PUT /workflows/wf-1": [agentWorkflow({ id: "wf-1", version: 3 })],
+    });
+    const handle = await new WorkflowsApi(http).handle("wf-1");
+
+    await expect(handle.update({ kind: "agent" })).rejects.toBeInstanceOf(
+      WorkflowDefinitionError,
+    );
+
+    await handle.update({ kind: "agent", prompt: "làm gì đó" });
+    expect(http.body(2)).toMatchObject({
+      kind: "agent",
+      prompt: "làm gì đó",
+      version: 2,
+    });
+    expect(handle.isAgent).toBe(true);
+  });
+
+  it("reads where a run sent the work, out of the JSON string output", async () => {
+    const started = run({
+      status: "SUCCESS",
+      output: JSON.stringify({
+        workflowId: "wf-2",
+        version: 3,
+        result: { conversationId: "conv-1", turnId: "turn-1" },
+        durationMs: 12,
+      }),
+    });
+
+    expect(agentRunResult(started)).toEqual({
+      conversationId: "conv-1",
+      turnId: "turn-1",
+    });
+    expect(agentRunResult(run({ status: "SUCCESS" }))).toBeUndefined();
+    expect(
+      agentRunResult(
+        run({ output: JSON.stringify({ result: { checked: 3 } }) }),
+      ),
+    ).toBeUndefined();
   });
 });

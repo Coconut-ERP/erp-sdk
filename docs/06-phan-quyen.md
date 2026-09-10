@@ -52,6 +52,8 @@ Tra cứu nhanh — thao tác nào cần quyền gì:
 | links | `object:record: read`/`update` trên bảng nguồn |
 | `erp.sql`, dashboard, query đã lưu | `dashboard: read` (+ `dashboard:query: …` khi ghi) |
 | `erp.workflows.*`, `check`, `testRun`, chạy workflow | `workflow: …`, và `workflow:run: create` cho `testRun`/`run` |
+| Chạy hoặc publish **agent workflow** | như trên, **cộng** `ai: create` — thiếu thì 403 `Workflow actor lacks ai:create` |
+| `erp.conversations.*` — đọc hội thoại copilot | `ai: read`; và chỉ thấy hội thoại của chính mình |
 | `erp.files.*` — thư mục, upload, tải, thùng rác | `file: create/read/update/delete`; cây **Public** cần thêm `file:public: …` |
 | `erp.wiki` — catalog, page, search, `ask`, log | `wiki: read` |
 | Tạo/sửa trang, nạp source, gắn tệp | `wiki: create` / `update` |

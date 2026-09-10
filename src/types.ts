@@ -312,11 +312,14 @@ export interface WebhookInput {
 /** `draft` until published; `active` once a version is live. */
 export type WorkflowStatus = "draft" | "active" | (string & {});
 
+export type WorkflowKind = "code" | "agent";
+
 export interface WorkflowDto {
   id: string;
   workspaceId: string;
   name: string;
   description: string;
+  kind: WorkflowKind;
   status: WorkflowStatus;
   visibility: SharingVisibility;
   trigger: WorkflowTrigger;
@@ -329,6 +332,7 @@ export interface WorkflowDto {
   webhookUrl?: string;
   /** Only on the detail endpoint — the list omits it. */
   code?: string;
+  prompt?: string;
   /** Names only: every value comes back as `***`, never readable. */
   env: Record<string, string>;
   /** Optimistic lock — every mutation bumps it, and update/publish/delete need it. */
@@ -382,6 +386,11 @@ export interface WorkflowVariableDto {
   updatedBy: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AgentRunResult {
+  conversationId: string;
+  turnId: string;
 }
 
 /** What the runner packs into {@link WorkflowRunDto.output}. */
@@ -721,4 +730,49 @@ export interface WikiLogEntryDto {
   subject: string;
   details: Record<string, unknown>;
   createdAt: string;
+}
+
+export type ConversationVisibility = "visible" | "hidden" | "all";
+
+export interface ConversationDto {
+  id: string;
+  title: string;
+  hidden: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConversationToolStepDto {
+  name: string;
+  arguments: string;
+  result?: string;
+  error?: string;
+  specialist?: string;
+  durationMs: number;
+}
+
+export interface ConversationAttachmentDto {
+  fileId: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+export interface ConversationMessageDto {
+  id: string;
+  role: string;
+  content: string;
+  steps: ConversationToolStepDto[];
+  attachments: ConversationAttachmentDto[];
+  createdAt: string;
+}
+
+export interface ConversationActiveTurnDto {
+  id: string;
+  status: string;
+}
+
+export interface ConversationDetailDto extends ConversationDto {
+  messages: ConversationMessageDto[];
+  activeTurn?: ConversationActiveTurnDto;
 }

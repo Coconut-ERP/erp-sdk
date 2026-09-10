@@ -1,9 +1,37 @@
 ---
 name: erp-workflow
-description: Write and edit code that runs inside Coconut ERP workflows — a TypeScript file with `async function main(input)` that the ERP server stores and runs on a schedule, when triggered manually, or via webhook. Use when the task involves writing/editing workflow code, `async function main`, workflow sandbox/runtime, which modules can be imported (node:fs is blocked), 6-field cron with seconds, webhooks and signature verification in code, draft/publish/version, `workflows.check` / `workflows.testRun`, workflow write-only env, shared variables/checkpoints between runs (`erp.variables`), runs with ERROR/timeout/no retry, or when users want to "run scheduled scripts on ERP", "send reminder emails each morning", "sync nightly", "automate on ERP". Managing workflows via SDK (create/publish/run/setEnv) is in the erp-data skill; building web apps uses erp-miniapp.
+description: Write what runs inside a Coconut ERP workflow — either a TypeScript file with `async function main(input)` that the ERP runner executes, or the prompt of an **agent workflow**, which hands the job to the ERP copilot instead. Use when the task involves writing/editing workflow code, `async function main`, workflow sandbox/runtime, which modules can be imported (node:fs is blocked), 6-field cron with seconds, webhooks and signature verification in code, draft/publish/version, `workflows.check` / `workflows.testRun`, workflow write-only env, shared variables/checkpoints between runs (`erp.variables`), runs with ERROR/timeout/no retry — and equally when it involves `kind: "agent"`, a workflow written as a prompt, hidden copilot conversations, `ai:create` on a workflow, or choosing between a script and an agent for a scheduled job. Also for "run scheduled scripts on ERP", "send reminder emails each morning", "sync nightly", "automate on ERP". Managing workflows via SDK (create/publish/run/setEnv) is in the erp-data skill; building web apps uses erp-miniapp.
 ---
 
 # Writing ERP Workflow Code
+
+## 0. First: script or agent?
+
+A workflow has a **`kind`**, and it decides what the rest of this skill is worth
+to you:
+
+| `kind` | A run | You write |
+| --- | --- | --- |
+| `code` (default) | executes the stored script in the ERP runner | the TypeScript below |
+| `agent` | opens a hidden copilot conversation and hands it the stored prompt | a prompt, no code |
+
+Triggers, draft/publish/version, webhook URL and run history are **identical**
+for both. Choose `code` when the work is already decided — same fields, same
+arithmetic, every time; it is exact, cheap, rehearsable, and it can hold
+secrets. Choose `agent` when writing the script is the expensive part: the task
+needs judgement, or the payload's shape was never pinned down, or it is one
+paragraph of instructions that would be three hundred brittle lines.
+
+An agent workflow has **no env, no shared variables, no `check`, no
+`testRun`** — the only way to try one is to run it, and it writes real data.
+Its run answers `{ conversationId, turnId }` and finishes there: `SUCCESS`
+means the work was handed over, not that it is done. Running or publishing one
+needs `ai:create` as well as `workflow:run:create`.
+
+**Writing one → `references/agent.md`.** The rest of this file is about script
+workflows.
+
+## 1. Script workflows
 
 Workflows **are not** scripts running on your machine. They are TypeScript files that ERP
 stores and runs in its own runner, within a tight sandbox. Running the file locally with
@@ -61,7 +89,7 @@ URL can start a rehearsal; **reading its logs and result takes the workflow's ow
 This is the only way to prove the verify branch works: `test-run` with hand-typed input means you're faking
 the signature, but `/test` goes through the same HTTP path the provider would take.
 
-## 1. The mandatory loop: check → test-run → save → publish
+## 2. The mandatory loop: check → test-run → save → publish
 
 **Never create a workflow just to see if the code runs.** Two SDK calls save nothing,
 and they're where you fix bugs:
@@ -112,7 +140,7 @@ Only when `ok: true` do you call `erp.workflows.create(...)` then `publish()`. A
 the user before creating/editing/deleting a workflow — it's something that will run
 automatically on real data.
 
-## 2. What's in the sandbox
+## 3. What's in the sandbox
 
 Globals, **no import needed**: `erp` (ErpClient pointing to the right workspace,
 using the run actor's identity), `_` (lodash), `moment`, `axios`, `input`, `env`,
@@ -137,7 +165,7 @@ Anything else → **400 at save time**, including `node:fs`, `node:child_process
 `node:net`, `xlsx`, `csv-parse`. No disk, no child processes. **Outbound network is open** —
 calling third-party APIs is the intended design.
 
-## 3. Hard limits
+## 4. Hard limits
 
 | Item | Limit |
 | --- | --- |
@@ -149,7 +177,7 @@ calling third-party APIs is the intended design.
 | Parallel runs | 4/runner, exceeding that queues and 429s |
 | Workflow name | ≤255, **unique per workspace** |
 
-## 4. Six constraints that shape how you write code
+## 5. Six constraints that shape how you write code
 
 **1. Runs never retry.** Failures or worker restarts mid-run
 (`workflow run was interrupted and is not retried`) have no second chance, and everything already written
@@ -192,7 +220,7 @@ instead of throwing.
 silently loses cents. `numeric` columns from SQL come back as JSON **strings**; pass the string as-is to
 `Decimal`, return results via `.toString()`.
 
-## 5. Traps already paid for
+## 6. Traps already paid for
 
 | Symptom | Cause |
 | --- | --- |
@@ -200,7 +228,7 @@ silently loses cents. `numeric` columns from SQL come back as JSON **strings**; 
 | `Invalid cron schedule` with `"0 9 * * *"` | Cron is **6 fields with seconds**: `"0 0 9 * * *"`. Needs IANA `timezone` too |
 | 409 `Workflow version conflict` | Version is optimistic locking, every mutation (including publish) bumps it → `await wf.refresh()` then retry |
 | Import declared but no error, doesn't run either | Compiler strips unused imports **before** checking the registry |
-| `Module "..." is not available` | Outside the registry in §2 — no way to add more |
+| `Module "..." is not available` | Outside the registry in §3 — no way to add more |
 | Run right after `publish()` returns generic `ERROR` `"Workflow run failed"` | Runner hasn't seen the new version yet, not a code error — wait a few seconds |
 | Secrets vanish after adding a new key | `setEnv` **replaces the whole map**; send old names with `WORKFLOW_ENV_KEEP` (`"[KEEP]"`) |
 | `erp.variables.value(...)` returns `undefined` even though user said they created it | This workflow is not in the variable's `workflowIds` — ask them to grant it, no way to grant yourself |
@@ -211,8 +239,10 @@ silently loses cents. `numeric` columns from SQL come back as JSON **strings**; 
 | Cron tick returns `{ skipped: true, reason }` | Old schedule (workflow edited/unpublished/deleted) — it auto-removes after that tick |
 | `Workflow result is too large` | `main()` returned > 256KB — return aggregates, not entire tables |
 | Reading 0 rows while UI shows data | Row scope is by **actor's** IAM, not filter mistake |
+| `check`/`testRun`/`setEnv` throw `WorkflowDefinitionError` before any request | It's an **agent** workflow — no script to transpile, nothing to rehearse, no env. See `references/agent.md` |
+| Agent run is `SUCCESS` but nothing happened yet | A run only hands the job over; the agent works on afterwards in the conversation `agentRunResult(run)` names |
 
-## 6. Before handoff
+## 7. Before handoff
 
 - [ ] `check` passes, `test-run` `ok: true` with real input.
 - [ ] Running twice in a row doesn't double side effects (idempotent).
@@ -231,6 +261,10 @@ env var names, and what remains to do.
 
 ## References
 
+- `references/agent.md` — agent workflows: choosing between the two kinds,
+  writing a prompt that runs unattended, the 8 000-character cap, how trigger
+  payloads are attached, the `ai:create` permission, and reading the hidden
+  conversation a run opens.
 - `references/runtime.md` — full runtime contract: globals, module registry,
   import rules, how much `process` is locked down, logs/result, error messages.
 - `references/authoring.md` — working code patterns: idempotent, batching by timeout,

@@ -10,11 +10,13 @@ import type { Http } from "./http";
 import type { WriteOptions } from "./objects";
 import { resolveByName } from "./resolve";
 import type {
+  AgentRunResult,
   CronTriggerConfig,
   SharingDto,
   SharingEntry,
   SharingVisibility,
   WorkflowDto,
+  WorkflowKind,
   WorkflowRunDto,
   WorkflowRunOutput,
   WorkflowScriptError,
@@ -29,6 +31,10 @@ export const WORKFLOW_TRIGGER_TYPES: readonly WorkflowTriggerType[] = [
   "cron",
   "webhook",
 ];
+
+export const WORKFLOW_KINDS: readonly WorkflowKind[] = ["code", "agent"];
+
+export const MAX_WORKFLOW_PROMPT_CHARS = 8000;
 
 /** Statuses that mean the run has not finished yet. */
 export const WORKFLOW_RUN_PENDING_STATUSES: readonly string[] = [
@@ -113,6 +119,14 @@ export function runLogs(run: WorkflowRunDto): string[] {
   return runOutput(run)?.logs ?? [];
 }
 
+export function agentRunResult(
+  run: WorkflowRunDto,
+): AgentRunResult | undefined {
+  const result = runResult<Partial<AgentRunResult>>(run);
+  if (!result?.conversationId || !result.turnId) return undefined;
+  return { conversationId: result.conversationId, turnId: result.turnId };
+}
+
 /**
  * Client-side half of what `POST /workflows` validates, so the common mistakes
  * cost no round trip: an unsupported trigger, a five-field cron (the server
@@ -168,6 +182,41 @@ export function assertWorkflowCode(code: string): void {
   }
 }
 
+const AGENT_CARRIES_NO_CODE =
+  "an agent workflow carries a prompt, not code — a run of it opens a copilot " +
+  "conversation, and no script of it is ever executed";
+
+const CODE_CARRIES_NO_PROMPT =
+  'a script workflow carries code, not a prompt — pass kind: "agent" to write ' +
+  "the automation as an instruction instead";
+
+const AGENT_CARRIES_NO_ENV =
+  "an agent workflow runs no script, so it has no env — a secret stored on it " +
+  "would be one nothing can read. The agent works with the actor's own " +
+  "permissions, and other credentials belong in a script workflow it calls";
+
+export function workflowPromptChars(prompt: string): number {
+  return Array.from(prompt).length;
+}
+
+export function assertWorkflowPrompt(prompt: string): void {
+  if (!prompt.trim()) {
+    throw new WorkflowDefinitionError(
+      "prompt",
+      "an agent workflow is its prompt — there is nothing else for it to run",
+    );
+  }
+  const chars = workflowPromptChars(prompt);
+  if (chars > MAX_WORKFLOW_PROMPT_CHARS) {
+    throw new WorkflowDefinitionError(
+      "prompt",
+      `${chars} characters, but at most ${MAX_WORKFLOW_PROMPT_CHARS} are ` +
+        "stored — move the long parts into a wiki page and tell the agent to " +
+        "read it",
+    );
+  }
+}
+
 export function assertWorkflowEnv(env: Record<string, string>): void {
   const names = Object.keys(env);
   if (names.length > MAX_WORKFLOW_ENV_ENTRIES) {
@@ -186,14 +235,28 @@ export function assertWorkflowEnv(env: Record<string, string>): void {
   }
 }
 
-export interface WorkflowSpec {
+interface WorkflowSpecBase {
   name: string;
-  code: string;
   trigger: WorkflowTrigger;
   description?: string;
+}
+
+export interface CodeWorkflowSpec extends WorkflowSpecBase {
+  kind?: "code";
+  code: string;
   /** Secrets the script reads as `env` / `process.env`. Write-only, forever. */
   env?: Record<string, string>;
+  prompt?: never;
 }
+
+export interface AgentWorkflowSpec extends WorkflowSpecBase {
+  kind: "agent";
+  prompt: string;
+  code?: never;
+  env?: never;
+}
+
+export type WorkflowSpec = CodeWorkflowSpec | AgentWorkflowSpec;
 
 /** What {@link WorkflowsApi.check} answers — invalid code included. */
 export interface WorkflowCodeCheck {
@@ -219,6 +282,8 @@ export interface WorkflowChanges {
   description?: string;
   trigger?: WorkflowTrigger;
   code?: string;
+  prompt?: string;
+  kind?: WorkflowKind;
   /** Optimistic lock. Omitted, the handle's current version is used. */
   version?: number;
 }
@@ -374,13 +439,29 @@ export class WorkflowsApi {
    */
   async create(spec: WorkflowSpec): Promise<WorkflowHandle> {
     assertWorkflowTrigger(spec.trigger);
-    assertWorkflowCode(spec.code);
-    if (spec.env) assertWorkflowEnv(spec.env);
+    const kind = spec.kind ?? "code";
+    if (kind === "agent") {
+      if (spec.code !== undefined) {
+        throw new WorkflowDefinitionError("code", AGENT_CARRIES_NO_CODE);
+      }
+      if (spec.env !== undefined) {
+        throw new WorkflowDefinitionError("env", AGENT_CARRIES_NO_ENV);
+      }
+      assertWorkflowPrompt(spec.prompt ?? "");
+    } else {
+      if (spec.prompt !== undefined) {
+        throw new WorkflowDefinitionError("prompt", CODE_CARRIES_NO_PROMPT);
+      }
+      assertWorkflowCode(spec.code ?? "");
+      if (spec.env) assertWorkflowEnv(spec.env);
+    }
 
     const dto = await this.http.request<WorkflowDto>("POST", "/workflows", {
       body: {
         name: spec.name,
+        kind,
         code: spec.code,
+        prompt: spec.prompt,
         trigger: spec.trigger,
         description: spec.description,
         env: spec.env,
@@ -470,6 +551,18 @@ export class WorkflowHandle {
     return this.dto.code ?? "";
   }
 
+  get kind(): WorkflowKind {
+    return this.dto.kind ?? "code";
+  }
+
+  get isAgent(): boolean {
+    return this.kind === "agent";
+  }
+
+  get prompt(): string {
+    return this.dto.prompt ?? "";
+  }
+
   /** Env **names** only. Values read back as `***` and can never be recovered. */
   get envNames(): string[] {
     return Object.keys(this.dto.env ?? {});
@@ -478,6 +571,16 @@ export class WorkflowHandle {
   /** The raw definition as the server last returned it. */
   get meta(): WorkflowDto {
     return this.dto;
+  }
+
+  private assertScript(call: string): void {
+    if (this.isAgent) {
+      throw new WorkflowDefinitionError(
+        "kind",
+        `${call}() is for script workflows — "${this.name}" is an agent ` +
+          "workflow, and the only way to try a prompt is to run it",
+      );
+    }
   }
 
   async refresh(): Promise<WorkflowDto> {
@@ -493,6 +596,7 @@ export class WorkflowHandle {
    * on the code this workflow already carries.
    */
   async check(code?: string): Promise<WorkflowCodeCheck> {
+    this.assertScript("check");
     return this.api.check(code ?? this.code);
   }
 
@@ -516,6 +620,7 @@ export class WorkflowHandle {
     code?: string,
     input: Record<string, unknown> = {},
   ): Promise<WorkflowTestRunDto<T>> {
+    this.assertScript("testRun");
     return this.api.testRun<T>({
       code: code ?? this.code,
       input,
@@ -529,7 +634,26 @@ export class WorkflowHandle {
    */
   async update(changes: WorkflowChanges): Promise<WorkflowDto> {
     if (changes.trigger) assertWorkflowTrigger(changes.trigger);
+    const kind = changes.kind ?? this.kind;
+    if (kind === "agent" && changes.code !== undefined) {
+      throw new WorkflowDefinitionError("code", AGENT_CARRIES_NO_CODE);
+    }
+    if (kind === "code" && changes.prompt !== undefined) {
+      throw new WorkflowDefinitionError("prompt", CODE_CARRIES_NO_PROMPT);
+    }
+    if (kind !== this.kind) {
+      const replacement = kind === "agent" ? changes.prompt : changes.code;
+      if (replacement === undefined) {
+        throw new WorkflowDefinitionError(
+          "kind",
+          `changing this workflow to "${kind}" drops what it holds now, so the ` +
+            `same call has to carry its new ${kind === "agent" ? "prompt" : "code"}` +
+            (kind === "agent" ? " (and its env is dropped too)" : ""),
+        );
+      }
+    }
     if (changes.code !== undefined) assertWorkflowCode(changes.code);
+    if (changes.prompt !== undefined) assertWorkflowPrompt(changes.prompt);
     this.dto = await this.http.request<WorkflowDto>(
       "PUT",
       `/workflows/${this.id}`,
@@ -557,6 +681,9 @@ export class WorkflowHandle {
    * cron — the next run just picks the new values up.
    */
   async setEnv(env: Record<string, string>): Promise<WorkflowDto> {
+    if (this.isAgent) {
+      throw new WorkflowDefinitionError("env", AGENT_CARRIES_NO_ENV);
+    }
     assertWorkflowEnv(env);
     this.dto = await this.http.request<WorkflowDto>(
       "PUT",

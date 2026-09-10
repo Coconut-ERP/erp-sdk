@@ -195,7 +195,7 @@ export class UnknownQueryError extends UnknownByNameError {
  */
 export class WorkflowDefinitionError extends Error {
   constructor(
-    readonly field: "trigger" | "code" | "env" | "variable",
+    readonly field: "kind" | "trigger" | "code" | "prompt" | "env" | "variable",
     readonly reason: string,
   ) {
     super(`Workflow ${field} is invalid: ${reason}`);

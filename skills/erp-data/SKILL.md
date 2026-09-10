@@ -1,6 +1,6 @@
 ---
 name: erp-data
-description: Read, write, query SQL, analyze data, manage files, and run workflows on Coconut ERP workspace using erp-sdk (TypeScript/JavaScript). Use when the task mentions erp-sdk, ErpClient, ObjectHandle, RecordQuery, DataFrame, erp.sql / dashboard / saved queries / charts, workflows / cron / publish / run on ERP, upload/download files or folders on ERP, renaming a table or changing its groups, ERP_API_KEY / erp_sk_, ERP_ENV / dryRun / test run before writing, link–relation between two tables, object–field–record of ERP, or when the user wants to fetch/aggregate/import/edit data on ERP ("get order list from ERP", "revenue report by month", "aggregate by month using SQL", "create dashboard", "run scheduled script each morning", "import CSV to table", "bulk update", "join two tables", "export Excel/CSV from ERP"). For building web apps using ERP as backend (schema.json, initData, deploy) use the erp-miniapp skill.
+description: Read, write, query SQL, analyze data, manage files, and run workflows on Coconut ERP workspace using erp-sdk (TypeScript/JavaScript). Use when the task mentions erp-sdk, ErpClient, ObjectHandle, RecordQuery, DataFrame, erp.sql / dashboard / saved queries / charts, workflows / cron / publish / run on ERP, agent workflows written as a prompt, upload/download files or folders on ERP, renaming a table or changing its groups, ERP_API_KEY / erp_sk_, ERP_ENV / dryRun / test run before writing, link–relation between two tables, object–field–record of ERP, or when the user wants to fetch/aggregate/import/edit data on ERP ("get order list from ERP", "revenue report by month", "aggregate by month using SQL", "create dashboard", "run scheduled script each morning", "import CSV to table", "bulk update", "join two tables", "export Excel/CSV from ERP"). For building web apps using ERP as backend (schema.json, initData, deploy) use the erp-miniapp skill.
 ---
 
 # Working with ERP data using erp-sdk
@@ -156,9 +156,9 @@ dry run — in development mode they throw `DryRunUnsupportedError` instead of s
 Unlike regular fields (where `null` = *delete value*). Adding 1 link to a record with 3 existing = send all 4 ids: `[...orders.linkedIds(rec, "Line Items"), newId]`.
 Max **100 ids/field/record**; longer requires `createLink`/`deleteLink` individually.
 
-## 8. Workflows — scripts running on ERP server
+## 8. Workflows — automation running on ERP server
 
-Scheduled tasks (deadline reminders every morning, nightly sync) don't need a separate service: a workflow is a TypeScript file with `async function main(input)`, ERP stores the code, secrets, and schedule.
+Scheduled tasks (deadline reminders every morning, nightly sync) don't need a separate service: ERP stores the schedule and what to run. A workflow's `kind` says what that is — `code` (the default) is a TypeScript file with `async function main(input)` the runner executes, `agent` is a prompt handed to the ERP copilot in a hidden conversation.
 
 ```ts
 const wf = await erp.workflows.create({ name, code, trigger: { type: "cron",
@@ -170,6 +170,17 @@ Four common mistakes: triggers are only `manual`/`cron`/`webhook` (no record eve
 cron is **6 fields with seconds**; **any edit reverts to draft**, must republish;
 `setEnv` **replaces the entire map**. Full workflow management: `references/workflows.md`.
 
+An agent workflow takes a `prompt` instead of `code`, ≤ 8 000 characters, and has no env,
+no shared variables and no way to rehearse — running it is the only test, and it writes
+real data. Its run answers `{ conversationId, turnId }` and ends there: `SUCCESS` means
+the job was handed to the copilot, not finished. Read the result through
+`agentRunResult(run)` then `erp.conversations.get(id)`. Needs `ai:create` besides
+`workflow:run:create`.
+
+```ts
+const wf = await erp.workflows.create({ name, kind: "agent", prompt, trigger });
+```
+
 Prove code before saving it — neither call stores anything:
 
 ```ts
@@ -178,8 +189,7 @@ const t = await erp.workflows.testRun({ code, input, workflowId });   // { ok, r
 const t2 = await wf.testRun(code, input);             // same, as that workflow (its env)
 ```
 
-**Writing or editing code inside `main()`** — runner sandbox, which modules import, 60s/256KB limits, `check`/`testRun` to test without creating a draft → use skill
-**`erp-workflow`**.
+**Writing or editing code inside `main()`** — runner sandbox, which modules import, 60s/256KB limits, `check`/`testRun` to test without creating a draft — and **writing an agent workflow's prompt** → use skill **`erp-workflow`**.
 
 Before creating/editing/deleting user workflows: **ask**. These run on real data on a schedule.
 
@@ -247,11 +257,11 @@ they **cannot create tables/fields** (403). To create tables use admin keys — 
 - `references/recipes.md` — runnable example scripts: reports, joins, CSV import,
   safe bulk updates, CSV export, data quality checks.
 - `references/sql.md` — writing SQL for ERP: table/column names, parameters, return types, examples.
-- `references/workflows.md` — complete workflows: triggers, version/publish, env,
-  runs and reading results.
+- `references/workflows.md` — complete workflows: the two kinds, triggers,
+  version/publish, env, runs and reading results.
 - `references/files.md` — the drive: folders, upload/download, sharing, trash.
-- Writing **code that runs inside workflows** (runtime, allowed modules, limits,
-  `test-run`) → skill **`erp-workflow`**.
+- Writing **what runs inside a workflow** — script code (runtime, allowed modules,
+  limits, `test-run`) or an agent workflow's prompt → skill **`erp-workflow`**.
 - Building **mini apps** (web apps using ERP as backend, `schema.json`, initData,
   deploy) → skill **`erp-miniapp`**.
 - Writing and maintaining the **workspace wiki** (pages, sources, attachments, `ask`

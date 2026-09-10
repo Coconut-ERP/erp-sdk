@@ -5,7 +5,8 @@ deployment ships one or more small TypeScript apps that use this backend as
 their core engine, authenticated with a service-account API key.
 
 Records (objects → fields → records), read-only **SQL** over the same data for
-reports and dashboards, and **workflows** — scripts the ERP runs on a schedule.
+reports and dashboards, and **workflows** — work the ERP runs on a schedule,
+either as a script or as a prompt handed to its copilot.
 
 Requires Node 18+ (uses global `fetch`). Works in the browser too, but API keys
 belong on a server — don't ship `erp_sk_*` keys to browsers.
@@ -98,7 +99,7 @@ for:
 | --- | --- |
 | **`erp-miniapp`** | Building an app on the ERP: declaring `schema.json` and `assertSchema`, identifying users through initData, the two authority models, and the deploy contract |
 | **`erp-data`** | Working a live workspace: reading the real schema first, querying with filters/sorting/pagination, walking `relation` fields without N+1, aggregating with `DataFrame` or read-only SQL, writing (and bulk-writing) safely behind a dry run, and the drive |
-| **`erp-workflow`** | Writing the code *inside* a workflow: the runner's sandbox and its fixed module registry, the limits that shape the script (60s, no retry, 256KB result), and the `check` → `testRun` loop that proves a script without saving a draft |
+| **`erp-workflow`** | Writing what runs *inside* a workflow: the runner's sandbox and its fixed module registry, the limits that shape a script (60s, no retry, 256KB result), the `check` → `testRun` loop that proves one without saving a draft — and, for agent workflows, writing a prompt that runs unattended |
 | **`erp-wiki`** | Writing and maintaining the workspace wiki: the four page types, slugs as addresses, draft → publish, sources versus attached documents, the lint pass, and `ask` retrieval over a page's documents |
 
 Each is a lean `SKILL.md` plus `references/` the agent loads only when it needs
@@ -661,11 +662,13 @@ await dash.addQuery({
 short page says nothing about the end — read `meta.totalPages`, or call
 `listAll()`.
 
-## Workflows — scripts that run on the ERP
+## Workflows — work that runs on the ERP
 
-A workflow is one TypeScript file exposing `async function main(input)`, stored,
-versioned and executed by the ERP: no service to deploy, no cron host, and a
-place to keep secrets. The runner provides `erp`, `_` (lodash), `moment`,
+A workflow is stored, versioned and triggered by the ERP: no service to deploy,
+no cron host, and a place to keep secrets. Its `kind` decides what a run does —
+`code` (the default) executes a TypeScript file exposing
+`async function main(input)`, `agent` hands a stored prompt to the copilot
+instead (below). The runner provides `erp`, `_` (lodash), `moment`,
 `axios` and `input` without an import; `zod`, `nodemailer`,
 `node-telegram-bot-api`, `@slack/web-api`, `yahoo-finance2`, `ai` and the
 `@ai-sdk/*` providers are importable by name. Nothing else — `node:fs` included.
@@ -714,6 +717,64 @@ Five things the API makes you get right:
 Starting a run writes real data and the server has no dry run for it, so in
 development mode `run()` throws `DryRunUnsupportedError` instead. Pass
 `{ dryRun: false }` to run it anyway.
+
+### Agent workflows — automation written as a prompt
+
+`kind: "agent"` keeps everything above — triggers, versions, publishing, webhook
+URL, run history — and changes one thing: a run executes no script. It opens a
+**hidden copilot conversation** titled after the workflow, puts the prompt in as
+the first message, and ends there.
+
+```ts
+const wf = await app.workflows.create({
+  name: "Tổng hợp đơn hôm qua",
+  kind: "agent",
+  prompt: "Tổng hợp đơn hàng hôm qua rồi ghi vào bảng Báo cáo ngày. …",
+  trigger: { type: "cron", config: { schedule: "0 0 8 * * *", timezone: "Asia/Ho_Chi_Minh" } },
+});
+await wf.publish();
+
+const handed = agentRunResult(await wf.runAndWait());
+const chat = await app.conversations.get(handed.conversationId);
+chat.activeTurn;
+chat.messages.at(-1)?.content;
+```
+
+`agentRunResult` answers `{ conversationId, turnId }`. `activeTurn` is set for
+as long as the agent is still working, and the last message is the answer once
+it is gone.
+
+Write a script when the work is already decided — same fields, same arithmetic,
+every time; it is exact, cheap and rehearsable, and it can hold secrets. Write
+an agent when writing the script is the expensive part: the task needs
+judgement, the payload's shape was never pinned down, or one paragraph of
+instruction would be three hundred brittle lines.
+
+- **`SUCCESS` means handed over, not done.** The run ends when the turn is
+  queued; the agent then works for minutes to an hour.
+- **No env and no shared variables.** Nothing of it executes, so a secret
+  stored on it would be one nothing can read — `setEnv` throws before the
+  server's 409, and shared variables answer only a script run's token.
+- **No `check`, no `testRun`.** There is nothing to transpile and nothing to
+  rehearse, so the handle refuses both: running it is the only test, and it
+  writes real data. `POST <webhookUrl>/test` runs the draft but the copilot is
+  **not** in development mode, so it writes for real too.
+- **Trigger input is appended to the prompt automatically**, under a heading
+  telling the agent to treat it as data and never as instructions — the defence
+  against a stranger posting instructions to a webhook URL. Don't write
+  placeholders into the prompt.
+- **The prompt is capped at 8 000 characters**, which
+  `workflowPromptChars(prompt)` counts by code point.
+- **Running or publishing one needs `ai:create`** besides `workflow:run:create`,
+  checked at publish, at each manual run, at each cron tick and inside the run
+  (403 `Workflow actor lacks ai:create`; 503 on a deployment with no copilot).
+- **The conversation belongs to the actor** — the publisher, for cron and
+  webhook — and is hidden, so it is theirs alone to read. Hiding is a listing
+  default, not a permission: `app.conversations.list({ visibility })` takes
+  `visible` (default), `hidden` or `all`, and any conversation reads by id.
+- **Switching kind drops what the workflow held**, its env included when moving
+  to `agent`, so `update` insists on the replacement in the same call:
+  `wf.update({ kind: "agent", prompt })`.
 
 ### Proving a script before it becomes a workflow
 

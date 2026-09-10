@@ -1,5 +1,9 @@
 export { createMiniApp, ErpClient, type MiniAppConfig } from "./client";
 export {
+  type ConversationListOptions,
+  ConversationsApi,
+} from "./conversations";
+export {
   assertQueryParams,
   assertSelectStatement,
   CHART_TYPES,
@@ -116,11 +120,19 @@ export {
 } from "./schema";
 export type {
   Action,
+  AgentRunResult,
   BulkCreateRecordsRequest,
   BulkCreateRecordsResult,
   BulkUpdateRecordsRequest,
   BulkUpdateRecordsResult,
   ChartType,
+  ConversationActiveTurnDto,
+  ConversationAttachmentDto,
+  ConversationDetailDto,
+  ConversationDto,
+  ConversationMessageDto,
+  ConversationToolStepDto,
+  ConversationVisibility,
   CreateRecordRequest,
   CronTriggerConfig,
   DashboardDto,
@@ -183,6 +195,7 @@ export type {
   WikiSourceDto,
   WikiSourceKind,
   WorkflowDto,
+  WorkflowKind,
   WorkflowRunDto,
   WorkflowRunOutput,
   WorkflowRunStatus,
@@ -236,18 +249,24 @@ export {
   wikiSlug,
 } from "./wiki";
 export {
+  type AgentWorkflowSpec,
+  agentRunResult,
   assertWorkflowCode,
   assertWorkflowEnv,
+  assertWorkflowPrompt,
   assertWorkflowTrigger,
+  type CodeWorkflowSpec,
   isRunFinished,
   MAX_TEST_RUN_MS,
   MAX_WORKFLOW_ENV_ENTRIES,
+  MAX_WORKFLOW_PROMPT_CHARS,
   type OffsetPageOptions,
   runLogs,
   runOutput,
   runResult,
   type WaitForRunOptions,
   WORKFLOW_ENV_KEEP,
+  WORKFLOW_KINDS,
   WORKFLOW_RUN_PENDING_STATUSES,
   WORKFLOW_TRIGGER_TYPES,
   type WorkflowChanges,
@@ -256,4 +275,5 @@ export {
   type WorkflowSpec,
   WorkflowsApi,
   type WorkflowTestRunRequest,
+  workflowPromptChars,
 } from "./workflows";

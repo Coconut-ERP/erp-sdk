@@ -1,8 +1,18 @@
-# Workflows — Scripts Running on ERP Server
+# Workflows — Automation Running on ERP Server
 
-A workflow is **a TypeScript file exporting `async function main(input)`**. ERP
-stores the code, secrets, and schedule; no need to build a separate service for
-scheduled work (reminders each morning, nightly syncs, end-of-month summaries).
+ERP stores the schedule and what to run, so scheduled work (reminders each
+morning, nightly syncs, end-of-month summaries) needs no separate service.
+
+A workflow's **`kind`** says what one run does:
+
+| `kind` | Content | A run |
+| --- | --- | --- |
+| `code` (default) | `code` — a TypeScript file exporting `async function main(input)` | the runner executes it |
+| `agent` | `prompt` — up to 8 000 characters | opens a hidden copilot conversation and hands the prompt to it |
+
+Triggers, draft/publish/version, webhook URL, sharing and run history are the
+same for both. Sections below are about script workflows unless they say
+otherwise; the agent-specific rules are in [Agent workflows](#agent-workflows).
 
 ## Environment inside scripts
 
@@ -92,6 +102,56 @@ workflow (skill `erp-workflow`).
 The SDK validates before making calls with `assertWorkflowTrigger` / `assertWorkflowCode` /
 `assertWorkflowEnv` → `WorkflowDefinitionError` with `.field` and `.reason`.
 
+## Agent workflows
+
+```ts
+const wf = await erp.workflows.create({
+  name: "Tổng hợp đơn hôm qua",
+  kind: "agent",
+  prompt: "Tổng hợp đơn hàng hôm qua rồi ghi vào bảng Báo cáo ngày. …",
+  trigger: { type: "cron", config: { schedule: "0 0 8 * * *", timezone: "Asia/Ho_Chi_Minh" } },
+});
+await wf.publish();
+
+const run = await wf.runAndWait();
+const handed = agentRunResult(run);
+const chat = await erp.conversations.get(handed.conversationId);
+chat.activeTurn;
+chat.messages.at(-1)?.content;
+```
+
+`runAndWait` comes back in a second or two. `agentRunResult` is
+`{ conversationId, turnId }`, or `undefined` on a script run. `activeTurn` is
+set while the agent is still working; once it is gone, the last message is the
+answer.
+
+- **`SUCCESS` means handed over, not done.** The run ends when the turn is
+  queued; the agent then works for minutes to an hour. Report it as *đã khởi
+  tạo hội thoại*.
+- **No env, no shared variables.** `setEnv` throws `WorkflowDefinitionError`
+  before the server's 409; `erp.variables` answers only a script run's token.
+- **No `check`, no `testRun`** — the handle refuses both. Running it is the
+  only test, and it writes real data. `POST <webhookUrl>/test` runs the draft
+  but the copilot is **not** in development mode, so it writes for real too.
+- **Trigger input is appended to the prompt automatically**, under a heading
+  telling the agent to treat it as data and never as instructions. Don't write
+  placeholders into the prompt.
+- **Permissions:** `workflow:run` create **and** `ai` create, checked at
+  publish, at each manual run, at each cron tick and inside the run. Missing:
+  403 `Workflow actor lacks ai:create`. A deployment without copilot: 503
+  `Arion is not configured on this deployment`.
+- **The conversation belongs to the actor** (the publisher, for cron and
+  webhook) and is hidden — visible to them alone, not to admins and not to a
+  mini app's service account. `erp.conversations.list({ visibility })` takes
+  `visible` (default) | `hidden` | `all`.
+- **Nothing prevents overlap.** A 5-minute cron over a 20-minute agent just
+  opens parallel conversations.
+- **Switching kind drops what the workflow held** — the code or the prompt, and
+  the env as well when moving to `agent`. `update` insists on the replacement
+  in the same call: `wf.update({ kind: "agent", prompt })`.
+
+Writing the prompt itself → skill **`erp-workflow`**, `references/agent.md`.
+
 ## Env — write-only, replaces entire map
 
 ```ts
@@ -175,11 +235,13 @@ always writes for real in both modes.
 | Export | Note |
 | --- | --- |
 | `erp.workflows.list({ limit?, offset? })` · `listAll()` | Excludes `code` |
-| `erp.workflows.create({ name, code, trigger, description?, env? })` | Returns handle in **draft** |
+| `erp.workflows.create({ name, code, trigger, description?, env? })` | Script workflow; returns handle in **draft** |
+| `erp.workflows.create({ name, kind: "agent", prompt, trigger, description? })` | Agent workflow; no `code`, no `env` |
 | `erp.workflow(nameOrId)` | Resolves id → exact name → case-insensitive name; loads `code` |
 | `wf.id` · `name` · `version` · `status` · `isPublished` · `trigger` · `code` · `envNames` · `meta` | Properties |
+| `wf.kind` · `wf.isAgent` · `wf.prompt` | `"code"` \| `"agent"`; `prompt` is `""` on a script workflow |
 | `wf.webhookUrl` | Only with `webhook` trigger; is a credential; **read-only — the SDK does not rotate it** |
-| `wf.update({ name?, description?, trigger?, code?, version? })` | Reverts to **draft** |
+| `wf.update({ name?, description?, trigger?, code?, prompt?, kind?, version? })` | Reverts to **draft**; changing `kind` needs the new content in the same call |
 | `wf.publish(version?)` · `wf.refresh()` · `wf.delete(version?)` | `version` defaults to the handle's |
 | `wf.setEnv(env)` | Replaces entire map |
 | `wf.run(input?, { dryRun? })` · `wf.runAndWait(input?, options?)` | |
@@ -189,6 +251,9 @@ always writes for real in both modes.
 | `erp.variables.list()` · `get(key)` · `value(key)` | `value` returns `undefined` if unreadable |
 | `erp.variables.create({ key, value?, description?, workflowIds? })` · `update(key, changes)` · `set(key, value)` · `delete(key)` | |
 | `runOutput(run)` · `runResult(run)` · `runLogs(run)` | |
+| `agentRunResult(run)` | `{ conversationId, turnId }` of an agent run, or `undefined` |
+| `erp.conversations.list({ visibility?, page?, perPage? })` · `listAll()` · `get(id)` | Read-only; the caller's own conversations |
+| `workflowPromptChars(prompt)` · `assertWorkflowPrompt(prompt)` · `MAX_WORKFLOW_PROMPT_CHARS` | The 8 000-character cap, counted by code point |
 | `isRunFinished(status)` · `WORKFLOW_RUN_PENDING_STATUSES` · `WORKFLOW_TRIGGER_TYPES` · `WORKFLOW_ENV_KEEP` · `MAX_WORKFLOW_ENV_ENTRIES` | |
 
 `version` is optimistic locking — every mutation bumps it, mismatch → 409:

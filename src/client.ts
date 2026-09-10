@@ -1,3 +1,4 @@
+import { ConversationsApi } from "./conversations";
 import {
   type DashboardHandle,
   DashboardsApi,
@@ -93,6 +94,8 @@ export class ErpClient {
    */
   readonly wiki: WikiApi;
 
+  readonly conversations: ConversationsApi;
+
   constructor(
     readonly http: Http,
     private readonly required: RequiredPermission[] = [],
@@ -108,6 +111,7 @@ export class ErpClient {
       fetch: config?.fetch,
     });
     this.wiki = new WikiApi(http, { dryRun: this.dryRun });
+    this.conversations = new ConversationsApi(http);
   }
 
   /** Whether record writes through this client are dry runs by default. */
