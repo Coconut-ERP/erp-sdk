@@ -1,13 +1,24 @@
-# `schema.json` — app's needed tables
+# `schema.json` — the tables an app needs
 
-Apps **cannot create tables**. They declare what they need, the deployer reviews and creates
-with their permissions. File lives at **project root** (repo root or zip root; if zip has one root directory, that's the root).
+An app cannot create tables. It declares them; the deployer reviews the declaration
+and creates what is missing under their own permissions. The file sits at the project
+root (the repo root, or the zip root — a zip with a single top directory counts that
+directory as the root).
+
+## Contents
+
+- [Format](#format)
+- [Field types and config](#field-types-and-config)
+- [Backend rules](#backend-rules)
+- [Checking a schema](#checking-a-schema)
+- [`assertSchema` at boot](#assertschema-at-boot)
+- [Evolving a schema](#evolving-a-schema)
 
 ## Format
 
-Payload inherits straight from the objects API: one `objects` element = body of
-`POST /objects` (`name`, `position`) plus `fields`; one `fields` element = body
-of `POST /objects/:id/fields` (`name`, `type`, `config`, `position`).
+Each `objects` entry is the body of `POST /objects` (`name`, `position`) plus
+`fields`; each field is the body of `POST /objects/:id/fields` (`name`, `type`,
+`config`, `position`).
 
 ```json
 {
@@ -16,140 +27,102 @@ of `POST /objects/:id/fields` (`name`, `type`, `config`, `position`).
       "name": "Leave Request",
       "position": 0,
       "fields": [
-        { "name": "Requester", "type": "single_select",
-          "config": { "source": "workspace_users" }, "position": 0 },
+        { "name": "Requester", "type": "single_select", "config": { "source": "workspace_users" }, "position": 0 },
         { "name": "Reason", "type": "long_text", "position": 1 },
         { "name": "From Date", "type": "date", "position": 2 },
         { "name": "Days", "type": "number", "position": 3 },
         { "name": "Status", "type": "single_select",
-          "config": { "source": "static",
-                      "options": ["pending", "approved", "rejected"] },
-          "position": 4 }
+          "config": { "source": "static", "options": ["pending", "approved", "rejected"] }, "position": 4 }
       ]
     }
   ]
 }
 ```
 
-Unknown keys in JSON are **rejected** — only `objects` at root; `name`/`position`/`fields`
-on object; `name`/`type`/`config`/`position` on field.
+Unknown keys are rejected at every level.
 
-## Field types
+## Field types and config
 
-| Group | Type |
+| Group | Types |
 | --- | --- |
 | Text | `text`, `long_text`, `url`, `email`, `phone` |
 | Number | `number`, `currency`, `percent` |
 | Date | `date`, `datetime` |
-| Selection | `single_select`, `multi_select`, `checkbox` |
+| Choice | `single_select`, `multi_select`, `checkbox` |
 | Other | `relation`, `attachment` |
-| **Can't declare** | `formula`, `lookup`, `rollup` |
+| **Not declarable** | `formula`, `lookup`, `rollup` — their config addresses fields by internal key; create them in the workspace and read them from `computedData` |
 
-Computed fields (`formula`/`lookup`/`rollup`) can't be declared because their config
-references other fields by **internal key**, which apps don't know. Create them manually
-in the workspace if needed; apps read them from `record.computedData`.
+Constants: `FIELD_TYPES`, `DECLARABLE_FIELD_TYPES`, `COMPUTED_FIELD_TYPES`.
 
-Constants in SDK: `FIELD_TYPES`, `DECLARABLE_FIELD_TYPES`,
-`COMPUTED_FIELD_TYPES`.
+| Config | Meaning |
+| --- | --- |
+| `{ "source": "workspace_users" }` on `single_select` | The value is a user id — requester, approver |
+| `{ "source": "static", "options": ["a", "b"] }` | Fixed options |
+| `{ "targetObject": "Customer" }` on `relation` | Target **by table name**, declared in this file or already in the workspace |
 
-### Common `config`
-
-```json
-{ "type": "single_select", "config": { "source": "workspace_users" } }
-```
-Value stored is **user id** — for "created by" or "approver" fields.
-
-```json
-{ "type": "single_select", "config": { "source": "static", "options": ["a", "b"] } }
-```
-
-```json
-{ "type": "relation", "config": { "targetObject": "Customer" } }
-```
-`targetObject` is **table name** (apps don't know ids). Target must be a table declared
-in this file or already in the workspace — if not, `unresolvedRelations()` catches it and backend returns 400.
-
-## Backend rules on upload
+## Backend rules
 
 | Rule | Limit |
 | --- | --- |
-| Name not duplicate (case-insensitive) | within this file |
+| Names unique, case-insensitive | within the file |
 | Name length | ≤ 255 (`MAX_NAME_LENGTH`) |
-| Table count | ≤ 50 (`MAX_SCHEMA_OBJECTS`) |
+| Tables | ≤ 50 (`MAX_SCHEMA_OBJECTS`) |
 | Fields per table | ≤ 200 (`MAX_SCHEMA_FIELDS`) |
-| File size | ≤ 256KB (`MAX_SCHEMA_BYTES`) |
+| File size | ≤ 256 KB (`MAX_SCHEMA_BYTES`) |
 | `position` | non-negative integer |
 
-Any violation → **400 on zip upload**. Backend message pinpoints the exact error —
-show it as-is to the user.
+A violation is a 400 on upload whose message names the problem; show it to the user
+as is.
 
-## Validate before upload, no credentials needed
+## Checking a schema
 
-Pure functions, same rules as backend:
+The same rules as the backend, as pure functions:
 
 ```js
 import { readFileSync } from "node:fs";
-import {
-  validateSchema, planSchema, schemaConflicts,
-  schemaSettled, unresolvedRelations, schemaSize,
-} from "erp-sdk";
+import { validateSchema, planSchema, schemaConflicts, schemaSettled, unresolvedRelations } from "erp-sdk";
 
 const schema = JSON.parse(readFileSync("schema.json", "utf8"));
+validateSchema(schema);                          // string[]; [] = valid
 
-validateSchema(schema);        // string[] of all backend errors; [] = valid
-
-// Diff against real workspace: npx erp schema dump --out workspace.json
+// npx erp schema dump --out workspace.json
 const workspace = JSON.parse(readFileSync("workspace.json", "utf8")).objects;
 const plans = planSchema(schema, workspace);
-schemaConflicts(plans);        // [] = no type mismatches
-schemaSettled(plans);          // true = nothing left to review
-unresolvedRelations(schema, workspace);   // relations pointing to non-existent tables
+schemaConflicts(plans);                          // [] = no type mismatches
+schemaSettled(plans);                            // true = nothing left to review
+unresolvedRelations(schema, workspace);          // relations to tables that exist nowhere
 ```
 
-With a client: `await app.schemaPlan(schema)` does both steps (reads workspace + diff), doesn't throw.
+With a client, `await app.schemaPlan(schema)` reads the workspace and diffs in one call.
 
-Each table/field has an `action`:
-
-| action | Meaning |
+| `action` | Meaning |
 | --- | --- |
-| `create` | new, will be created |
-| `update` | (table-level) exists but missing fields |
-| `unchanged` | already there, untouched |
-| `conflict` | (field-level) name exists, **different type** — includes `currentType` |
+| `create` | New; will be created |
+| `update` | Table exists but lacks fields |
+| `unchanged` | Already there |
+| `conflict` | Field name exists with a **different type** (`currentType`) |
 
 ## `assertSchema` at boot
 
 ```ts
 const handles = await app.assertSchema(schema);
-const leaves = handles["Leave Request"];        // key = exact declared name
+const leaves = handles["Leave Request"];         // keyed by the declared name
 ```
 
-Match → returns `Record<table name, ObjectHandle>`. Mismatch → throws `SchemaMismatchError`
-with `.missing` (tables/fields absent) and `.conflicts` (name exists, type differs), message includes guidance to ask deployer to approve.
+A match returns `Record<name, ObjectHandle>`. A mismatch throws `SchemaMismatchError`
+with `.missing` and `.conflicts`, and a message telling the deployer to approve. Call
+it once at boot, not per request; `{ refresh: true }` skips the cache.
 
-Call **once at boot**, not in route handlers. `{ refresh: true }` drops cache if workspace was just changed.
+## Evolving a schema
 
-## Evolving schema later
+1. Edit `schema.json`.
+2. Upload the new source (`PUT /mini-apps/:id/source`).
+3. The deployer approves again.
 
-1. Edit `schema.json`
-2. Upload new version (`PUT /mini-apps/:id/source`)
-3. Deployer approves again
+Only additions are applied. Retyping a field is a `conflict`: fix the workspace or the
+declaration, then approve. Deleting tables or fields is manual too, and removing the
+app deletes no data.
 
-Only **adding** is supported. Changing an existing field's type is a `conflict` → requires manual fix
-in the workspace (or edit the declaration to match) then re-approve. Deleting tables/fields is also manual
-in the workspace — removing the app doesn't delete data tables.
-
-## Escape hatch: create tables with admin key
-
-`createObject` / `ensureObject` / `addField` still exist in the SDK, but **not for apps** —
-calling from an app returns 403. They're for **admin-key tooling**, like pre-staging a demo workspace:
-
-```js
-await adminClient.ensureObject("Leave Request", [
-  { name: "Reason", type: "long_text" },
-  { name: "Days", type: "number" },
-]);
-```
-
-Modifying the deployer's workspace structure is a big deal — **ask first**. After changing it, call `client.invalidate()`,
-or the handle cache keeps old fields. Schema changes **have no dry run**: `ERP_ENV=development` can't protect here.
+`createObject` / `ensureObject` / `addField` exist for **admin-key tooling** such as
+staging a demo workspace; from an app they return 403. Structure changes have no dry
+run, so ask before making them, and call `client.invalidate()` afterwards.

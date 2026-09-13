@@ -1,36 +1,34 @@
 ---
 name: erp-data
-description: Read, write, query SQL and analyze data on a Coconut ERP workspace using erp-sdk (TypeScript/JavaScript). Use when the task mentions erp-sdk, ErpClient, ObjectHandle, RecordQuery, DataFrame, erp.sql / dashboard / saved queries / charts, renaming a table or changing its groups, ERP_API_KEY / erp_sk_, ERP_ENV / dryRun / test run before writing, link–relation between two tables, object–field–record of ERP, or when the user wants to fetch/aggregate/import/edit data on ERP ("get order list from ERP", "revenue report by month", "aggregate by month using SQL", "create dashboard", "import CSV to table", "bulk update", "join two tables", "export Excel/CSV from ERP"). For building web apps using ERP as backend (schema.json, initData, deploy) use the erp-miniapp skill; for workflows, uploading or downloading files on the drive, shared variables and copilot conversations use the erp-tools skill.
+description: Reads, writes, queries and analyses data in a Coconut ERP workspace with erp-sdk (TypeScript/JavaScript) — records through ObjectHandle and RecordQuery, DataFrame, read-only SQL, dashboards and saved queries, relations, imports, exports, bulk updates and ERP_ENV dry runs. Use when a script has to fetch, aggregate, import, export or edit ERP records, e.g. "revenue by month from the ERP", "import this CSV into a table", "bulk update order statuses", "join two tables", "create a dashboard". Building a web app on the ERP is erp-miniapp; workflows, the drive and the task board are erp-tools; the wiki is erp-wiki.
 ---
 
-# Working with ERP data using erp-sdk
+# ERP data with erp-sdk
 
-Coconut ERP stores data in an **object engine**: object (table) → field (column) →
-record (row). `erp-sdk` is a TypeScript layer on top of the REST API.
+The ERP stores data as objects (tables) → fields (columns) → records (rows). Work
+on it by writing a script against the SDK and running it; the `erp` CLI only checks
+the environment and shows the schema.
 
-**Default approach: write a runnable script then execute it.** The `erp` CLI is only for setting up the environment and viewing the real schema — all read/write/analysis operations are written using the SDK, since multi-step logic (join, aggregation, count before write) cannot be expressed with command-line flags.
+1. **Names are addresses.** Read the real schema before writing code; a guessed
+   name fails at runtime with `UnknownObjectError` / `UnknownFieldError`.
+2. **A script that writes runs under `ERP_ENV=development` first** — same file, no
+   edits. This is the user's real data.
+3. **No credentials, no guessing.** Without `ERP_BASE_URL` and `ERP_API_KEY`, ask.
 
-**Two rules to never forget:**
-
-1. **Object/field names are data addresses.** Guessing wrong → `UnknownObjectError` /
-   `UnknownFieldError` at runtime. Fetch the real schema before writing code (§2).
-2. **Scripts that write must test first** using `ERP_ENV=development` (§7) — same
-   file, no changes needed. This is real user data.
-
-## 1. Connecting
+## 1. Set up and read the schema
 
 ```bash
-npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/v0.4.1/erp-sdk.tgz
-npx erp doctor        # env + connection + permissions → {ok, checks[]}, exit 1 if broken
+npm install https://github.com/Coconut-ERP/erp-sdk/releases/download/latest/erp-sdk.tgz
+npx erp doctor                            # env, connectivity, permissions → {ok, checks[]}
+npx erp objects list
+npx erp objects show "Order"              # fields, types, config
+npx erp schema dump --out workspace.json
 ```
 
-```
-ERP_BASE_URL=https://erp.example.com
-ERP_API_KEY=erp_sk_...
-ERP_ENV=development     # optional — makes all record write commands dry runs
-```
-
-Without credentials, **ask the user** — don't guess the URL/key or table names.
+`latest` suits a one-off script; a project with a lockfile pins the version URL
+from the README. In `objects show`, read each field's `type` and `config`: the
+target of a `relation`, the `options` of a `single_select`, and
+`source: "workspace_users"`, which means the value is a user id.
 
 ```ts
 import { createMiniApp } from "erp-sdk";
@@ -38,7 +36,7 @@ import { createMiniApp } from "erp-sdk";
 const erp = await createMiniApp({
   baseUrl: process.env.ERP_BASE_URL,
   apiKey: process.env.ERP_API_KEY,
-  permissions: [                       // preflight: missing permissions dies here immediately
+  permissions: [
     { resource: "object", action: "read" },
     { resource: "object:field", action: "read" },
     { resource: "object:record", action: "read" },
@@ -46,174 +44,121 @@ const erp = await createMiniApp({
 });
 ```
 
-Add `object:record` + `create`/`update`/`delete` when the script writes; `dashboard`
-for SQL. Run: `node --env-file=.env script.mjs`
-(Node 20.6+) or `npx tsx script.ts`. Place scripts in a temporary directory, don't scatter into source.
+`permissions` is a preflight: a missing pair throws `MissingPermissionsError`
+listing `.missing` before any real call. Add `object:record` `create` / `update` /
+`delete` when the script writes, `dashboard` for SQL. Run it with
+`node --env-file=.env script.mjs` or `npx tsx script.ts`, from a scratch directory
+rather than the user's source tree.
 
-## 2. View the real schema first
-
-```bash
-npx erp objects list                      # which tables exist
-npx erp objects show "Order"              # which fields, what type, what config
-npx erp schema dump --out workspace.json  # full dump, load as context
-```
-
-Read carefully `type` and `config`: which table does `relation` point to, what `options` does `single_select` have, `source: "workspace_users"` means the value stores **user id**.
-
-## 3. Reading
+## 2. Read
 
 ```ts
-const orders = await erp.object("Order");        // by display name or id
+const orders = await erp.object("Order");            // display name or id
+const paid = () => orders.records().where("Status", "equals", "paid");
 
-await orders.records()
-  .where("Status", "equals", "paid")
-  .orderBy("Total Amount", "desc")
-  .limit(50).withTotal().fetch();                   // { records, nextCursor, hasMore, total }
-
-await orders.records().where(…).fetchAll({ max: 5000 });   // auto-paginate to cursor end
-await orders.records().where(…).first();
-await orders.records().where(…).count();
+await paid().orderBy("Total Amount", "desc").limit(50).withTotal().fetch();
+// { records, nextCursor, hasMore, total }
+await paid().fetchAll({ max: 5000 });
+await paid().count();
 ```
 
-Server limits: **20 filters, 3 sorts, 100 records/page**, `in`/`not_in` max
-**200 values**. Full operators and signatures: `references/api.md`.
+Server limits: 20 filters, 3 sorts, 100 records per page, 200 values for
+`in` / `not_in`.
 
-## 4. Relations — avoid N+1
+`relation` fields hold arrays of record ids. Resolve them without N+1, in this order
+of preference: `preload()`, then `getMany(ids)`, then `DataFrame.leftJoin`. Never
+call `get(id)` in a loop.
 
-`relation` fields live in `data` as **arrays of ids**. Three approaches, in order of preference: `preload()` (server loads with results) → `getMany(ids)` (1 request/200 ids) →
-`leftJoin` on DataFrame. **Never call `handle.get(id)` in a loop.**
+## 3. Analyse
 
-## 5. Analysis: DataFrame
-
-`toFrame()` = `fetchAll()` + flatten to rows, columns by **display name**.
-Frames are immutable, every method returns a new frame.
+| Need | Use |
+| --- | --- |
+| `GROUP BY`, joins, ranking over many rows | `erp.sql` — one read-only `SELECT`, ≤ 1,000 rows, no cursor |
+| Row-level logic, whole records, > 1,000 raw rows | `toFrame()` → `DataFrame` |
 
 ```ts
-const df = await orders.records().where(…).toFrame({ max: 20000 });
-
+const df = await orders.records().toFrame({ max: 20000 });
 df.groupBy("Customer")
-  .agg({ revenue: ["sum", "Total Amount"], orderCount: ["count"] })
+  .agg({ revenue: ["sum", "Total Amount"], orders: ["count"] })
   .sortBy("revenue", "desc").head(10).toArray();
+
+const result = await erp.sql(
+  `SELECT "Customer" AS customer, SUM("Total Amount")::float8 AS revenue
+   FROM "Order" WHERE "Order Date" >= @from GROUP BY 1 ORDER BY 2 DESC`,
+  { params: [{ name: "from", type: "date" }], values: { from: "2026-01-01" } },
+);
 ```
 
-For reports, use `console.table` with a summary — don't dump thousands of rows to stdout.
+In SQL, tables and columns are display names, double-quoted and case-sensitive, and
+`numeric` columns come back as strings — cast with `::float8`. Report with
+`console.table` and a summary, not thousands of rows on stdout.
 
-## 6. Heavy aggregation: read-only SQL
-
-`RecordQuery` filters on **one** table only. For `GROUP BY`, `JOIN`, ranking — write SQL,
-fetch only aggregated results:
-
-```ts
-const df = (await erp.sql(`
-  SELECT "Customer" AS customer, SUM("Total Amount")::float8 AS revenue
-  FROM "Order" WHERE "Order Date" >= @startDate
-  GROUP BY 1 ORDER BY 2 DESC
-`, { params: [{ name: "startDate", type: "date" }], values: { startDate: "2026-01-01" } })).toFrame();
-```
-
-Tables/columns are display names, **case-sensitive**, must be double-quoted. One
-`SELECT` statement, max **1,000 rows**, no cursor → aggregate in SQL. `numeric` columns
-return as **strings** in JSON — use `::float8` if you need numbers. Syntax, parameters, examples:
-`references/sql.md`.
-
-## 7. Writing — and test first
+## 4. Write — rehearse first
 
 ```ts
 await orders.create({ "Order Code": "ORD-001", "Total Amount": 500000 });
-await orders.createMany(rows);                       // auto-chunks into 500s
-await orders.update(id, { "Status": "paid" });   // auto-reads version
-await orders.records().where(…).update(patch, { limit: 1000 });   // bulk
+await orders.createMany(rows);                          // chunks of 500, each one transaction
+await orders.update(id, { Status: "paid" });            // reads the version when omitted
+await orders.records().where("Status", "equals", "new")
+  .update({ Status: "processing" }, { limit: 1000 });   // bulk
 ```
-
-`ERP_ENV=development` makes **all record write commands** dry runs: server executes
-the real statement (validate, unique, version, relation ids, rules) then
-**rolls back**. Errors are identical to live runs; success leaves no trace.
 
 ```bash
-ERP_ENV=development node script.mjs   # test everything
-node script.mjs                        # commit if numbers look good
+ERP_ENV=development node script.mjs   # the server runs every write, then rolls back
+node script.mjs                       # for real, once the numbers look right
 ```
 
-`delete`, `restore`, `createLink`, `deleteLink`, `workflow.run()` have **no**
-dry run — in development mode they throw `DryRunUnsupportedError` instead of silently succeeding. **IDs returned from dry-run create are fake**, never persisted.
+Development mode covers `create`, `createMany`, `update` and bulk update: errors are
+the same as a live run, success leaves nothing behind, and returned ids are fake.
+`delete`, `restore`, `createLink` and `deleteLink` have no dry run and throw
+`DryRunUnsupportedError` instead. Changing a table's definition always writes for real.
 
-**Mandatory procedure for bulk write tasks:**
+For every bulk write:
 
-1. `.count()` on the exact filter first, **report the number to the user**.
-2. Run `ERP_ENV=development`, report `matched`/`created` and any errors.
-3. Large or destructive operations (bulk update, delete, status changes):
-   **ask for confirmation** before running for real.
+1. `count()` the exact filter and tell the user the number.
+2. Run in development mode; report `matched` / `created` and any errors.
+3. Ask before running a large or destructive change for real.
 
-### Writing relations = replace entire list
+**Writing a relation replaces its whole list.** `[a, b]` leaves exactly those links,
+`[]` clears them, and `null` or a missing key leaves them untouched — unlike other
+fields, where `null` clears the value. To add one link, send
+`[...orders.linkedIds(record, "Line Items"), newId]`. Limits and link calls:
+`references/api.md`.
 
-| What you send | Result |
-| --- | --- |
-| key not in `data` | links stay as-is |
-| `"Line Items": null` | **same as not sending the key** — links stay as-is |
-| `"Line Items": [a, b]` | links become **exactly** a, b; old links disappear |
-| `"Line Items": []` | **clear all links** for this field |
+## Pitfalls
 
-Unlike regular fields (where `null` = *delete value*). Adding 1 link to a record with 3 existing = send all 4 ids: `[...orders.linkedIds(rec, "Line Items"), newId]`.
-Max **100 ids/field/record**; longer requires `createLink`/`deleteLink` individually.
+- `RecordQuery` is stateful: `count()` and `first()` change its `limit`, so build a
+  fresh chain for each call.
+- `fetchAll()` has no default cap; pass `{ max }`.
+- Zero rows is usually the caller's row scope, not the filter — `npx erp whoami`.
+- `createdAt` / `updatedAt` cannot be filtered or sorted; only real fields and `id` can.
+- `get(id)` returns no relations; query instead, or `preload`.
+- `formula` / `lookup` / `rollup` values live in `computedData` and recalculate in
+  the background, so they can lag a write.
+- `sum` / `avg` turn unparseable strings into `0`; check the column first.
+- After a structure change the client did not make, call `erp.invalidate()` or the
+  cache keeps the old fields.
+- `updateDefinition({ name?, groups?, position? })` edits the table, `update` edits a
+  row. A table has no description, and `groups` replaces the whole list.
+- `erp.dashboards.list()` paginates before filtering by sharing; use `listAll()`.
 
-## 8. Beyond records
+## Permissions and keys
 
-Records are one store among several, and the others have their own skills:
+A service-account key (`erp_sk_…`) is normally a `writer`: full access to records,
+files and dashboards, read-only on objects, fields and the wiki. It cannot create
+tables or fields (403) — that takes an admin key and the user's explicit go-ahead.
+`erp.asUser(accessToken)` runs as one user, under their permissions and row scope.
 
-| Need | Where |
-| --- | --- |
-| Automation on the server — workflows (script or agent), cron, webhooks, runs | skill **`erp-tools`** |
-| Documents — upload, download, folders, sharing, trash (`erp.files`) | skill **`erp-tools`** |
-| Checkpoints between workflow runs (`erp.variables`), copilot conversations | skill **`erp-tools`** |
-| Handing a report back to a member as a card on their AI task board | skill **`erp-tools`** |
-| What the workspace has concluded — the wiki, and `ask` over attached documents | skill **`erp-wiki`** |
-
-Reading the wiki is the floor permission, and useful in any script that has to
-explain a number:
-
-```ts
-const passages = await erp.wiki.ask("chinh-sach-ton-kho", "Tồn tối thiểu nhóm A?");
-```
-
-## Lessons learned (pitfalls)
-
-- **`RecordQuery` is stateful builder**: `count()`/`first()` mutate `limit` —
-  build a new chain each time.
-- **`fetchAll()` has no default limit** — large tables: remember `{ max }`.
-- **Reading 0 rows** is usually IAM row scope, not a wrong filter (`npx erp whoami`).
-- **`createdAt`/`updatedAt` cannot be filtered or sorted** — filters only accept real
-  table fields, plus the special key `id`.
-- **`get(id)` doesn't return relations** — for id arrays use query, or `preload`.
-- **Computed fields** (`formula`/`lookup`/`rollup`) live in `computedData`, background-calculated,
-  may not update immediately after write.
-- **`sum`/`avg` coerce unparseable strings to `0`** — check column before trusting numbers.
-- **After changing table structure, call `erp.invalidate()`**, otherwise cache keeps old fields.
-  (`updateDefinition`/`rename`/`setGroups` do it for you.)
-- **A table stores a name, its `groups` and a position — no description.** Change them
-  with `handle.updateDefinition({ name?, groups?, position? })`; `groups` replaces the
-  list whole (≤ 10), so add one by sending `[...handle.groups, "Kho"]`. Needs
-  `object:update`, which a mini app's key does not have.
-- **`updateDefinition` edits the table, `update` edits a row** — one word apart.
-- **`erp.dashboards.list()` paginates before filtering permissions** — use `listAll()`.
-
-## Permissions and boundaries
-
-`erp_sk_…` keys are **service accounts**, typically at `writer` level: full access to
-records, files and dashboards, read-only on `object`/`object:field` and on the wiki, so
-they **cannot create tables/fields** (403). To create tables use admin keys — don't do it yourself,
-**ask the user first**. To run as a specific user: `erp.asUser(accessToken)`.
-
-**API keys stay on server.** Never log, commit, ship to browser, or write to output files.
+Never log, commit, print or write an API key into output files.
 
 ## References
 
-- `references/api.md` — SDK data surface: signatures, types, limits, errors.
-- `references/recipes.md` — runnable example scripts: reports, joins, CSV import,
-  safe bulk updates, CSV export, data quality checks.
-- `references/sql.md` — writing SQL for ERP: table/column names, parameters, return types, examples.
-- **Workflows** (managing them and writing the code inside), the **drive**
-  (upload/download), shared variables, copilot conversations → skill **`erp-tools`**.
-- Building **mini apps** (web apps using ERP as backend, `schema.json`, initData,
-  deploy) → skill **`erp-miniapp`**.
-- Writing and maintaining the **workspace wiki** (pages, sources, attachments, `ask`
-  retrieval, lint) → skill **`erp-wiki`**.
+- `references/api.md` — the client, `ObjectHandle`, `RecordQuery`, relation writes,
+  `DataFrame`, dashboards, errors.
+- `references/sql.md` — the SQL surface: names, parameters, return types, examples.
+- `references/recipes.md` — runnable scripts: reports, joins, CSV import and export,
+  safe bulk updates, audits, dashboards.
+- Skill `erp-miniapp` — web apps on the ERP (`schema.json`, initData, deploy).
+- Skill `erp-tools` — workflows, the drive, shared variables, copilot conversations,
+  the AI task board.
+- Skill `erp-wiki` — the workspace wiki, and `erp.wiki.ask` over attached documents.

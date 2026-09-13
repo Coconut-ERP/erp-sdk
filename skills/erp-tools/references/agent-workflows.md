@@ -1,12 +1,17 @@
-# Agent workflows — automation written as a prompt
+# Agent workflows
 
-A workflow has a `kind`. `code` is the original one: a stored script the runner
-executes. `agent` is the other: a stored **prompt** that a run hands to the ERP
-copilot in a fresh hidden conversation.
+An agent workflow stores a **prompt**; each run hands it to the ERP copilot in a fresh
+hidden conversation. Triggers, draft/publish/version, the webhook URL and run history
+work as for scripts (`workflows.md`); only what a run does differs.
 
-Everything around it is shared — the same triggers (`manual`, `cron`,
-`webhook`), the same draft/publish/version lifecycle, the same webhook URL, the
-same run history. Only what one run *does* is different.
+## Contents
+
+- [Script or agent](#script-or-agent)
+- [What an agent workflow lacks](#what-an-agent-workflow-lacks)
+- [Who the agent acts as](#who-the-agent-acts-as)
+- [Writing the prompt](#writing-the-prompt)
+- [Reading what happened](#reading-what-happened)
+- [Errors](#errors)
 
 ```ts
 const wf = await erp.workflows.create({
@@ -16,126 +21,87 @@ const wf = await erp.workflows.create({
 đếm số đơn, cộng "Tổng tiền", rồi tạo một bản ghi trong "Báo cáo ngày".
 Nếu hôm qua không có đơn nào thì vẫn tạo bản ghi với số 0.
 Nếu đã có bản ghi cho ngày đó rồi thì dừng, đừng tạo bản ghi thứ hai.`,
-  trigger: {
-    type: "cron",
-    config: { schedule: "0 0 8 * * *", timezone: "Asia/Ho_Chi_Minh" },
-  },
+  trigger: { type: "cron", config: { schedule: "0 0 8 * * *", timezone: "Asia/Ho_Chi_Minh" } },
 });
 await wf.publish();
 ```
 
-## Which kind to write
+## Script or agent
 
-Pick **script** when the work is already decided: the same fields, the same
-arithmetic, the same recipients every time. Scripts are exact, fast, cheap,
-rehearsable (`check` / `testRun`), and they can hold secrets and call other
-APIs. Anything that runs every few minutes has to be a script.
+Pick a **script** when the work is decided: the same fields, arithmetic and recipients
+every time. Scripts are exact, fast, cheap and rehearsable, hold secrets and call other
+APIs. Anything that runs every few minutes is a script.
 
-Pick **agent** when writing the script is the expensive part: the task needs
-judgment ("summarise what went wrong yesterday"), or it reads a payload whose
-shape nobody pinned down, or it is one paragraph of instructions that would be
-three hundred lines of brittle code. The agent already knows the workspace
-schema, so it does not need the object and field names hard-coded — but it
-also re-derives everything on every run, and one run is minutes to an hour of
-copilot work.
+Pick an **agent** when writing the script is the expensive part: the task needs
+judgement ("summarise what went wrong yesterday"), reads a payload nobody pinned down,
+or is a paragraph of instructions that would be hundreds of brittle lines. The agent
+already knows the workspace schema — but it re-derives everything each run, and a run
+is minutes to an hour of copilot work.
 
-When the two mix — a strict computation plus a judgement call — write the
-computation as a script workflow and tell the agent to run it.
+For a strict computation plus a judgement call, write the computation as a script
+workflow and tell the agent to run it.
 
-## What an agent workflow does not have
+## What an agent workflow lacks
 
-| Missing | Why |
+| Missing | Consequence |
 | --- | --- |
-| `env` | Nothing of it executes, so a stored secret would be one nothing can read. `setEnv` throws `WorkflowDefinitionError` before the 409 |
-| Shared variables (`erp.variables`) | Those answer a token carrying the workflow's id, which only a script run has. An agent has the actor's personal key, so a checkpoint has to live in a record or a wiki page |
-| `check` / `testRun` | There is nothing to transpile and nothing to rehearse. The handle throws rather than sending the call. **The only way to try an agent workflow is to run it, and it writes real data** |
+| Env | `setEnv` throws `WorkflowDefinitionError`; nothing could read a secret |
+| Shared variables | They answer only a script run's token; keep a checkpoint in a record or a wiki page |
+| `check` / `testRun` | The handle refuses both. **Running it is the only test, and it writes real data** |
 | A result in the run | The run ends where the conversation starts |
-| Cancellation through the workflow | Stop it in copilot — `POST /ai/turns/{turnId}/cancel` |
-| Overlap protection | A cron every 5 minutes over a 20-minute agent just opens more conversations in parallel. Leave room for the work |
+| Cancel through the workflow | Stop the turn in the copilot (`POST /ai/turns/{turnId}/cancel`) |
+| Overlap protection | A 5-minute cron over a 20-minute agent opens parallel conversations |
 
 ## Who the agent acts as
 
-The same actor rules as a script: `manual` is the person who pressed run,
-`cron` and `webhook` are the person who published it. The agent then works in
-**that person's** sandbox with their personal key, so their permissions, row
-scopes and ACLs bound everything it does, and the conversation belongs to them.
+A `manual` run acts as whoever started it; `cron` and `webhook` runs act as the
+publisher. The agent works in that person's sandbox with their personal key, so their
+permissions, row scopes and ACLs bound it, and the conversation is theirs:
 
-Two consequences worth telling the user about:
-
-- The hidden conversation of a cron agent workflow is visible **only to whoever
-  published it** — not to workspace admins, not to a mini app's service account.
-- Running or publishing one needs `ai:create` on top of `workflow:run:create`.
-  Without it: 403 `Workflow actor lacks ai:create`, checked at publish, at
-  every manual run, at every cron tick, and again inside the run. Someone who
-  loses copilot access has their cron stop. A deployment with no copilot at all
-  answers 503 `Arion is not configured on this deployment`.
-
-## Trigger data reaches the prompt on its own
-
-A run with input — the `scheduledAt` of a cron tick, the whole delivery of a
-webhook — sends the prompt with the payload appended under a heading that tells
-the agent to treat it as data and never as instructions. That framing is the
-defence against a stranger posting instructions to a webhook URL.
-
-So **do not write placeholders** (`{{payload}}`, `$input`) into the prompt.
-Write about the payload instead: *"phần Trigger payload bên dưới là body của
-webhook đối tác gửi; đọc `orderId` trong đó"*.
+- A cron agent's hidden conversation is visible **only to its publisher** — not to
+  admins, not to a mini app's service account.
+- Publishing or running needs `ai:create` on top of `workflow:run:create`, checked at
+  publish, at every manual run, at every cron tick and inside the run. Someone who
+  loses copilot access stops their crons.
 
 ## Writing the prompt
 
-The cap is **8 000 characters**. `workflowPromptChars(prompt)` counts them by
-code point, so a Vietnamese character with a dấu counts as one;
-`assertWorkflowPrompt` throws before the round trip. A long standard operating
-procedure belongs in a wiki page, with the prompt saying which page to read.
+≤ 8,000 characters, counted by code point (`workflowPromptChars`;
+`assertWorkflowPrompt` throws before sending). A long procedure belongs in a wiki page
+the prompt names.
 
-A prompt that runs unattended at 3am is not a chat message. Give it:
+Trigger input — a cron tick's `scheduledAt`, a webhook's whole delivery — is appended
+to the prompt under a heading telling the agent to treat it as data, never as
+instructions; that framing is the defence against strangers posting to the URL. So
+**write no placeholders** (`{{payload}}`, `$input`); describe the payload instead:
+*"the Trigger payload below is the partner's webhook body; read `orderId` from it"*.
 
-- **The names it will use**, exactly as the workspace spells them. The agent
-  can look them up, but a wrong guess it never sees corrected costs a run.
-- **The empty case.** "Nếu không có đơn nào" — otherwise a quiet day looks like
-  a broken run.
-- **Idempotency.** Nothing stops two runs overlapping, and there is no retry to
-  protect against. Say "nếu đã có bản ghi cho ngày đó thì dừng".
-- **A stopping rule.** "Nếu không chắc, đừng đoán — ghi lại và dừng." An agent
-  that guesses at 3am is worse than one that does nothing.
-- **Where the answer goes.** A record, a wiki page, a Telegram message through
-  a script workflow. What it only says in the conversation, only the publisher
-  will ever read.
+An unattended prompt needs:
+
+- **Exact names** of objects and fields, as the workspace spells them.
+- **The empty case** — "if there are no orders…", or a quiet day looks broken.
+- **Idempotency** — "if a record for that date exists, stop"; nothing prevents overlap.
+- **A stopping rule** — "if unsure, don't guess: note it and stop".
+- **Where the result goes** — a record, a wiki page, a task, a message via a script
+  workflow. What stays in the conversation only the publisher will read.
 
 ## Reading what happened
 
 ```ts
-const started = await wf.run();
-const finished = await wf.waitForRun(started.id);
-const handed = agentRunResult(finished);
+const finished = await wf.runAndWait();
+const handed = agentRunResult(finished);           // { conversationId, turnId }
 
 const conversation = await erp.conversations.get(handed.conversationId);
-conversation.activeTurn;
-conversation.messages.at(-1)?.content;
+conversation.activeTurn;                           // set while the agent works
+conversation.messages.at(-1)?.content;             // the answer, once activeTurn is gone
 ```
 
-The run goes `ENQUEUED` then `SUCCESS` within a second or two, and `handed` is
-`{ conversationId, turnId }`. `activeTurn` is set for as long as the agent is
-still working; once it is gone, the last message is the answer.
+The run reaches `SUCCESS` within seconds. **`SUCCESS` means handed over**, not done or
+done right — report it that way. Hidden conversations are hidden from listings only:
+`erp.conversations.list({ visibility: "hidden" })` shows them, and `get(id)` reads them.
 
-`SUCCESS` on an agent run means **the work was handed over**, not that it was
-done or done right. Say it that way in any report: *đã khởi tạo hội thoại*.
-
-The conversations an agent workflow opens are `hidden`, which is a listing
-default and not a permission — they read normally by id:
-
-```ts
-await erp.conversations.list({ visibility: "hidden" });
-```
-
-`visibility` takes `visible` (the default), `hidden` or `all`.
-
-## Webhook `/test` is not a rehearsal here
-
-`POST <webhookUrl>/test` runs the **draft**, which is half of what a test
-should be. The other half is missing: development mode is a flag on the runner,
-and an agent never goes near the runner, so the copilot runs for real and
-writes real data. Warn the user before pressing it.
+Webhook `/test` does not rehearse an agent: the copilot is not in development mode and
+writes for real. Warn the user before using it.
 
 ## Errors
 
@@ -143,18 +109,11 @@ writes real data. Warn the user before pressing it.
 | --- | --- | --- |
 | 400 | `Agent workflows carry a prompt, not code` | `code` sent with `kind: "agent"` |
 | 400 | `Code workflows carry code, not a prompt` | `prompt` sent with `kind: "code"` |
-| 400 | `Agent workflow prompt is required` | Empty prompt |
-| 400 | `Agent workflow prompt is too large` | Over 8 000 characters |
-| 400 / 409 | `Agent workflows run no script, so they have no env` | Env at create, or `PUT /env` afterwards |
-| 403 | `Workflow actor lacks ai:create` | The actor cannot use copilot |
-| 503 | `Arion is not configured on this deployment` | No copilot on this deployment — the whole feature is unavailable |
+| 400 | `Agent workflow prompt is required` / `is too large` | Empty, or over 8,000 characters |
+| 400 / 409 | `Agent workflows run no script, so they have no env` | Env at create, or `PUT /env` later |
+| 403 | `Workflow actor lacks ai:create` | The actor cannot use the copilot |
+| 503 | `Arion is not configured on this deployment` | No copilot on this deployment |
 
-Switching an existing workflow between kinds **drops what it held** — the code
-or the prompt, and the env as well when moving to `agent`. Send the
-replacement in the same call, which is what `update` insists on:
-
-```ts
-await wf.update({ kind: "agent", prompt: "…" });
-```
-
-Without the prompt in that same call it throws `WorkflowDefinitionError`.
+Switching an existing workflow to `agent` drops its code and env; send the prompt in
+the same call — `wf.update({ kind: "agent", prompt })` — or it throws
+`WorkflowDefinitionError`.

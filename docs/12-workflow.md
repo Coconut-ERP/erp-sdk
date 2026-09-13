@@ -128,13 +128,15 @@ Còn lại của tài liệu này nói về workflow `code`.
 ## 2. Trong script chạy có sẵn gì
 
 Runner nạp sẵn, **không cần import**: `erp` (client SDK đã đăng nhập sẵn),
-`_` (lodash), `moment`, `axios`, `input`.
+`_` (lodash), `moment`, `axios`, `input`, `env`.
 
-Import theo tên được: `zod`, `decimal.js` (alias `decimal` — dùng cho **số
-tiền**), `nodemailer` (`email`), `node-telegram-bot-api` (`telegram`),
-`@slack/web-api` (`slack`), `yahoo-finance2` (`yfinance`), `ai` và các provider
-`@ai-sdk/*`, cộng `lodash`/`moment`/`axios`/`erp-sdk` bản đầy đủ. Ngoài danh
-sách đó — kể cả `node:fs`, `node:child_process` — thì không.
+Import được từ một danh sách cố định: `zod`, `decimal.js` (alias `decimal` — dùng
+cho **số tiền**), `node:crypto` (`crypto`), `jose`, `jsonwebtoken`, `nodemailer`
+(`email`), `node-telegram-bot-api` (`telegram`), `@slack/web-api` (`slack`), các
+SDK Google/Microsoft/CRM/thanh toán, `exceljs` (`xlsx`), `papaparse`, `csv-parse`,
+`pdf-lib`, `ai` và các provider `@ai-sdk/*`, cộng `lodash`/`moment`/`axios`/
+`erp-sdk` bản đầy đủ. Lưu code import module ngoài danh sách sẽ báo lỗi kèm danh
+sách đầy đủ. `node:fs`, `node:child_process` không có trong đó.
 
 ```ts
 async function main(input) {

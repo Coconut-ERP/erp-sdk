@@ -1,237 +1,190 @@
-# erp-sdk — API surface
+# erp-sdk data API
 
-Node 18+ (uses global `fetch`). ESM + CJS. `import { … } from "erp-sdk"`.
-No runtime dependencies except lodash.
+## Contents
 
-## Initialization
+- [Client](#client)
+- [Run mode](#run-mode)
+- [ObjectHandle](#objecthandle)
+- [Relation fields](#relation-fields)
+- [RecordQuery](#recordquery)
+- [DataFrame](#dataframe)
+- [SQL and dashboards](#sql-and-dashboards)
+- [Permissions and raw HTTP](#permissions-and-raw-http)
+- [Errors](#errors)
 
-```ts
-createMiniApp(config): Promise<ErpClient>
-// config: { baseUrl, apiKey?, accessToken?, workspaceId?, permissions?,
-//           mode?, env?, fetch? }
-```
-
-Requires `apiKey` (`erp_sk_…` service account or `erp_uk_…` user key) **or**
-`accessToken` (user JWT). API key auto-pins its workspace — only pass
-`workspaceId` when using `accessToken`. With `permissions`, SDK calls
-`/iam/me/permissions` during initialization and throws `MissingPermissionsError` listing
-exact `resource:action` pairs that are missing.
-
-The function is named `createMiniApp` for historical reasons (SDK was built for mini apps),
-but it's the universal factory for any client — analysis scripts, sync jobs, internal CLIs all use it.
-
-Custom `fetch` can be passed → testing without network.
-
-## Run mode (`ERP_ENV`)
+## Client
 
 ```ts
-type ErpMode = "production" | "development";
-resolveMode(env?): ErpMode        // read ERP_ENV; unset → "production"
-isDryRunMode(mode): boolean
-ERP_ENV_VAR                        // "ERP_ENV"
+createMiniApp({ baseUrl, apiKey?, accessToken?, workspaceId?, permissions?, mode?, env?, fetch? }): Promise<ErpClient>
 ```
 
-`ERP_ENV=development` (aliases: `dev`, `dry-run`) makes **all record write commands**
-default to `dryRun: true`; `production` (aliases `prod`, `live`) or unset means write for real.
-Unknown values → error, no guessing. `NODE_ENV` is deliberately **not** read.
-`config.mode` overrides env; `config.env` specifies where to read the variable (useful for testing).
+The factory for every client — scripts and jobs as much as mini apps. Pass `apiKey`
+(`erp_sk_…` service account, `erp_uk_…` personal key) or `accessToken` (a user JWT,
+with `workspaceId`; an API key already pins its workspace). `permissions` checks
+`/iam/me/permissions` and throws `MissingPermissionsError` with the missing pairs.
+`fetch` injects a transport for tests.
 
-Server executes the real statement then rolls back: errors are identical, success leaves no
-record/link/event and `version` doesn't increment. **IDs returned from dry-run create
-are fake, never persisted.**
-
-Dry run only exists for `create`, `createMany`, `update`, `updateWhere`. `delete`,
-`restore`, `createLink`, `deleteLink` throw `DryRunUnsupportedError` when client
-is in development; changing table structure always runs for real.
-
-## ErpClient
-
-| Method | Notes |
+| Member | Notes |
 | --- | --- |
-| `mode` · `dryRun` | Current mode and whether writes are dry runs (properties) |
-| `production()` · `development()` · `withMode(mode)` | Same credentials, different mode — separate cache so objects/fields re-fetched |
-| `objects(refresh?)` | `ObjectDto[]` — id, name, position (cached) |
-| `object(nameOrId)` | `ObjectHandle`; resolves id → exact name → case-insensitive name, cached by both keys |
-| `hasObject(nameOrId)` | boolean, doesn't throw |
-| `me(refresh?)` | Current user — service account keys **don't have** `/users/me`, will throw |
-| `myPermissions(refresh?)` | Effective `PermissionDto[]`, cached |
-| `can(resource, action)` | Preflight; deny wins over allow, `manage` doesn't imply other actions |
-| `assertPermissions(extra?)` | Throws `MissingPermissionsError` if missing (refreshes cache first) |
-| `asUser(accessToken, workspaceId?)` | New client running under that user's permissions + row scope |
-| `session(initData)` | Trade signed initData → `{ user, client, expiresIn }` |
-| `issueInitData(serviceAccountId)` | Host-side: issue initData string (→ skill `erp-miniapp`) |
-| `assertSchema(schema, { refresh? })` | Match `schema.json` → `Record<table name, ObjectHandle>` (→ skill `erp-miniapp`) |
-| `schemaPlan(schema, { refresh? })` | Diff like review UI, doesn't throw → `SchemaObjectPlan[]` |
-| `createObject(name, { groups?, position? })` | **Needs admin key** — a `writer` service account gets 403 |
-| `ensureObject(name, fields[])` | Idempotent create table + missing fields (admin key) |
-| `deleteObject(nameOrId)` | Delete table and its records (admin key) |
-| `invalidate()` | Clear all caches (objects, fields, permissions, me) |
+| `mode` · `dryRun` | Current mode, and whether record writes are dry runs |
+| `production()` · `development()` · `withMode(mode)` | Same credentials, other mode, separate caches |
+| `objects(refresh?)` | `ObjectDto[]` (cached) |
+| `object(nameOrId)` | `ObjectHandle`; resolves id → exact name → case-insensitive name |
+| `hasObject(nameOrId)` | Boolean, never throws |
+| `me(refresh?)` | Current user — throws for a service-account key |
+| `myPermissions(refresh?)` · `can(resource, action)` | Effective rules; deny beats allow, `manage` implies nothing else |
+| `assertPermissions(extra?)` | Throws `MissingPermissionsError` |
+| `asUser(accessToken, workspaceId?)` | Client bound by that user's permissions and row scope |
+| `session(initData)` | `{ user, client, expiresIn }` — skill `erp-miniapp` |
+| `assertSchema(schema)` · `schemaPlan(schema)` | Check a `schema.json` — skill `erp-miniapp` |
+| `createObject(name, { groups?, position? })` · `ensureObject(name, fields)` · `deleteObject(nameOrId)` | **Admin key**; a `writer` gets 403 |
+| `invalidate()` | Drop every cache (objects, fields, permissions, me) |
 
-After changing structure (adding fields, renaming tables) call `invalidate()` or
-`objects(true)`, otherwise handle cache keeps the old schema.
+## Run mode
+
+`ERP_ENV` is read once, at construction: `development` (`dev`, `dry-run`) or
+`production` (`prod`, `live`, or unset). Any other value throws; `NODE_ENV` is never
+read. `config.mode` overrides it, `config.env` supplies the variables to read.
+`resolveMode(env?)` and `isDryRunMode(mode)` expose the same logic.
+
+In development, `create`, `createMany`, `update` and bulk update default to
+`dryRun: true`: the server runs the statement and rolls back — identical errors, no
+record, link or event, no version bump, fake ids. `delete`, `restore`, `createLink`
+and `deleteLink` throw `DryRunUnsupportedError`. Every write takes `{ dryRun }` to
+override one call. Definition changes always write for real.
 
 ## ObjectHandle
 
-Properties: `id`, `name`, `meta` (`ObjectDto`), `fields` (`FieldDto[]`).
+Properties: `id`, `name`, `groups`, `meta` (`ObjectDto`), `fields` (`FieldDto[]`).
 
 | Method | Notes |
 | --- | --- |
-| `field(nameOrKey)` | `FieldDto`; wrong → `UnknownFieldError` with `.known` |
-| `hasField(nameOrKey)` | boolean, doesn't throw |
-| `fieldKey(nameOrKey)` | Field's internal key |
+| `field(nameOrKey)` · `hasField` · `fieldKey` | Unknown → `UnknownFieldError` with `.known` |
 | `records()` | New `RecordQuery` |
-| `get(id)` | `RecordDto` |
-| `getMany(ids, { chunkSize? })` | 1 request/200 ids, preserves input order; ids blocked by row scope or deleted are absent (no error) |
-| `create(data, { dryRun? })` | Keys by display name **or** field key |
-| `createMany(rows, { chunkSize?, dryRun? })` | Bulk insert, auto-chunks into ≤500; each chunk is all-or-nothing transaction |
-| `update(id, data, version \| { version?, dryRun? })` | Omit version to `get` first; version mismatch → 409 |
-| `updateWhere(filters, data, { limit?, dryRun? })` | Bulk update by filter (use internal keys) |
-| `delete(id, version \| { version?, dryRun? })` | Soft delete — no dry run |
-| `restore(id, version)` | Restore — no dry run |
-| `related(record, field)` | `preload`-ed record → `RecordDto[]` |
-| `linkedIds(record, field)` | Array of ids in `data` of `relation` field (record must be from query, not `get`) |
-| `rowFromRecord(record, by?)` | `RecordDto` → flat row; `by = "name"` (default) or `"key"` |
-| `listLinks` · `createLink` · `deleteLink` | Modify links individually — only needed for relations > 100 ids |
-| `addField` · `updateField` | **Admin key** — change table structure |
-| `updateDefinition({ name?, groups?, position? })` · `rename` · `setGroups` | **Admin key** (`object:update`) — the whole of a table's own definition; `groups` replaces the list (≤ 10). No description exists. Writes for real in development mode; drops the client's name caches afterwards |
+| `get(id)` | `RecordDto`, **without** relations |
+| `getMany(ids, { chunkSize? })` | 200 ids per request, input order kept; hidden or deleted ids are simply absent |
+| `create(data, { dryRun? })` | Keys by display name or field key |
+| `createMany(rows, { chunkSize?, dryRun? })` | Chunks of ≤ 500, each all-or-nothing |
+| `update(id, data, version \| { version?, dryRun? })` | Reads the version when omitted; mismatch → 409 |
+| `updateWhere(filters, data, { limit?, dryRun? })` | Bulk update by raw filters (field keys) |
+| `delete(id, version \| { version? })` · `restore(id, version)` | Soft delete; no dry run |
+| `related(record, field)` | Preloaded records → `RecordDto[]` |
+| `linkedIds(record, field)` | Ids in a `relation` field of a queried record |
+| `rowFromRecord(record, by?)` | Flat row: `id`, `version`, `createdAt`, `updatedAt`, `data` and `computedData`, by display name (default) or `"key"` |
+| `listLinks` · `createLink` · `deleteLink` | One link at a time — only for relations over 100 ids |
+| `addField` · `updateField` | **Admin key** |
+| `updateDefinition({ name?, groups?, position? })` · `rename` · `setGroups` | **`object:update`**; `groups` replaces the list (≤ 10); refreshes the client's caches |
 
-Field types: `text`, `long_text`, `number`, `currency`, `percent`, `checkbox`,
-`date`, `datetime`, `single_select`, `multi_select`, `url`, `email`, `phone`,
-`relation`, `lookup`, `rollup`, `formula`, `attachment`.
+Field types: `text`, `long_text`, `number`, `currency`, `percent`, `checkbox`, `date`,
+`datetime`, `single_select`, `multi_select`, `url`, `email`, `phone`, `relation`,
+`lookup`, `rollup`, `formula`, `attachment`.
 
-`rowFromRecord` returns `id`, `version`, `createdAt`, `updatedAt` plus all values
-from `data` + `computedData`, columns named by display name.
+## Relation fields
 
-### `relation` fields in `data`
+A `relation` value is an array of record ids, in display order, written in the same
+transaction as the rest of the row.
 
-Write like regular fields, value is **array of record ids** in display order —
-same transaction as the whole row, no `createLink` needed after.
-
-| What you send | Meaning |
+| Sent | Result |
 | --- | --- |
-| key not present | links stay as-is |
-| `null` | **same as not sending key** — links stay as-is (unlike regular fields: `null` means delete value) |
-| `[a, b]` | links become **exactly** a, b; old links disappear |
-| `[]` | clear all links for this field |
+| Key absent, or `null` | Links unchanged |
+| `[a, b]` | Links become exactly `a`, `b` |
+| `[]` | All links on that field removed |
 
-Max `MAX_RELATION_IDS` = **100 ids / field / record** (read and write), 20,000 links / request.
-Longer than 100 cannot be inline-edited — use `createLink`/`deleteLink`. SDK throws `RelationValueError`
-before network call if array > 100, elements aren't ids (e.g., passing entire `RecordDto`), or value isn't an array.
-One bad id (doesn't exist, wrong target table, self-links) breaks **the entire request**, including bulk operations.
+- At most **100 ids per field per record**, reading and writing; beyond that use
+  `createLink` / `deleteLink`. At most 20,000 links per request.
+- The SDK throws `RelationValueError` before sending when the array is too long, is
+  not an array, or holds something other than ids (a whole `RecordDto`, say).
+- One bad id — missing, wrong target table, a self-link — fails the whole request,
+  bulk calls included.
+- A query returns every outgoing relation as an id array; `create` / `update` return
+  only the fields they wrote; `get(id)` returns none.
+- In a bulk update the patch applies to every matched row, so
+  `{ "Line Items": [] }` clears links on up to 5,000 records at once.
 
-Reading: `POST /records/query` returns **all** outgoing relation fields as id arrays
-(empty if no links); create/update return only fields just written; `get(id)`
-**doesn't** return relations.
-
-## RecordQuery (chainable, stateful)
+## RecordQuery
 
 ```ts
-.where(field, operator, value?)      // max 20 filters
-.whereIn(field, values) / .whereNotIn(field, values)
-.whereIds(ids)                        // filter by record's own ids
-.orderBy(field, "asc" | "desc")       // max 3
-.preload(field, { limit?, direction? })   // max 10, avoid N+1
-.limit(n)                             // server max 100
-.cursor(c) .withTotal()
-.build()                              // see the request body (debug)
+.where(field, operator, value?)          // ≤ 20 filters
+.whereIn(field, values) · .whereNotIn(field, values)
+.whereIds(ids)
+.orderBy(field, "asc" | "desc")          // ≤ 3
+.preload(field, { limit?, direction? })  // ≤ 10
+.limit(n)                                // ≤ 100
+.cursor(c) · .withTotal() · .build()     // build() shows the request body
 
-await .fetch()                        // { records, nextCursor, hasMore, total? }
-await .fetchAll({ max? })             // auto-paginate to cursor end, 100/page
-await .first()                        // set limit(1)
-await .count()                        // set limit(1).withTotal()
-await .update(data, { limit?, dryRun? })  // bulk update all matching rows
-await .toFrame({ by?, max? })         // fetchAll + rowFromRecord → DataFrame
+await .fetch()                           // { records, nextCursor, hasMore, total? }
+await .fetchAll({ max? })                // follows the cursor; no default cap
+await .first() · .count()                // both change the query's limit
+await .update(data, { limit?, dryRun? }) // ≤ 5,000 rows → { matched, updated, hasMore, dryRun? }
+await .toFrame({ by?, max? })
 ```
 
-`first()` and `count()` **mutate the query** (`limit`) — build new chain each call
-instead of reusing.
+Operators: `equals`, `not_equals`, `contains`, `in`, `not_in`, `greater_than`,
+`greater_than_or_equal`, `less_than`, `less_than_or_equal`, `is_empty`,
+`is_not_empty`. `in` / `not_in` take 1–200 values, checked before sending
+(`FilterValueError`); `not_in` also matches records with no value.
 
-Operators (`FilterOperator`): `equals`, `not_equals`, `contains`, `in`, `not_in`,
-`greater_than`, `greater_than_or_equal`, `less_than`, `less_than_or_equal`,
-`is_empty`, `is_not_empty`. `in`/`not_in` take arrays of 1..200 values (`MAX_FILTER_VALUES`),
-bad shape → `FilterValueError` **before** network call. `not_in` also matches records without a value (server-matching).
+`preload(field)` takes a `relation` field on this table (many-to-one) or a `FieldDto`
+on another table pointing here (one-to-many); read the result with
+`handle.related(record, field)`.
 
-`preload(field)`: name of `relation` field on this table (n-1), or
-`FieldDto` from another table pointing to this one (1-n) — direction auto-inferred, read results with `handle.related(record, field)`.
-
-Bulk update: ≤5,000 rows/call, returns `{ matched, updated, hasMore, dryRun? }`;
-`unique` fields can't be set via bulk; computed fields auto-recalculated by worker. Patch applies to **all** matching rows, so relations in patch override each row's list —
-`{ "Line Items": [] }` clears links on up to 5,000 records in one call. Run
-`{ dryRun: true }` to get real `matched` count before doing it.
+Bulk update cannot set `unique` fields. Run it with `{ dryRun: true }` to get the
+real `matched` count first.
 
 ## DataFrame
 
-Immutable — every method returns a new frame. Columns = **display names** of fields, plus `id`,
-`version`, `createdAt`, `updatedAt`, and computed columns.
+Immutable; every method returns a new frame. Columns are display names plus `id`,
+`version`, `createdAt`, `updatedAt` and computed fields.
 
 | Group | Methods |
 | --- | --- |
-| Select rows | `filter`, `where(field, op, value)`, `head`, `tail`, `slice`, `unique`, `uniqueBy` |
-| Select columns | `select`, `rename`, `pluck`, `map` |
+| Rows | `filter`, `where(field, op, value)`, `head`, `tail`, `slice`, `unique`, `uniqueBy` |
+| Columns | `select`, `rename`, `pluck`, `map` |
 | Sort | `sortBy(fields, directions)` |
 | Aggregate | `sum`, `avg`, `min`, `max`, `count`, `isEmpty`, `countBy`, `keyBy` |
-| Group | `groupBy(field \| fn, { as? })` → `.agg({})`, `.count()`, `.sum(f, as?)`, `.avg(f, as?)`, `.frames()` |
+| Group | `groupBy(field \| fn, { as? })` → `agg`, `count`, `sum(f, as?)`, `avg(f, as?)`, `frames` |
 | Join | `leftJoin(other, leftKey, rightKey?, { prefix? })` |
 | Extract | `toArray`, `first`, `last`, `at`, `forEach` |
 
-`agg` accepts `["count"]`, `["sum"\|"avg"\|"min"\|"max", column]`, or a function
-`(rows) => value`. Non-numeric values coerce to numbers (unparseable strings → `0`), so
-money/number columns must be clean before `sum`.
+`agg` takes `["count"]`, `["sum" | "avg" | "min" | "max", column]` or
+`(rows) => value`. Aggregates coerce to numbers, and an unparseable string counts as
+`0`. `where` uses the server's operators (`matchesOperator` is exported).
 
-`where` on frames uses the same operators as the server (`matchesOperator` is also
-exported if you need to use it separately).
-
-## SQL & dashboards
+## SQL and dashboards
 
 ```ts
-erp.sql(sql, { params?, values? }): Promise<QueryResult>   // = erp.dashboards.sql(...)
+erp.sql(sql, { params?, values? }): Promise<QueryResult>
+// QueryResult: columns, rows, rowCount, truncated, compiledSql?, toArray(), toFrame(), column(name), value(column?)
 ```
 
-`QueryResult`: `columns`, `rows`, `rowCount`, `truncated`, `compiledSql?`,
-`toArray()`, `toFrame()`, `column(name)`, `value(column?)`.
-
-| Export | Notes |
+| Member | Notes |
 | --- | --- |
-| `erp.dashboards.list({ page?, perPage? })` | `{ dashboards, meta }`; `meta.totalItems` includes hidden ones |
-| `erp.dashboards.listAll({ perPage? })` | Walk all pages per `meta.totalPages` — use this one |
-| `erp.dashboards.create({ name, description? })` · `erp.dashboard(nameOrId)` | Create / resolve by name |
-| `dash.queries(refresh?)` · `dash.query(nameOrId)` | Saved queries; wrong name → `UnknownQueryError.known` |
-| `dash.run(nameOrId, params?)` · `dash.toFrame(nameOrId, params?)` | Run saved query |
-| `dash.addQuery({ name, sql, params?, chartType?, chartConfig? })` | `chartType` ∈ `CHART_TYPES` (14 types) |
+| `erp.dashboards.listAll({ perPage? })` | Use this — `list()` paginates before filtering by sharing |
+| `erp.dashboards.create({ name, description? })` · `erp.dashboard(nameOrId)` | |
+| `dash.queries(refresh?)` · `dash.query(nameOrId)` | Unknown → `UnknownQueryError` with `.known` |
+| `dash.run(nameOrId, values?)` · `dash.toFrame(nameOrId, values?)` | Run a saved query |
+| `dash.addQuery({ name, sql, params?, chartType?, chartConfig? })` | `chartType` ∈ `CHART_TYPES` |
 | `dash.updateQuery(nameOrId, changes)` · `dash.deleteQuery(nameOrId)` | |
-| `dash.update({ name?, description? })` · `dash.delete()` | Delete dashboard = delete all queries |
-| `dash.sharing()` · `dash.setSharing(visibility, entries?)` | `"workspace" \| "restricted"` |
-| `assertSelectStatement(sql)` · `assertQueryParams(params)` · `quoteIdentifier(name)` | Validate SQL / param count / quote display name |
-| `MAX_QUERY_ROWS` (1000) · `MAX_QUERY_PARAMS` (20) · `QUERY_SYSTEM_COLUMNS` · `WORKSPACE_ID_PARAM` | Limits & constants |
+| `dash.update({ name?, description? })` · `dash.delete()` | Deleting a dashboard deletes its queries |
+| `dash.sharing()` · `dash.setSharing(visibility, entries?)` | `"workspace"` \| `"restricted"` |
+| `assertSelectStatement` · `assertQueryParams` · `quoteIdentifier` | Client-side checks |
+| `MAX_QUERY_ROWS` (1000) · `MAX_QUERY_PARAMS` (20) | |
 
-Parameters: `params: [{ name, type: "text"|"number"|"boolean"|"date"|"datetime",
-label?, default? }]`, values passed via `values` (ad-hoc) or second arg
-of `dash.run` (saved queries). Syntax details: `references/sql.md`.
+Writing the SQL itself: `sql.md`.
 
-## Workflows, drive, variables, conversations, task board
+## Permissions and raw HTTP
 
-`erp.workflows` / `erp.workflow(nameOrId)`, `erp.files`, `erp.variables`,
-`erp.conversations` and `erp.tasks` are covered by skill **`erp-tools`**.
+`isAllowed(permissions, resource, action)` and `missingPermissions(permissions,
+required)` mirror the backend: deny beats allow, `*` is a wildcard, `manage` implies
+no other action.
 
-## Permissions
-
-```ts
-isAllowed(permissions, resource, action): boolean
-missingPermissions(permissions, required): RequiredPermission[]
-```
-
-Mirror of the backend enforcer: deny beats allow, `*` is wildcard, `manage` doesn't imply other actions.
-
-## HTTP
-
-`FetchHttp` auto-adds `/api/v1`, sets `X-API-Key` or `Authorization: Bearer`, unwraps
-`{ success, data, message, trace }`, throws `ErpApiError` on non-2xx.
-Access directly via `client.http.request(method, path, { body, query })` when needing
-an SDK-unwrapped endpoint; `requestPaged(...)` returns `{ data, meta }` when you need the full `meta` pagination.
+For an endpoint the SDK does not wrap, `client.http.request(method, path, { body,
+query })` adds `/api/v1` and the credential and unwraps the envelope;
+`requestPaged(...)` also returns `meta`. Non-2xx throws `ErpApiError`.
 
 ## Errors
 
-| Class | Useful fields |
+| Class | Fields |
 | --- | --- |
 | `MissingPermissionsError` | `.missing` |
 | `UnknownObjectError` | `.object` |
@@ -239,21 +192,10 @@ an SDK-unwrapped endpoint; `requestPaged(...)` returns `{ data, meta }` when you
 | `FilterValueError` | `.field`, `.operator` |
 | `RelationValueError` | `.field`, `.reason` |
 | `DryRunUnsupportedError` | `.operation` |
-| `SchemaMismatchError` | `.missing`, `.conflicts` (`{ object, field?, type?, currentType? }`) |
 | `SqlQueryError` | `.reason` |
-| `UnknownWorkflowError` · `UnknownDashboardError` | `.workflow` / `.dashboard`, `.known` |
-| `UnknownQueryError` | `.query`, `.dashboard`, `.known` |
-| `WorkflowDefinitionError` | `.field` (`trigger`\|`code`\|`env`), `.reason` |
-| `WorkflowRunFailedError` | `.workflow`, `.run.error` |
-| `WorkflowRunTimeoutError` | `.workflow`, `.run`, `.timeoutMs` — run **still running** |
+| `UnknownDashboardError` · `UnknownQueryError` | `.dashboard` / `.query`, `.known` |
 | `ErpApiError` | `.status`, `.trace`, `.details` |
 
-## Not covered by this skill
-
-`schema.json` (`validateSchema`, `planSchema`, `assertSchema`, `schemaConflicts`,
-`unresolvedRelations`…) and browser-side initData bridge (`readInitDataFromLocation`,
-`receiveInitData`, `parseInitData`, `sendInitDataToFrame`) support **building
-mini apps** — see skill **`erp-miniapp`**.
-
-`erp.asUser(accessToken)` and `erp.session(initData)` can still be used from here when
-you need to run as a specific user (see the `ErpClient` table above).
+Workflows, the drive, shared variables, conversations and the task board are skill
+`erp-tools`; `schema.json` helpers and the browser initData bridge are skill
+`erp-miniapp`.

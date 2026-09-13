@@ -1,87 +1,80 @@
-# Deployment & operations
+# Deploying and operating a mini app
 
-ERP builds apps with **nixpacks**, runs as containers behind **Traefik**.
+## Contents
+
+- [Runtime contract](#runtime-contract)
+- [Install sources](#install-sources)
+- [Schema review](#schema-review)
+- [Status lifecycle](#status-lifecycle)
+- [Operations](#operations)
+- [Logo](#logo)
+- [Common errors](#common-errors)
 
 ## Runtime contract
 
-1. **Runs with standard stack start command.** Node: has `start` script in
-   `package.json` (nixpacks runs `npm i` → `npm start`). Other stacks follow nixpacks conventions for that stack (Go: build binary; Python: Procfile/uvicorn…).
-2. **Listens on `process.env.PORT`, binds `0.0.0.0`.** The port declared on install
-   (default 3000) must match — best to just read from ENV.
-3. **Relative paths.** App served under `/apps/<slug>-<id>/` via
-   Traefik: frontend uses `fetch("api/me")`, **not** `/api/me`; assets don't hardcode root.
-4. **Stateless with credentials.** Read everything from ENV, never write config files.
+1. **A standard start command.** Node: a `start` script (nixpacks runs `npm i`, then
+   `npm start`). Other stacks follow nixpacks conventions and call the REST API with
+   the same headers the SDK sends.
+2. **Listen on `process.env.PORT`, bind `0.0.0.0`.**
+3. **Relative paths.** The app is served under `/apps/<slug>-<id>/`: `fetch("api/me")`,
+   not `/api/me`, and no root-relative assets.
+4. **Credentials from the environment only**, never written to config files.
 
-Apps can be written in any language — nixpacks auto-detects the stack. This SDK serves
-TypeScript/JavaScript; other languages call the REST API directly with the same headers.
-
-## Injected ENV
-
-| Variable | Meaning |
+| Injected | Meaning |
 | --- | --- |
-| `ERP_BASE_URL` | Backend base URL (SDK auto-adds `/api/v1`) |
-| `ERP_API_KEY` | Service account key — **rotates on every deploy** |
-| `ERP_WORKSPACE_ID` | Workspace the app is installed in (reference; key already pins workspace) |
-| `PORT` | Port app must listen on |
+| `ERP_BASE_URL` | Backend URL (the SDK adds `/api/v1`) |
+| `ERP_API_KEY` | Service-account key — **rotates on every deploy** |
+| `ERP_WORKSPACE_ID` | The install's workspace (the key already pins it) |
+| `PORT` | The port to listen on |
 
-Plus custom variables declared during install/update (`PUT /mini-apps/:id`).
+Custom variables are set at install or with `PUT /mini-apps/:id`. Never set
+`ERP_ENV=development` there: every record write would silently become a dry run.
 
-⚠️ **Never declare `ERP_ENV=development`.** It makes all record writes dry runs —
-app runs without errors but saves nothing. Silent and hard to spot.
+## Install sources
 
-## Three sources
-
-| Source | Install | Deploy new version |
+| Source | Install | New version |
 | --- | --- | --- |
-| `builtin` | `{ "source": "builtin", "templateKey": "..." }` — catalog via `GET /mini-apps/templates` | `POST /:id/deploy` |
-| `repo` | `{ "source": "repo", "repoUrl": "...", "repoBranch": "main" }` | git push → `POST /:id/deploy` |
-| `zip` | multipart `POST /mini-apps`, field `file` | `PUT /:id/source` multipart `file` → auto-redeploy |
+| `builtin` | `{ "source": "builtin", "templateKey": "…" }` — catalog at `GET /mini-apps/templates` | `POST /:id/deploy` |
+| `repo` | `{ "source": "repo", "repoUrl": "…", "repoBranch": "main" }` | push, then `POST /:id/deploy` |
+| `zip` | multipart `POST /mini-apps`, field `file` | multipart `PUT /:id/source`, field `file` — redeploys |
 
-Zip ≤ **25MB**, compress from project root, exclude `node_modules/` and `.git/`, **keep
-`schema.json`**:
+A zip is ≤ 25 MB, built from the project root without `node_modules/` or `.git/`, and
+keeps `schema.json`:
 
 ```bash
 zip -r app.zip . -x "node_modules/*" -x ".git/*"
 ```
 
-After install ERP **auto-deploys the first time** — no `/deploy` call needed, unless schema is pending.
+The first deploy after install is automatic unless the schema is pending.
 
-## `schema.json` review screen
+## Schema review
 
-Backend compares declaration vs workspace at **every install and every source upload**:
+Every install and every source upload compares `schema.json` with the workspace:
 
-```
-declaration matches → schemaStatus "applied", build runs normally
-declaration is missing something → schemaStatus "pending",
-                         statusMessage "Waiting for a review of schema.json",
-                         NO builds created
-no schema.json → schemaStatus "none"
-```
-
-`POST /:id/deploy` while `pending` returns **409**. Polling builds is pointless —
-no builds exist yet.
+| Result | `schemaStatus` | Build |
+| --- | --- | --- |
+| Everything exists | `applied` | Runs |
+| Something is missing | `pending`, message "Waiting for a review of schema.json" | **None** — `POST /:id/deploy` answers 409 |
+| No `schema.json` | `none` | Runs |
 
 ```
-GET  /mini-apps/:id/schema        → { miniAppId, status, objects: [...] }
-POST /mini-apps/:id/schema/apply  → MiniApp (now "applied", build queued)
+GET  /mini-apps/:id/schema        → { miniAppId, status, objects: [...] }   recomputed on every call; don't cache
+POST /mini-apps/:id/schema/apply  → MiniApp, now "applied", build queued
 ```
 
-Needs RBAC `miniapp:manage` + item-ACL manage; `sourceType: "external"` apps get 409.
+Both need `miniapp:manage` plus manage on the app; an `external` app answers 409.
+`apply`:
 
-`GET /schema` **recalculates diff on each call** (workspace may have changed) — open review UI fresh, **don't cache**.
+- runs only while `pending` (else 409), and clicking twice is harmless;
+- only adds — no renames, deletes or retyping;
+- creates under the **caller's** permissions, so it needs `object:create` and/or
+  `object:field:create` (403 otherwise);
+- refuses with 409 before creating anything if a `conflict` remains, naming the field
+  and both types.
 
-`POST /schema/apply`:
+The author previews the same diff with `await app.schemaPlan(schema)`.
 
-- only runs when `schemaStatus === "pending"`, otherwise 409;
-- only **adds** — no changes, deletes, type changes; clicking twice by accident is harmless;
-- creates with **caller's permissions** → needs `object:create` and/or
-  `object:field:create`, 403 if missing;
-- any remaining `conflict` → 409 **before** creating anything, message names exact field and both types;
-- succeeds → build queued.
-
-App author previews before upload: `await app.schemaPlan(schema)`.
-
-## State lifecycle
+## Status lifecycle
 
 ```
 install / deploy ──► pending ──► building ──► running
@@ -90,54 +83,50 @@ install / deploy ──► pending ──► building ──► running
                                  failed      stopped ──start──► running
 ```
 
-- Poll `GET /mini-apps/:id` every ~5s until `running`/`failed`. First build of a stack may take minutes (pulling base image), later ones usually <1 min.
-- `failed` → `statusMessage` contains build/deploy output, read it for the error.
-- `start`/`stop` **asynchronous**: response returns immediately, worker updates later.
-- `deploy` during `building` → 409. `start`/`stop`/`logs` when app never successfully deployed → 409.
+- Poll `GET /mini-apps/:id` about every 5 s until `running` or `failed`. A stack's
+  first build can take minutes; later ones are usually under one.
+- On `failed`, `statusMessage` holds the build or deploy output.
+- `start` / `stop` return immediately and take effect later.
+- `deploy` while `building` → 409; `start` / `stop` / `logs` on an app that never
+  deployed → 409.
 
 ## Operations
 
 ```
-POST   /mini-apps/:id/deploy         build + restart (rotates API key)
-POST   /mini-apps/:id/start          restart stopped container
-POST   /mini-apps/:id/stop           stop (not delete)
-PUT    /mini-apps/:id                edit name/description/port/env/repoBranch
-                                     (applies on next deploy)
-GET    /mini-apps/:id/logs?tail=200  container logs (504 if worker silent 10s)
-GET    /mini-apps/:id/schema         diff schema.json ⟷ workspace
-POST   /mini-apps/:id/schema/apply   create missing + build
-DELETE /mini-apps/:id                remove app: delete container + service account
-                                     (data tables NOT deleted)
+POST   /mini-apps/:id/deploy         build and restart (rotates the API key)
+POST   /mini-apps/:id/start          start a stopped container
+POST   /mini-apps/:id/stop           stop without deleting
+PUT    /mini-apps/:id                name, description, port, env, repoBranch — applied on the next deploy
+GET    /mini-apps/:id/logs?tail=200  container logs (504 if the worker is silent for 10 s)
+DELETE /mini-apps/:id                remove the container and service account; data tables stay
 ```
 
 ## Logo
 
-Put `logo.webp` at **project root** (next to `package.json`) and serve at
-`GET /logo.webp`:
+Put `logo.webp` at the project root and serve it at `GET /logo.webp`:
 
 ```js
-server.get("/logo.webp", (_req, res) =>
-  res.sendFile("logo.webp", { root: process.cwd() }),
-);
+server.get("/logo.webp", (_req, res) => res.sendFile("logo.webp", { root: process.cwd() }));
 ```
 
-Deploy detects the file → API exposes `logoUrl`. App stopped → logo breaks, host UI falls back.
+The deploy detects it and the API exposes `logoUrl`. While the app is stopped the host
+falls back to a default.
 
 ## Common errors
 
-| Symptom | Root cause → fix |
+| Symptom | Cause → fix |
 | --- | --- |
-| `failed` immediately after install, log shows `MissingPermissionsError` | Key missing declared permissions. Grant IAM rules matching `.missing` to service account, redeploy. If app declares `object:create`/`object:field:create`, **remove them** — mini apps never have them |
-| Install completes, app stuck with no build | `schemaStatus: "pending"` — awaiting `schema.json` approval |
-| `failed`, log shows `SchemaMismatchError` | Workspace changed after approval. `.missing`/`.conflicts` (or `schemaPlan`) shows exact gap |
-| 400 uploading zip, message about field/type | `schema.json` breaks rules (unknown type, computed field, duplicate name, missing `config.targetObject`). Show message as-is |
-| 403 clicking apply schema | Clicker missing `object:create`/`object:field:create` — ask admin to grant or do it themselves |
-| `failed`, statusMessage is nixpacks output | Build broke: missing `start` script, lockfile stale, stack not recognized |
-| Build OK but won't go `running` | Doesn't listen on correct `PORT`, or binds `localhost` instead of `0.0.0.0` |
-| App up but FE calls `api/...` gets 404 | Opened app without `/` before `#` → relative fetch resolves wrong path via Traefik |
-| 401 from `session()` | initData expired (5 min) or from wrong app → frontend requests fresh string |
-| 401/403 mid-request after redeploy | App cached old API key; it's rotated. Only read `process.env.ERP_API_KEY` |
-| 409 updating/deleting record | Version mismatch (optimistic lock) — re-read record and retry |
-| 409 during install | App name slug conflicts in workspace |
-| 502 with docker output | Container operation failed — read message, check worker |
-| `logs` returns 504 | Worker unresponsive for 10s |
+| Installed, no build, nothing failing | `schemaStatus: "pending"` — awaiting approval |
+| `failed` at boot with `MissingPermissionsError` | Grant the pairs in `.missing` and redeploy; if the app declares `object:create` / `object:field:create`, remove them |
+| `failed` with `SchemaMismatchError` | The workspace changed after approval; `.missing` / `.conflicts` or `schemaPlan` name the gap |
+| 400 on zip upload about a field or type | `schema.json` breaks a rule; show the message |
+| 403 on apply | The clicker lacks `object:create` / `object:field:create` |
+| `failed` with nixpacks output | No `start` script, stale lockfile, or unrecognised stack |
+| Build succeeds, never `running` | Not listening on `PORT`, or bound to `localhost` |
+| Frontend `api/...` calls return 404 | The app URL lacks the `/` before `#`, so relative paths resolve wrongly |
+| 401 from `session()` | initData expired or belongs to another app; fetch a fresh one |
+| 401/403 after a redeploy | The old key was cached; read `process.env.ERP_API_KEY` each time |
+| Reads return 0 records although data exists | Row scope, not the filter |
+| 409 updating a record | Version conflict; re-read and retry |
+| 409 on install | The name's slug is taken in the workspace |
+| 502 with docker output | A container operation failed; read the message |

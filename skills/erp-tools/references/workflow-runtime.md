@@ -1,13 +1,19 @@
-# Workflow Runtime — Full Contract
+# Inside a script workflow
 
-The runner compiles code with esbuild (`loader: "ts"`, `format: "cjs"`,
-`target: "node20"`) then calls it in an `AsyncFunction` with a fixed parameter list.
-Every constraint below flows from that design.
+What the runner gives `main()`, what it refuses, and how a run fails. Everything here
+is about `kind: "code"`.
+
+## Contents
+
+- [Entry point](#entry-point)
+- [Globals](#globals)
+- [Modules](#modules)
+- [Logs](#logs)
+- [Limits](#limits)
+- [Run errors](#run-errors)
+- [Trigger input](#trigger-input)
 
 ## Entry point
-
-Before transpiling, the runner checks the source for an `main` declaration with regex.
-All these forms are accepted:
 
 ```ts
 async function main(input) { … }            // preferred
@@ -15,99 +21,61 @@ const main = async (input) => { … }
 export async function main(input) { … }
 ```
 
-No `main` → `Workflow code must define "async function main()"` (400 at save time, or `ok: false` at test-run).
+Without one: `Workflow code must define "async function main()"` — a 400 on save,
+`ok: false` in a test run. `input` is passed to `main` and is also a global; with no
+input it is `{}`.
 
-`main` receives `input` **and** `input` is also a global — two entry points to the same value.
-No argument = `{}`, not `undefined`.
+The return value goes through `JSON.stringify`: `undefined` becomes `null`, `Map` /
+`Set` / class instances lose data, and more than 256 KB fails the run with
+`Workflow result is too large`. Return plain objects — counts and error lists, not
+tables.
 
-The return value goes straight through `JSON.stringify`:
-
-- `undefined` → `null`.
-- Non-serializable (`Map`, `Set`, `Date` nested in classes, circular refs) → data loss or error.
-  Return plain objects/arrays.
-- Over 256KB → `Workflow result is too large`, run becomes ERROR.
-
-## Globals injected by the runner
+## Globals
 
 | Name | What |
 | --- | --- |
-| `erp` | `new ErpClient(...)` pointing to the right workspace, using the run actor's token. **Not `createMiniApp`** — no permission preflight, errors bubble up |
-| `_` | lodash |
-| `moment` | moment.js |
-| `axios` | axios |
-| `input` | trigger payload (webhook: raw delivery — see §Trigger) |
-| `env` | workflow env map (strings). Test-run: `{}` |
-| `erp.variables` | Shared variables: key/value store across runs. Different from `env` — readable again, not secret (see below) |
-| `process` | **frozen fake version**: `{ env, argv: [], platform, version }` |
-| `console` | `log/info/warn/error/debug/table/trace` → `output.logs` |
+| `erp` | An `ErpClient` for the workspace, on the run actor's token — no permission preflight. `erp.files`, `erp.variables`, `erp.sql` and the rest all work |
+| `_` · `moment` · `axios` | lodash, moment, axios |
+| `input` | The trigger's input |
+| `env` | The workflow's env as strings; `process.env` is the same object |
+| `console` | `log` / `info` / `warn` / `error` / `debug` / `table` / `trace` → the run's logs |
+| `process` | A frozen stub: `{ env, argv: [], platform, version }` |
 
-Before code runs, the runner *locks down* the runtime: real `process.env` is deleted,
-`process.binding`, `dlopen`, `getBuiltinModule`, `report`, `mainModule`, `kill` are removed;
-`process.stdout.write`/`stderr.write` are replaced with log collection. That means no way
-to read the server's environment variables, and no backdoor to system modules.
+Node 20 globals remain: `fetch`, `URL`, `Buffer`, `TextEncoder`, `setTimeout`, and
+`crypto` as Web Crypto. The server's real environment and native hooks are removed
+before the code runs; there is no disk and no child process. Outbound network is open.
 
-`fetch`, `URL`, `crypto`, `Buffer`, `setTimeout`… are still Node 20 globals.
+## Modules
 
-## Shared variables — state between runs
+Imports resolve against a fixed registry. Anything else fails **at save time** with
+`Module "x" is not available to workflows — available modules: …`, and that message is
+the authoritative list.
 
-`env` holds **secrets** (write-only, encrypted, reads back as `***`); `erp.variables` holds
-**state** (strings, readable again, shared across workflows).
-
-| Call | Does |
+| Area | Modules (aliases) |
 | --- | --- |
-| `await erp.variables.value(key)` | Value, or `undefined` if missing / not granted |
-| `await erp.variables.get(key)` | Full record; unreadable → `UnknownWorkflowVariableError` |
-| `await erp.variables.set(key, value)` | Write — **the only write** one run can do |
-| `await erp.variables.list()` | Variables this workflow is granted |
+| Core | `erp-sdk`, `lodash`, `moment`, `axios`, `zod`, `decimal.js` (`decimal`), `node:crypto` (`crypto`), `jose`, `jsonwebtoken` (`jwt`), `form-data`, `mime-types` (`mime`), `bottleneck` |
+| Messaging | `nodemailer` (`email`), `node-telegram-bot-api` (`telegram`), `@slack/web-api` (`slack`), `discord.js` (`discord`), `@line/bot-sdk` (`line`), `@microsoft/microsoft-graph-client` (`msgraph`, `teams`, `outlook`), `@azure/identity`, `twilio` |
+| Google | `@googleapis/sheets` (`sheets`), `@googleapis/drive` (`drive`), `@googleapis/gmail` (`gmail`), `@googleapis/calendar` (`calendar`), `google-auth-library`, `google-spreadsheet` |
+| CRM and work | `@hubspot/api-client` (`hubspot`), `jsforce` (`salesforce`), `@notionhq/client` (`notion`), `airtable`, `@octokit/rest` (`github`, `octokit`), `jira.js` (`jira`), `@linear/sdk` (`linear`), `pipedrive` |
+| Commerce and finance | `stripe`, `@paypal/paypal-server-sdk` (`paypal`), `shopify-api-node` (`shopify`), `@woocommerce/woocommerce-rest-api` (`woocommerce`), `yahoo-finance2` (`yfinance`, `yahoo-finance`) |
+| Files and formats | `exceljs` (`excel`, `xlsx`), `papaparse`, `csv-parse` (`csv`), `fast-xml-parser` (`xml`), `pdf-lib` (`pdf`), `jszip` (`zip`), `handlebars`, `qrcode`, `cheerio` (`html`) |
+| AI | `ai`, `openai`, `@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google`, `@ai-sdk/google-vertex`, `@ai-sdk/azure`, `@ai-sdk/amazon-bedrock`, `@ai-sdk/mistral`, `@ai-sdk/deepseek`, `@ai-sdk/groq`, `@ai-sdk/xai`, `@ai-sdk/cohere`, `@ai-sdk/perplexity`, `@ai-sdk/openai-compatible` |
 
-Four rules:
+- **Static imports with literal specifiers.** ES-only packages — `ai`, `@ai-sdk/*`,
+  `jose`, `@octokit/rest`, `jira.js` — are loaded ahead of time from those imports, so
+  a dynamic `import()` of one throws `must be imported with a literal specifier`.
+  Import them by name (`import { generateText } from "ai"`), not as a default.
+- **Aliases are the real package.** `xlsx` gives ExcelJS's API, not SheetJS's.
+- **Unused imports are stripped** before the check, so an unused `import fs from
+  "node:fs"` saves without error and provides nothing.
 
-1. The run's token tells which **workflow** it is, so code only reaches variables that have
-   it in `workflowIds`. Ungranged = 404, exactly like a nonexistent key — code can't tell
-   the difference, and shouldn't try.
-2. `create` / `delete` / changing `description` or `workflowIds` → **403** in the run.
-   That's a workspace decision, made from a user session.
-3. Last write wins, no versioning, no optimistic locking.
-4. Limits: key `[A-Za-z][A-Za-z0-9_.-]*` ≤ 128 chars, value ≤ 16 384 chars, ≤ 100
-   workflows per variable. Real data belongs in objects, this is just a cursor.
+## Logs
 
-On `development` (all test-runs) **reads work, writes throw** `DryRunUnsupportedError`:
-the server has no dry run for this, and a dry run that silently moves a real cursor means
-the next real run skips data. `{ dryRun: false }` to write for real.
+`console.*` lines are collected with a level prefix (`log: `, `error: `). Past 64 KB
+the rest of the run's output is dropped after a truncation marker.
 
-## Import: fixed registry
-
-```ts
-// correct: specifier is a literal string, at top level
-import { z } from "zod";
-import Decimal from "decimal";           // alias for decimal.js
-import nodemailer from "email";
-import { generateText } from "ai";       // ES-only → import by name
-import { openai } from "@ai-sdk/openai";
-```
-
-| Canonical | Alias |
-| --- | --- |
-| `erp-sdk`, `lodash`, `moment`, `axios`, `zod`, `nodemailer`, `node-telegram-bot-api`, `@slack/web-api`, `yahoo-finance2`, `decimal.js`, `ai`, `@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google` | `decimal` → `decimal.js`, `email` → `nodemailer`, `telegram` → `node-telegram-bot-api`, `slack` → `@slack/web-api`, `yfinance`/`yahoo-finance` → `yahoo-finance2` |
-
-Four rules:
-
-1. **Specifier must be a literal.** `require(varName)` isn't caught at save time but throws at runtime;
-   dynamic ES `import()` throws `must be imported with a literal specifier`.
-2. **Unused imports get stripped by the compiler** before registry checking → declaring
-   `import fs from "node:fs"` but not using it doesn't error, but you don't get `fs` either.
-3. `ai` and `@ai-sdk/*` are ES-only: **named import**, never default import.
-4. Everything else → `Module "x" is not available to workflows — available
-   modules: …` (400 at save time, not runtime).
-
-## Logging
-
-`console.*` collects into `output.logs`, each line prefixed by level (`log: `,
-`error: `…). 64KB cap for the whole run; over that inserts `log: … output truncated` and
-**discards everything after**.
-
-ERROR runs have **no `output`** — logs disappear, only ~3 final lines go into `error`
-as `<error> [<log>]`. To debug a failed run, collect your trace in the return value:
+A run that ends in `ERROR` keeps **no logs** — only its last few lines are folded into
+`error` as `<error> [<log>]`. To debug, catch and return a trace:
 
 ```ts
 async function main() {
@@ -117,114 +85,66 @@ async function main() {
     …
     return { ok: true, trace };
   } catch (e) {
-    return { ok: false, error: String(e?.message ?? e), trace };   // return, don't throw
+    return { ok: false, error: String(e?.message ?? e), trace };
   }
 }
 ```
 
-## Limits and environment variables controlling them
+## Limits
 
-| Item | Limit | Variable |
-| --- | --- | --- |
-| Code | 128KB | `WORKFLOW_MAX_CODE_BYTES` |
-| Input | 64KB JSON | — |
-| Result | 256KB | `RUNNER_MAX_RESULT_BYTES` |
-| Logs | 64KB | `RUNNER_MAX_LOG_BYTES` |
-| 1 run duration | 60s default, technical cap 15 min | `WORKFLOW_RUN_TIMEOUT` |
-| Parallel runs | 4/runner | `RUNNER_MAX_CONCURRENCY` |
-| Env entries | 50, names `[A-Za-z_][A-Za-z0-9_]*` | — |
-| Name / description | 255 / 2000 chars | — |
-
-## Common error messages in `run.error`
-
-| Message | Means |
+| Item | Limit |
 | --- | --- |
-| `<JS error> [<log>]` | code threw an exception |
-| `Workflow code timed out after <N>ms` | exceeded timeout |
-| `workflow run was interrupted and is not retried` | worker died/deployed mid-run — **no retry**, already-written data stays |
-| `Workflow actor lacks workflow:run:create` | actor's permission was revoked (common with old crons) |
-| `Workflow actor is not active` | actor disabled / left workspace |
-| `Workflow result is too large` | `main()` returned > 256KB |
-| `Workflow runner is busy` | runner overloaded — retry |
-| `Workflow run failed` | infrastructure error (hidden); script errors are always more specific |
+| Code | 128 KB |
+| Input | 64 KB of JSON (a larger webhook body → 413) |
+| Result | 256 KB |
+| Logs | 64 KB |
+| One run | 60 s by default (the deployment can raise it); a test run is always ≤ 1 min |
+| Env | 50 entries |
+| Name / description | 255 / 2,000 chars |
 
-Errors at **save time** (400) are different: `Workflow code is required` / `is too large`
-/ `is invalid: <message> (line N, column M)` / `Module "…" is not available` /
-`Invalid cron schedule` / `Invalid cron timezone` /
-`Manual trigger config must be empty` / `Webhook trigger config must be empty`.
+## Run errors
 
-The server **doesn't** validate object/field names in code — wrong names only surface at runtime
-as `UnknownObjectError`/`UnknownFieldError` from the SDK. That's why `test-run` is not optional.
+| `run.error` | Meaning |
+| --- | --- |
+| `<JS error> [<log>]` | The script threw |
+| `Workflow code timed out after <N>ms` | Over the time limit |
+| `workflow run was interrupted and is not retried` | The worker died or redeployed mid-run; whatever was written stays |
+| `Workflow actor lacks workflow:run:create` | The actor lost the permission — common on old crons |
+| `Workflow actor is not active` | The actor was disabled or left |
+| `Workflow result is too large` | `main()` returned more than 256 KB |
+| `Workflow runner is busy` | Runner overloaded; retry |
+| `Workflow run failed` | Infrastructure; a script's own error is always more specific |
 
-## Trigger
+Save-time 400s: `Workflow code is required` / `is too large` /
+`is invalid: <message> (line N, column M)`, `Module "…" is not available`,
+`Invalid cron schedule`, `Invalid cron timezone`, `Manual trigger config must be empty`,
+`Webhook trigger config must be empty`.
 
-```jsonc
-{ "type": "manual" }                       // config must be empty, extra keys → 400
+The server never checks object or field names in code; a wrong one surfaces only at
+run time as `UnknownObjectError` / `UnknownFieldError`. That is what `testRun` is for.
 
-{ "type": "cron", "config": {
-    "schedule": "0 0 8 * * *",             // 6 fields: seconds minutes hours day month weekday
-    "timezone": "Asia/Ho_Chi_Minh",        // IANA, required
-    "automaticBackfill": false             // backfill missed ticks when recovering
-} }
+## Trigger input
 
-{ "type": "webhook" }                      // config must be empty too — URL is server-generated
-```
-
-- Descriptors like `@daily`, `@every 1h` are valid. `"0 9 * * *"` (5 fields) is not.
-- Cron's `config` **rejects unknown keys**.
-- Schedule is registered **only at publish**, and removed on update/delete.
-- Cron runs receive `input = { source: "cron", scheduledAt: "<RFC3339>" }` —
-  code should handle this plus manual inputs.
-- Old schedule ticks return `SUCCESS` with `{ skipped: true, reason }`
-  (`workflow schedule is stale` / `workflow no longer exists`) then auto-remove.
-
-### Webhook
-
-The server generates a secret URL when trigger becomes `webhook`, returned as `webhookUrl`
-on the workflow (`wf.webhookUrl` in SDK), and revoked when the trigger changes.
-`POST <url>` needs no session, no `X-Workspace-Id`: the token in the URL is the whole credential,
-so **never print it in reports or logs**. The SDK only reads it: a leaked URL is retired by a
-person at `POST /workflows/{id}/webhook/rotate` (manage access), which kills the old one
-immediately and leaves code/version/published status alone. Ask the user to do that — you cannot,
-and a script holding the old URL must not be able to mint itself a new one.
+| Trigger | `input` |
+| --- | --- |
+| `manual` | Whatever the caller passed, `{}` by default |
+| `cron` | `{ source: "cron", scheduledAt: "<RFC 3339>" }` |
+| `webhook` | `{ source: "webhook", method, query, headers, body, receivedAt }` |
 
 ```jsonc
-// input that main() receives
 {
   "source": "webhook",
   "method": "POST",
-  "query":  { "attempt": "1" },            // query string, split
-  "headers": { "x-signature": "…" },       // intact, ready to verify
-  "body": "{\"amount\":1250.50}",          // RAW STRING, not parsed
+  "query": { "attempt": "1" },
+  "headers": { "x-signature": "…" },   // intact, ready to verify
+  "body": "{\"amount\":1250.50}",       // the RAW string, not parsed
   "receivedAt": "2026-08-20T09:15:00Z"
 }
 ```
 
-- **Nothing is verified server-side.** Signed/unsigned, right/wrong, is the code's job — every
-  request to the right URL costs one run.
-- **`POST <url>/test` is a test run**: same URL, add `/test`. It delivers the script the exact
-  payload the real URL would and responds **identically** — `202` with run id. Two differences:
-  works even when workflow is **draft** (the place to test before publish), and runs in development
-  mode so writes get validated then rolled back.
-- The `/test` request **doesn't return logs or result**: read them from
-  `GET /workflows/{id}/runs/{runId}` like any run, which requires read permission on the workflow.
-  A webhook holder can only start a test, not see what the script did. Test-run ids are prefixed
-  `hooktest-` so the run history doesn't mistake them for real deliveries.
-- Returns `202` with run id immediately, **doesn't wait** for the script to finish: if you need
-  a meaningful response body (Slack slash commands), webhooks aren't the answer.
-- Draft returns `404`, unknown token returns `404`, changed trigger returns `404` — one answer,
-  old URL reveals nothing.
-- Payload over `WORKFLOW_MAX_INPUT_BYTES` (default 64KB) → `413`.
-- Run executes with the permission of the **publisher**, same as cron.
-
-## Permissions
-
-Runs execute under the **live** permissions of the actor: whoever hit `POST /runs`, or whoever
-published the workflow (for cron and webhooks). No service account, no privilege escalation.
-Lose permission mid-run → ERROR on the next tick.
-
-Two IAM resources: `workflow` (definitions) and `workflow:run` (executions) with
-`create/read/update/delete`. `check` and `test-run` require `workflow:run:create`.
-
-Workflows have their own ACL (`visibility: workspace | restricted`): `read` = see it,
-`write` = **can hit play**, `manage` = edit/publish/delete/share. Cron **bypasses ACL**.
+- A webhook delivery is answered `202` with the run id **before** the script runs, so
+  it cannot return a meaningful body to the caller.
+- Nothing is verified server-side, and every request to a live URL costs a run.
+- A draft workflow, an unknown token and a revoked URL all answer `404`.
+- A tick from a schedule that no longer exists ends `SUCCESS` with
+  `{ skipped: true, reason }` and removes itself.

@@ -1,55 +1,47 @@
 ---
 name: erp-miniapp
-description: Build mini apps running on Coconut ERP using erp-sdk — web apps using ERP as an engine instead of a separate database. Use when the task mentions mini app / miniapp ERP, erp init, schema.json, assertSchema, initData / X-Init-Data / session(), createMiniApp + permissions, service account erp_sk_, deploying apps to ERP (zip/repo/template), schema review on deploy, or when the user wants to "build an X management app on ERP", "leave request app", "time tracking app", "build data entry form for staff", "dashboard app for managers", "create web app without a database". For only reading/writing/analyzing data on an existing workspace (scripts, reports, imports) use the erp-data skill.
+description: Builds mini apps on Coconut ERP with erp-sdk — small web apps that use the ERP as their database, access control and identity, opened inside the ERP. Covers `erp init`, declaring tables in schema.json and checking them with `assertSchema`, Telegram-style signed initData and `session()`, service-account permissions, and the deploy contract (nixpacks, PORT, relative URLs, schema review). Use when the user wants an app on the ERP ("a leave request app", "a data entry form for staff", "a dashboard app for managers", "a web app without its own database") or mentions mini apps, schema.json, initData or deploying to the ERP. Scripts that only read or write existing data are erp-data.
 ---
 
-# Building mini apps on ERP
+# Mini apps on the ERP
 
-A mini app is a **small web app installed per workspace**, opened inside ERP's
-UI (iframe) and uses ERP as its engine: data, access control, and user identity all
-come from ERP instead of being built separately. Like a Telegram Mini App.
+A mini app is a small web app installed per workspace and opened in an iframe inside
+the ERP, which supplies its data, access control and user identity — the Telegram
+Mini App model. The **server** half is required: it holds the API key and calls the
+ERP through the SDK. The **frontend** half is optional and never sees the key.
 
-Two halves: **server** (required — holds API key, calls ERP via SDK, serves frontend) and
-**frontend** (optional per app — runs in iframe, receives initData, calls back to app's server). API keys **stay on server only**, never go to the browser.
+Three constraints shape every design:
 
-## Three core constraints that shape all design
+1. **The app cannot create tables.** Its service account is a `writer` — full on
+   records, files and dashboards, read-only on objects and fields. It declares the
+   tables it needs in `schema.json`, and the deployer reviews and creates them. → §2
+2. **The app never receives a user JWT.** It receives signed `initData` and trades it
+   for a verified identity with `session()`. → §3
+3. **The API key rotates on every deploy.** Read `process.env.ERP_API_KEY`; never
+   hard-code it or keep it anywhere else. → §4
 
-Read these three lines carefully before writing any code — they are the source of most mistakes:
-
-1. **Apps cannot create tables.** The app's service account is a `writer` — full
-   access to records, files and dashboards, read-only on `object`/`object:field` — so
-   calling `POST /objects` gets 403. Apps **declare** tables they need in `schema.json`;
-   the deployer reviews and creates them with *their* permissions. → §2
-2. **Apps don't receive user JWTs.** They receive signed `initData` and trade it for
-   verified identity via `session()`. → §3
-3. **API keys rotate on every deploy.** Always read `process.env.ERP_API_KEY`,
-   never hardcode, never cache outside env. → §4
-
-## 1. Bootstrap an app
+## 1. Start from the scaffold
 
 ```bash
 npx erp init leave-request --name "Leave Request" --object "Leave Request"
 ```
 
-Generates `server.js` (Express + initData bridge), `schema.json`, `public/index.html`,
-`.env.example`, `README.md`. Runs immediately — iterate from there instead of from scratch.
+It writes `server.js` (Express with the initData bridge), `schema.json`,
+`public/index.html`, `.env.example` and `README.md`, and runs as is — iterate on it
+rather than starting from nothing.
 
-Standard bootstrap, **this order is mandatory**:
+Boot in this order:
 
 ```ts
 import { readFileSync } from "node:fs";
 import { createMiniApp } from "erp-sdk";
 
-const schema = JSON.parse(
-  readFileSync(new URL("./schema.json", import.meta.url), "utf8"),
-);
+const schema = JSON.parse(readFileSync(new URL("./schema.json", import.meta.url), "utf8"));
 
-// 1. Connect + preflight permissions: missing permissions fails at boot,
-//    not mid-request.
 const app = await createMiniApp({
   baseUrl: process.env.ERP_BASE_URL,
   apiKey: process.env.ERP_API_KEY,
-  permissions: [
+  permissions: [                                  // a missing permission fails at boot
     { resource: "object", action: "read" },
     { resource: "object:field", action: "read" },
     { resource: "object:record", action: "read" },
@@ -57,17 +49,16 @@ const app = await createMiniApp({
   ],
 });
 
-// 2. Fail fast if workspace doesn't match schema.json — one clear error,
-//    not UnknownFieldError scattered through every route.
-const { "Leave Request": leaves } = await app.assertSchema(schema);
+const { "Leave Request": leaves } = await app.assertSchema(schema);   // one clear error on mismatch
 ```
 
-Declare only the permissions your app uses, **never declare `*`**, and **never declare `object:create` /
-`object:field:create`** — service accounts never have them, declaring them kills the app at boot with `MissingPermissionsError`.
+Declare only the permissions the app uses. Never declare `*`, `object:create` or
+`object:field:create`: a service account never holds them, so the app would die at
+boot with `MissingPermissionsError`.
 
-## 2. `schema.json` — declare, don't create
+## 2. Declare tables in `schema.json`
 
-File at **project root**. Each object = body of `POST /objects` plus `fields`:
+At the project root. Each object is the body of `POST /objects` plus its `fields`:
 
 ```json
 {
@@ -75,8 +66,7 @@ File at **project root**. Each object = body of `POST /objects` plus `fields`:
     {
       "name": "Leave Request",
       "fields": [
-        { "name": "Requester", "type": "single_select",
-          "config": { "source": "workspace_users" } },
+        { "name": "Requester", "type": "single_select", "config": { "source": "workspace_users" } },
         { "name": "Reason", "type": "long_text" },
         { "name": "Status", "type": "single_select",
           "config": { "source": "static", "options": ["pending", "approved"] } }
@@ -86,93 +76,78 @@ File at **project root**. Each object = body of `POST /objects` plus `fields`:
 }
 ```
 
-Validate **before** uploading — pure functions, no credentials needed:
+Check it before uploading:
 
 ```js
 import { validateSchema } from "erp-sdk";
-validateSchema(schema);            // string[] of backend errors; [] = valid
-await app.schemaPlan(schema);      // diff with real workspace, doesn't throw
+validateSchema(schema);          // string[] of backend errors, no credentials needed; [] = valid
+await app.schemaPlan(schema);    // diff against the live workspace, never throws
 ```
 
-Common mistakes: `formula`/`lookup`/`rollup` **can't be declared**;
-`relation` needs `config.targetObject` as **table name**; only **adding** is allowed,
-changing field types on existing fields is a `conflict` requiring manual fixes. Full details + all 18 field types:
+`formula` / `lookup` / `rollup` cannot be declared; a `relation` names its target in
+`config.targetObject` by table name; and a schema can only add — retyping an existing
+field is a `conflict` someone fixes by hand. Format, types and rules:
 `references/schema.md`.
 
-## 3. Know who's using the app
+## 3. Know who is using the app
 
-```ts
-server.use("/api", async (req, res, next) => {
-  const initData = req.header("x-init-data");
-  if (!initData) return res.status(401).json({ error: "Missing X-Init-Data" });
-  try {
-    req.erp = await identify(initData);   // cache by initData string
-    next();
-  } catch (e) {
-    res.status(401).json({ error: e.message });   // FE re-requests fresh initData
-  }
-});
-```
+Every frontend request carries `X-Init-Data`; the server turns it into a verified
+user with `app.session(initData)` → `{ user, client, expiresIn }`, cached per string.
+initData lives **5 minutes** with no refresh token, so a 401 is routine and the
+frontend asks the host for a fresh string. `parseInitData()` in the browser is
+unverified and for display only. Middleware, frontend code and caching:
+`references/identity.md`.
 
-initData lives **5 minutes**, no refresh token — 401 is normal,
-frontend must handle it. Frontend reads the string via `readInitDataFromLocation()` or
-`receiveInitData()`; `parseInitData()` is **unverified**, display-only ("Hello Alice"). Full flow + frontend code: `references/identity.md`.
-
-**Two permission models — choose early, don't mix:**
+Pick one authority model early:
 
 | | App authority (default) | User authority (opt-in) |
 | --- | --- | --- |
-| Runs as | app's client (service account) | `session(initData).client` / `asUser(token)` |
-| `createdBy` | service account | real user |
-| Permissions | anyone who can open the app uses full features | true RBAC + row scope of that user |
-| Data boundaries between users | **app's responsibility** via `where` | server handles automatically |
+| Calls run as | the app's service account | `session(initData).client` / `asUser(token)` |
+| `createdBy` | the service account | the real user |
+| Who can do what | everyone who opens the app gets every feature | the user's own IAM and row scope |
+| Keeping users' data apart | **the app's job**, with `where` | the server's |
 
-App authority is the default recommendation (like a Telegram bot). Trade-off: every query by user **must** `where` by a verified user id from `session()` — never trust id from frontend:
+Under app authority every per-user query filters on the **verified** id from
+`session()`, never on an id the frontend sent:
 
 ```ts
 const { user } = req.erp;
-await leaves.create({ "Requester": user.id, "Reason": req.body.reason });
+await leaves.create({ Requester: user.id, Reason: req.body.reason });
 const mine = await leaves.records()
-  .where("Requester", "equals", user.id)   // forgetting this = data leak
+  .where("Requester", "equals", user.id)   // leaving this out leaks other users' data
   .fetchAll();
 ```
 
-## 4. Runtime contract on deploy
+## 4. Deploy contract
 
-ERP builds with nixpacks, runs as container behind Traefik. Valid apps:
+The ERP builds with nixpacks and runs the container behind Traefik. The app must:
 
-- have a `start` script (Node: nixpacks runs `npm i` → `npm start`);
-- **listen on `process.env.PORT`, bind `0.0.0.0`** — not `localhost`;
-- **use relative URLs** on frontend (`fetch("api/me")`, not `/api/me`) — app is served under `/apps/<slug>-<id>/`;
-- read all credentials from ENV, never write config files.
+- have a start command (Node: a `start` script);
+- **listen on `process.env.PORT` and bind `0.0.0.0`**, not `localhost`;
+- **use relative URLs** in the frontend (`fetch("api/me")`, not `/api/me`), because it
+  is served under `/apps/<slug>-<id>/`;
+- read every credential from the environment, where the ERP injects `ERP_BASE_URL`,
+  `ERP_API_KEY`, `ERP_WORKSPACE_ID` and `PORT`.
 
-ERP injects `ERP_BASE_URL`, `ERP_API_KEY`, `ERP_WORKSPACE_ID`, `PORT`.
+**Never set `ERP_ENV=development` on an installed app**: every record write becomes a
+dry run, and the app looks healthy while saving nothing.
 
-⚠️ **Never declare `ERP_ENV=development` for installed apps.** It turns all record writes to dry runs: app runs without errors but nothing saves — hardest kind of silent failure. Omit it.
+After install the ERP deploys on its own — unless `schema.json` needs review. Then the
+app waits at `schemaStatus: "pending"` with **no build** until the deployer approves;
+that is not a build failure. Sources, lifecycle and the error table:
+`references/deploy.md`.
 
-After install ERP auto-deploys, **unless** `schema.json` doesn't match: app stalls at `schemaStatus: "pending"` and **no builds created** until the deployer approves. Full lifecycle, three sources (template/repo/zip), error table: `references/deploy.md`.
-
-## Pitfalls learned the hard way
-
-- **App stalled after install, no build** → `schemaStatus: "pending"`, awaiting `schema.json` review. Not a build failure.
-- **`MissingPermissionsError` at boot** → key missing declared permissions, or app declared `object:create` (mini apps never have it). Read `.missing`.
-- **FE calls `api/...` gets 404** → app host opened without `/` before `#`, relative fetch resolves wrong through Traefik.
-- **401/403 after redeploy** → app cached old API key; it's rotated.
-- **Build OK but won't go `running`** → binds `localhost` instead of `0.0.0.0`,
-  or doesn't listen on `PORT`.
-- **`relation` fields write is replace-entire-list**, not append — `[]` clears links,
-  `null` keeps them. See erp-data skill.
-- **Reading 0 records despite data existing** → row scope IAM, not a filter bug.
-
-Before modifying the deployer's workspace structure (creating tables, changing fields via admin key): **ask**. That's not the app's job.
+Changing the deployer's workspace structure with an admin key is not the app's job —
+ask first.
 
 ## References
 
-- `references/schema.md` — `schema.json`: format, 18 field types, backend rules,
-  `validateSchema`/`planSchema`/`assertSchema`, evolving schema later.
-- `references/identity.md` — complete initData: signature flow, frontend + server code, session caching,
-  two permission models, security checklist.
-- `references/deploy.md` — runtime contract, three sources, schema review UI,
-  state lifecycle, ENV, logo, common error table.
-- Reading/writing/analyzing data (queries, DataFrame, SQL) → skill **`erp-data`**.
-- Workflows, files on the drive (upload, download), shared variables → skill **`erp-tools`**.
+- `references/schema.md` — `schema.json` format, field types, backend rules,
+  `validateSchema` / `planSchema` / `assertSchema`, evolving a schema.
+- `references/identity.md` — the initData flow, frontend and server code, the two
+  authority models, a security checklist.
+- `references/deploy.md` — runtime contract, install sources, schema review, status
+  lifecycle, operations, common errors.
+- Skill `erp-data` — queries, relations, `DataFrame`, SQL.
+- Skill `erp-tools` — workflows, the drive, and the task board (reached through
+  `session(initData).client`, never the app's own key).

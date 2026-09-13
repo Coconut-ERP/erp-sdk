@@ -1,18 +1,14 @@
 ---
 name: erp-wiki
-description: Write and maintain the Coconut ERP workspace wiki, and retrieve from it — pages (entity/concept/comparison/query), immutable sources, `[[slug]]` wikilinks, catalog and log, the lint pass, drive documents attached to a page and indexed, and `erp.wiki.ask(slug, question)` retrieval (RAG) over them. Use when the task involves the ERP wiki or knowledge base, writing up what a workspace has concluded, `erp.wiki`, wiki pages/slug/publish/archive/lint, ingesting sources, attaching a PDF and asking questions about it, citing where an answer came from, or when the user says "write this into the wiki", "what do we know about X", "ask the document", "build a knowledge base on ERP", "our notes about this supplier". Reading and writing records is the erp-data skill; the drive itself is the erp-tools skill.
+description: Writes, maintains and retrieves from the Coconut ERP workspace wiki with erp-sdk — pages (entity, concept, comparison, query) addressed by slug, immutable sources, `[[slug]]` links, draft/publish/archive, conventions and lint, drive documents attached and indexed, and `erp.wiki.ask(slug, question)` retrieval over them. Use when the task involves the ERP wiki or knowledge base, recording what the workspace has concluded, attaching a document and asking questions about it, or citing where an answer came from ("write this into the wiki", "what do we know about this supplier", "ask the contract PDF"). Records are erp-data; the drive itself is erp-tools.
 ---
 
-# The ERP Wiki
+# The ERP wiki
 
-One wiki per workspace: **what this organisation has concluded**, written once and
-linked together, instead of the same answer being re-derived from chat and files every
-time. Pages are drafted, published, linted; documents attached to a page are indexed so
-`ask` can retrieve the passages that answer a question.
-
-It is a wiki-for-LLMs model — four page types, immutable sources, `[[slug]]` links, a
-generated catalog, an append-only log, a lint pass — plus retrieval over attached
-documents, which is the part the classic model does not have.
+One wiki per workspace, holding **what the organisation has concluded** — written
+once and linked, instead of re-derived from chat and files each time. Pages are
+drafted, published and linted; documents attached to a page are indexed so `ask` can
+retrieve the passages that answer a question.
 
 ```ts
 import { createMiniApp } from "erp-sdk";
@@ -24,190 +20,152 @@ const erp = await createMiniApp({
 });
 ```
 
-Reading takes `wiki:read`, the floor every role holds. Writing takes
-`wiki:create`/`wiki:update`; **publishing and setting the conventions take
-`wiki:manage`**. A mini app's service account is a `writer`: it reads the wiki and
-cannot write it. Check with `npx erp whoami` before promising the user an edit.
+| Action | Permission |
+| --- | --- |
+| Read, search, `ask` | `wiki:read` — every role, including a mini app's `writer` key |
+| Draft, edit, ingest, attach, lint | `wiki:create` / `wiki:update` |
+| Publish, change settings | `wiki:manage` |
 
-## 1. Read before you write — always
+A service-account key cannot write the wiki. Check `npx erp whoami` before promising
+an edit.
 
-The catalog is generated per request, so it can never drift from the pages. It is the
-cheapest possible orientation and it is the first call in almost every task:
+## 1. Read before writing
+
+The catalog is generated per request, so it never drifts from the pages — start there:
 
 ```ts
-const catalog = await erp.wiki.catalog();                      // grouped by type
+const catalog = await erp.wiki.catalog();                                 // grouped by type
 const concepts = await erp.wiki.catalog({ type: "concept", status: "published" });
 const matches = await erp.wiki.search("tồn kho", { limit: 10 });
-const page = await erp.wiki.page("chinh-sach-ton-kho");        // body + sources + links
+const page = await erp.wiki.page("chinh-sach-ton-kho");                   // body, sources, links
+const { conventions, taxonomy } = await erp.wiki.settings();
 ```
 
-Answering a question from the wiki: **catalog → pick the page → read it → `ask` its
-documents if the answer is in an attachment**. Going straight to `search` skips the map
-and finds pages that merely mention the words.
+To answer a question: **catalog → page → read it → `ask` its documents** if the answer
+is in an attachment. Going straight to `search` skips the map and finds pages that
+merely mention the words. Read `conventions` before writing a page, and write to them.
 
-## 2. Slug is the address, not the title
+## 2. The slug is the address
 
 ```ts
 import { wikiSlug } from "erp-sdk";
-wikiSlug("Chính sách tồn kho");   // "chinh-sach-ton-kho"
-wikiSlug("Hoá đơn bán hàng");     // "hoa-don-ban-hang" — accents fold, they don't vanish
+wikiSlug("Chính sách tồn kho");   // "chinh-sach-ton-kho" — accents fold, they don't vanish
 ```
 
-The slug is folded once at creation and **does not move when the title changes**. The
-first page to claim a name keeps the readable slug; a second page with the same title
-gets a random suffix — so **keep the slug the create call returned**, don't re-derive
-it. A wrong slug is `UnknownWikiPageError`; find the right one with `search`.
+The slug is fixed at creation and **does not follow the title**. A second page with
+the same title gets a random suffix, so keep the slug the create call returned instead
+of re-deriving it. A wrong slug is `UnknownWikiPageError`; find the right one with
+`search`.
 
-## 3. Four page types, and a threshold for making one
+## 3. Pages
 
 | `type` | Holds | Example |
 | --- | --- | --- |
-| `entity` | one thing that exists | "Nhà cung cấp Minh Long" |
-| `concept` | an idea, policy, process | "Chính sách tồn kho" |
-| `comparison` | several things side by side | "Kho Bình Dương vs Long An" |
-| `query` | one investigation, filed | "Vì sao tồn kho nhóm A tăng Q2" |
+| `entity` | One thing that exists | "Nhà cung cấp Minh Long" |
+| `concept` | An idea, policy or process | "Chính sách tồn kho" |
+| `comparison` | Several things side by side | "Kho Bình Dương vs Long An" |
+| `query` | One investigation, filed | "Vì sao tồn kho nhóm A tăng Q2" |
 
 ```ts
-const page = await erp.wiki.createPage({
+const created = await erp.wiki.createPage({
   title: "Chính sách tồn kho",
   type: "concept",
-  summary: "Mức tồn tối thiểu theo nhóm hàng và ai được duyệt vượt mức.",   // ONE line
-  body: "Nhóm A giữ 30 ngày. Quy trình nhập xem [[quy-trinh-nhap-kho]].",
-  tags: ["kho"],                       // inside the taxonomy — lint checks
+  summary: "Mức tồn tối thiểu theo nhóm hàng và ai được duyệt vượt mức.",   // one line
+  body: "Nhóm A giữ 30 ngày. Quy trình nhập: [[quy-trinh-nhap-kho]].",
+  tags: ["kho"],                                                            // from the taxonomy
   confidence: "medium",
   sourceIds: [source.id],
 });
-page.status;   // "draft" — always, no exceptions
+created.status;   // always "draft"
 ```
 
-**Don't create a page for everything you just read.** The working threshold: it is
-mentioned in **≥ 2 sources**, or it is **central to one**. A wiki full of one-line pages
-turns its own catalog into noise. Below the threshold, add a paragraph to an existing
-page instead.
+- **Create a page only past a threshold**: mentioned in ≥ 2 sources, or central to one.
+  Below it, add a paragraph to an existing page.
+- **Give every page ≥ 2 outbound `[[links]]`**; a page with none in or out is an orphan.
 
-Every page should carry **≥ 2 outbound `[[links]]`**. A page nothing links to and that
-links to nothing is an orphan, and lint says so.
-
-## 4. Draft → publish, and never delete when you mean archive
+## 4. Draft, publish, archive
 
 ```ts
-await erp.wiki.updatePage(slug, { body, confidence: "high" });  // → back to draft
-await erp.wiki.publishPage(slug);      // wiki:manage
-await erp.wiki.archivePage(slug);      // retires it; links into it still resolve
-await erp.wiki.deletePage(slug);       // links into it become BROKEN
+await erp.wiki.updatePage(slug, { body, confidence: "high" });  // back to draft
+await erp.wiki.publishPage(slug);                               // wiki:manage
+await erp.wiki.archivePage(slug);                               // retired; links into it still resolve
+await erp.wiki.deletePage(slug);                                // links into it break
 ```
 
-Every edit to a published page returns it to `draft` — changing what the workspace
-relies on asks for the decision again. That is a feature; don't work around it by
-editing and forgetting to publish.
+Every edit returns a published page to `draft`; readers keep seeing the published
+version until someone publishes again. **Publishing says the workspace stands behind
+the page: ask the user first**, and never publish claims without a source. To retire a
+page, archive it — deleting leaves broken links behind.
 
-`archive` is almost always what is meant: `delete` does not remove the links pointing
-at the page, it only turns them into broken links for lint to report.
-
-**Publishing is a decision about what the workspace stands behind.** Ask the user before
-publishing something you drafted, and never publish a page whose claims you could not
-source.
-
-## 5. Provenance: sources vs attachments
-
-They are not interchangeable.
+## 5. Sources and attachments
 
 ```ts
-// A source: text ingested into the wiki, immutable, cited by pages.
+// Source: text ingested into the wiki, immutable, cited by pages through sourceIds
 const source = await erp.wiki.ingestSource({
-  kind: "note",                  // article | paper | transcript | note
+  kind: "note",                              // article | paper | transcript | note
   title: "Biên bản họp kho 08/2026",
   body: text,
   sourceUrl: "https://…",
 });
 
-// An attachment: a drive file copied into the wiki and indexed for `ask`.
-const attached = await erp.wiki.attachFile(slug, file.id);   // 202 — indexing is queued
-await erp.wiki.waitForIndex(attached.id);                    // pending → indexing → ready
+// Attachment: a drive file copied into the wiki and indexed for ask
+const attached = await erp.wiki.attachFile(slug, file.id);   // 202, indexing queued
+await erp.wiki.waitForIndex(attached.id);                    // check indexStatus: ready | failed
 ```
 
-Sources are **immutable**: changed content is a new source, which is what makes a
-citation stable.
+Changed content is a new source; that keeps citations stable.
 
-> **Attaching a file publishes it to the whole wiki.** The copy belongs to the wiki from
-> that moment: the file's own sharing stops applying, so everyone who may read the wiki
-> may ask what the document says. Confirm with the user before attaching anything that
-> was shared narrowly.
+> **Attaching a file discloses it to the whole wiki.** The copy stops following the
+> file's own sharing, so everyone who can read the wiki can ask what it says. Confirm
+> with the user before attaching anything shared narrowly.
 
-## 6. `ask` — retrieval, not an answer
+## 6. `ask` retrieves, it does not answer
 
 ```ts
 const passages = await erp.wiki.ask(slug, "Nhóm A giữ tồn tối thiểu bao nhiêu ngày?", { limit: 5 });
 for (const p of passages) console.log(`${p.source}: ${p.text}`, p.link);
 ```
 
-- Scoped to **that page's attached documents and nothing else**. To widen, search the
-  catalog first and ask inside the page you land on.
-- Matches by meaning **and** by wording, so a plain question works and a part number
-  still matches literally.
-- It **retrieves**; it does not compose an answer. What comes back is context for a
-  model or quotes for a person — and every claim you then write should cite
-  `p.source`/`p.link`.
-- `indexStatus: "failed"` means that document will never be found; the usual cause is a
-  file uploaded with an unknown extension, so its MIME is `application/octet-stream`.
-- `503` is the indexer or embedding model being unavailable — not an empty page.
+It searches **that page's attachments only**, matches by meaning and by exact wording,
+and returns passages, not prose. Every claim built on them cites `p.source` and
+`p.link`. Details, index states and composing a cited answer: `references/retrieval.md`.
 
-## 7. Conventions and lint
+## 7. Lint
 
 ```ts
-await erp.wiki.setSettings({
-  domain: "Vận hành kho và mua hàng",
-  conventions: "Mỗi trang ≥ 2 link ra. Số liệu phải có nguồn. Không đoán.",
-  taxonomy: ["kho", "mua-hang", "nha-cung-cap"],
-});
-
-const report = await erp.wiki.lint();   // wiki:update — it stamps lintedAt and logs
+const report = await erp.wiki.lint();   // wiki:update — stamps lintedAt and writes to the log
 ```
 
-`conventions` is the house style every page is held to — read it **before writing a
-page**, and write to it. Lint reports broken links, orphans, `contested` pages, stale
-pages, thin provenance and tags outside the taxonomy; its findings are the next round of
-work, not a score.
+Lint reports broken links, orphans, `contested` pages, stale pages, thin provenance
+and tags outside the taxonomy. Treat the findings as the next round of work.
 
-## 8. The loop, condensed
+## Before saying it's done
 
-```
-catalog  →  does a page already cover this?
-   │              │ yes → update (→ draft) → ask user → publish
-   │ no
-   ▼
-ingestSource / attachFile  →  createPage (≥ 2 outbound links, summary in one line)
-   │
-   ▼
-lint periodically → fix broken links, orphans, off-taxonomy tags
-```
-
-## Checklist before you say you're done
-
-- [ ] Read `settings().conventions` and wrote to it.
-- [ ] Page slug came from the create call, not from guessing.
-- [ ] `summary` is one line a person can scan in the catalog.
-- [ ] ≥ 2 outbound `[[links]]`, and `page.brokenLinks` is empty.
-- [ ] Every number or claim traces to a `sourceIds` entry or an attached document.
-- [ ] Left it as a draft and **asked** before publishing.
-- [ ] Told the user what attaching a document exposed, if you attached one.
+- [ ] Read `settings().conventions` and followed them.
+- [ ] The slug came from the create call.
+- [ ] `summary` is one scannable line.
+- [ ] ≥ 2 outbound links, and `(await erp.wiki.handle(slug)).brokenLinks` is empty.
+- [ ] Every number or claim traces to `sourceIds` or an attached document.
+- [ ] Left as a draft, and asked before publishing.
+- [ ] Told the user what an attachment exposed, if one was added.
 
 ## Pitfalls
 
 | Symptom | Cause |
 | --- | --- |
-| `UnknownWikiPageError` on a page you can see | You passed the title; the address is the slug |
-| Page edits "disappear" | Editing returned it to `draft`; the published version is still what people read |
-| `ask` returns nothing | Attachment still `pending`, or `failed` — check `waitForIndex` |
-| Duplicate pages on one topic | Nobody read the catalog first |
-| Lint reports orphans after a cleanup | `delete` was used where `archive` was meant |
-| 403 on publish | Publishing takes `wiki:manage`; drafting only takes `create`/`update` |
+| `UnknownWikiPageError` on a page you can see | The title was passed; the address is the slug |
+| Edits "disappear" | The edit returned the page to `draft`; readers still see the published version |
+| `ask` returns nothing | Attachment still `pending`, or `failed` |
+| `indexStatus: "failed"` | Usually uploaded as `application/octet-stream`; set `mimeType` on upload |
+| `ask` answers 503 | The indexer or embedding model is down, not an empty page |
+| Duplicate pages on one topic | The catalog was not read first |
+| New broken links after a cleanup | `delete` was used where `archive` was meant |
+| 403 on publish | Publishing takes `wiki:manage` |
 
 ## References
 
-- `references/writing.md` — page anatomy, the conventions/taxonomy, link discipline,
-  lint findings and what to do about each.
-- `references/retrieval.md` — attachments, indexing states, `ask` in depth, and how to
-  turn passages into a cited answer.
-- Uploading the documents you attach → skill **`erp-tools`**, `references/files.md`.
-- Records, SQL and analysis → skill **`erp-data`**.
+- `references/writing.md` — page fields, conventions and taxonomy, links, create vs
+  extend, sources, lint findings, the log.
+- `references/retrieval.md` — attaching, index states, `ask` in depth, cited answers.
+- Skill `erp-tools` — uploading the documents you attach.
+- Skill `erp-data` — records, SQL and analysis.

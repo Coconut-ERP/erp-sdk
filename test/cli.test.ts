@@ -390,6 +390,9 @@ describe("scaffolding", () => {
         "utf8",
       );
       expect(skill).toContain(`name: ${name}`);
+      const description = /^description: (.+)$/m.exec(skill)?.[1] ?? "";
+      expect(description.length).toBeGreaterThan(0);
+      expect(description.length).toBeLessThanOrEqual(1024);
     }
 
     expect(

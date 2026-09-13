@@ -1,133 +1,129 @@
-# Writing Wiki Pages
+# Writing wiki pages
 
-## Anatomy of a page
+## Contents
+
+- [Page fields](#page-fields)
+- [Conventions and taxonomy](#conventions-and-taxonomy)
+- [Links](#links)
+- [Create or extend](#create-or-extend)
+- [Status](#status)
+- [Sources](#sources)
+- [Lint findings](#lint-findings)
+- [The log](#the-log)
+
+## Page fields
 
 | Field | Rule |
 | --- | --- |
-| `title` | ≤ 255 chars. Names the thing, not the question ("Chính sách tồn kho", not "Tồn kho thế nào?") — except on a `query` page, where the question *is* the thing |
-| `slug` | Optional; the server folds `title` when absent. ≤ 160 chars, immutable afterwards |
-| `type` | `entity` · `concept` · `comparison` · `query` — decides how the catalog groups it |
-| `summary` | **Required, one line**, ≤ 500 chars. The only thing the catalog shows |
-| `body` | Markdown, ≤ 200 000 chars. `[[slug]]` links other pages |
-| `tags` | ≤ 20, slugified server-side, expected to sit inside `settings.taxonomy` |
-| `confidence` | `high` · `medium` · `low` — how much the workspace should lean on this |
-| `contested` | `true` when the workspace does not agree yet. Lint surfaces these |
-| `sourceIds` | ≤ 50 ingested sources this page rests on |
+| `title` | ≤ 255 chars. Names the thing, not a question — except on a `query` page |
+| `slug` | Optional; folded from `title` when absent. ≤ 160 chars, immutable |
+| `type` | `entity` · `concept` · `comparison` · `query` — how the catalog groups it |
+| `summary` | **Required, one line**, ≤ 500 chars — the only thing the catalog shows |
+| `body` | Markdown, ≤ 200,000 chars; `[[slug]]` links other pages |
+| `tags` | ≤ 20, slugified by the server, expected inside `settings.taxonomy` |
+| `confidence` | `high` · `medium` · `low` — how far the workspace should lean on it |
+| `contested` | `true` while the workspace disagrees; lint lists these |
+| `sourceIds` | ≤ 50 ingested sources the page rests on |
 
-The `summary` earns the most care: someone deciding whether to open the page reads only
-that line. "Mức tồn tối thiểu theo nhóm hàng và ai được duyệt vượt mức" says what is
-inside; "Về chính sách tồn kho" says nothing.
+The summary deserves the most care: "Mức tồn tối thiểu theo nhóm hàng và ai được
+duyệt vượt mức" says what is inside; "Về chính sách tồn kho" says nothing.
 
-## Write to the conventions
+## Conventions and taxonomy
 
 ```ts
 const { domain, conventions, taxonomy } = await erp.wiki.settings();
+await erp.wiki.setSettings({ domain, conventions, taxonomy });   // wiki:manage
 ```
 
-`conventions` is the workspace's house style — read it before drafting, and follow it
-even when your own habits differ. It is what keeps a wiki written by several people and
-several agents reading like one document. `domain` frames what belongs in the wiki at
-all; a page outside it is usually a note that belongs somewhere else.
+- `conventions` is the house style; follow it even where your habits differ.
+- `domain` frames what belongs in the wiki at all.
+- `taxonomy` is the tag vocabulary. Use an existing tag or ask the user to widen it —
+  never invent one quietly.
 
-`taxonomy` is the allowed tag vocabulary. A tag outside it is a lint finding, so either
-use an existing tag or ask the user to widen the taxonomy — never quietly invent one.
+Changing any of them changes how every page is judged: a decision, not a cleanup.
 
-Changing any of the three takes `wiki:manage` and changes how **every** page is judged.
-It is a decision, not a cleanup task.
-
-## Links are the structure
-
-A page's value is largely in what it connects to.
+## Links
 
 ```md
 Nhóm A giữ 30 ngày, theo [[quy-trinh-nhap-kho]] và biên bản họp tháng 8.
-So sánh giữa hai kho: [[kho-binh-duong-vs-long-an]].
 ```
 
-- `[[slug]]` resolves by slugifying what is inside the brackets, so `[[Chính sách tồn
-  kho]]` reaches `chinh-sach-ton-kho` — but writing the slug directly is safer, because a
-  page whose slug carries a random suffix is unreachable by title.
-- **Aim for ≥ 2 outbound links.** Fewer usually means the page is either too small to
-  exist or was written without reading the catalog.
-- Linking a page that does not exist yet is allowed and sometimes correct: it records
-  what should be written next. Lint will list it as broken until it is.
-- `page.outbound` / `page.inbound` come back on the detail call;
-  `handle.brokenLinks` is the unresolved half of the outbound list.
+- `[[…]]` slugifies its contents, so `[[Chính sách tồn kho]]` reaches
+  `chinh-sach-ton-kho` — but write the slug itself: a page whose slug has a random
+  suffix is unreachable by title.
+- Aim for ≥ 2 outbound links. Fewer usually means the page is too small to exist or
+  was written without reading the catalog.
+- Linking a page that does not exist yet is allowed; it records what to write next,
+  and lint lists it as broken until then.
+- The detail call returns `outbound` / `inbound`; `WikiPageHandle.brokenLinks`
+  (`erp.wiki.handle(slug)`) is the unresolved part of `outbound`.
 
-## When to create versus extend
+## Create or extend
 
-Create a page when the subject is **mentioned in ≥ 2 sources**, or **central to one**.
-Otherwise add a paragraph to the page that already covers the area. Two failure modes,
-both common:
+Create a page when the subject is **mentioned in ≥ 2 sources** or **central to one**;
+otherwise extend the page that covers the area. Both failure modes are common:
 
-- **Over-creation.** Every fact gets a page, the catalog becomes a list nobody reads,
-  and answers scatter across ten stubs.
-- **Under-creation.** One "Kho" page grows to 3 000 lines and every question about
-  anything warehouse-shaped returns it. When a page needs sections that never reference
-  each other, split it and link the halves.
+- **Over-creation** — every fact gets a page and answers scatter across stubs.
+- **Under-creation** — one page grows until every question returns it. When its
+  sections never reference each other, split it and link the halves.
 
-Check for an existing page first — always:
+Always check first:
 
 ```ts
 const existing = await erp.wiki.findPage(wikiSlug(title));   // undefined when absent
 const near = await erp.wiki.search(title, { limit: 5 });     // same subject, other wording
 ```
 
-## Status, and who decides
+## Status
 
 ```
 createPage ──► draft ──publish (wiki:manage)──► published
                  ▲                                  │
                  └────────── any update ────────────┘
 
-published ──archive──► archived        (links into it still resolve)
-published ──delete───► gone            (links into it become broken)
+published ──archive──► archived   (links into it still resolve)
+published ──delete───► gone       (links into it break)
 ```
 
-- A `draft` is a proposal. Writing one is a normal task for an agent.
-- **Publishing is a decision the workspace makes**, not one an agent makes on its own —
-  it says the workspace stands behind the page. Draft, then ask.
-- `archive` retires a page that has been superseded; `delete` is for a page that should
-  never have existed. Deleting to "clean up" leaves broken links behind.
+A draft is a proposal, and writing one is normal agent work. Publishing is the
+workspace's decision: draft, then ask. Archive what was superseded; delete only what
+should never have existed.
 
 ## Sources
 
 ```ts
 const source = await erp.wiki.ingestSource({
-  kind: "article" | "paper" | "transcript" | "note",
+  kind: "article",                 // article | paper | transcript | note
   title: "Biên bản họp kho 08/2026",
-  body: text,                     // ≤ 2 000 000 chars
-  sourceUrl: "https://…",         // optional but preferred — provenance people can follow
+  body: text,                      // ≤ 2,000,000 chars
+  sourceUrl: "https://…",          // preferred — provenance people can follow
 });
-await erp.wiki.sources({ page: 1, perPage: 50 });   // bodies omitted from the list
-await erp.wiki.source(source.id);                   // body + pages compiled from it
+await erp.wiki.sources({ page: 1, perPage: 50 });   // bodies omitted
+await erp.wiki.source(source.id);                   // body plus the pages built on it
 ```
 
-Sources are **immutable**. Content that changed is a new source, and the page moves its
-citation — that is what keeps an old claim checkable against what was actually read.
+Sources are immutable: changed content is a new source, and the page moves its
+citation. A claim resting on pasted text with no origin is what `confidence: "low"`
+is for.
 
-Prefer a source with a `sourceUrl` over pasted text with no origin; a claim whose
-provenance is "somebody pasted this once" is what `confidence: "low"` is for.
-
-## Lint findings and what each one means
+## Lint findings
 
 ```ts
 const report = await erp.wiki.lint();
 // { totalPages, totalSources, findings: [{ kind, severity, subject, detail }], lintedAt }
 ```
 
-| Finding | What to do |
+| Finding | Action |
 | --- | --- |
-| Broken link | Write the missing page, or fix the slug in the body |
-| Orphan page | Link it from a page people actually reach, or archive it |
-| `contested` page | Resolve the disagreement with the user; don't silently pick a side |
-| Stale page | Re-check it against current sources; update `confidence` honestly |
-| Thin provenance | Add `sourceIds`, or lower `confidence` to match what is actually known |
+| Broken link | Write the missing page, or fix the slug |
+| Orphan page | Link it from a page people reach, or archive it |
+| `contested` page | Resolve it with the user; don't pick a side silently |
+| Stale page | Re-check against current sources; set `confidence` honestly |
+| Thin provenance | Add `sourceIds`, or lower `confidence` |
 | Tag outside taxonomy | Use an existing tag, or ask before widening the taxonomy |
 
-Lint takes `wiki:update`, not `read`: it stamps `lintedAt` and appends to the log. Run
-it after a batch of writing, and treat the findings as the next work item rather than a
-number to report.
+Lint needs `wiki:update` because it stamps `lintedAt` and writes to the log. Run it
+after a batch of writing.
 
 ## The log
 
@@ -136,5 +132,5 @@ const { entries } = await erp.wiki.log({ page: 1, perPage: 50 });
 ```
 
 Append-only, newest first: every ingest, edit, publish, archive, delete and lint, with
-who did it. Read it when a page's history is the question ("when did we decide this?"),
-and never as a substitute for the page itself.
+who did it. Read it when history is the question ("when did we decide this?"), never
+instead of the page.

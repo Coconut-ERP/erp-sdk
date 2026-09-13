@@ -1,20 +1,23 @@
-# Attachments and Retrieval (RAG)
+# Attachments and retrieval
 
-A page can carry documents, and the wiki indexes them so a question can be answered out
-of what they actually say. This is the half a plain wiki does not have: the page holds
-the conclusion, the attachments hold the evidence, and `ask` gets you from a question to
-the exact passages.
+The page holds the conclusion; its attachments hold the evidence; `ask` goes from a
+question to the exact passages.
 
-## The pipeline
+## Contents
+
+- [Pipeline](#pipeline)
+- [Attaching is a disclosure](#attaching-is-a-disclosure)
+- [Index states](#index-states)
+- [`ask`](#ask)
+- [From passages to an answer](#from-passages-to-an-answer)
+
+## Pipeline
 
 ```
 files.upload(...)            → a document in the drive
-   │
 wiki.attachFile(slug, id)    → 202: copied into the wiki, indexing queued
-   │
 wiki.waitForIndex(sourceId)  → pending → indexing → ready | failed
-   │
-wiki.ask(slug, question)     → the passages that answer it, each with its source
+wiki.ask(slug, question)     → passages, each with its source
 ```
 
 ```ts
@@ -23,7 +26,7 @@ const file = await erp.files.upload({
   folderId: folder.id,
   name: "quy-che-kho-2026.pdf",
   content: pdfBytes,
-  mimeType: "application/pdf",     // set it — an unknown type will not be indexed
+  mimeType: "application/pdf",     // an unknown type is never indexed
 });
 
 const source = await erp.wiki.attachFile("chinh-sach-ton-kho", file.id);
@@ -31,109 +34,74 @@ const ready = await erp.wiki.waitForIndex(source.id, { timeoutMs: 180_000 });
 if (ready.indexStatus === "failed") throw new Error(ready.indexError);
 ```
 
-## Attaching is a disclosure — say so
+## Attaching is a disclosure
 
-The copy belongs to the wiki from the moment it is attached:
+From the moment of attaching, the copy belongs to the wiki:
 
-- the file's **own sharing stops applying**;
-- everyone who may read the wiki may ask what the document says, and read the passages
-  that come back;
-- the person attaching must be able to read the file themselves, and that is the only
-  check.
+- the file's own sharing stops applying;
+- everyone who can read the wiki can ask what it says and read the passages;
+- the only check is that the person attaching can read the file.
 
-So: confirm with the user before attaching anything that was shared with a few people,
-and say plainly what attaching it exposes. Detaching removes the copy (and, when no page
-points at it any more, its passages and extracted images), but it does not un-read what
-people already read.
+Confirm before attaching anything shared with a few people, and say what it exposes.
+Detaching removes the copy — and its passages and images once no page points at it —
+but cannot undo what people already read.
 
 ## Index states
 
-| `indexStatus` | Means |
+| `indexStatus` | Meaning |
 | --- | --- |
-| `pending` / `indexing` | Queued or in progress — `ask` finds nothing in it yet |
+| `pending` / `indexing` | Queued or running; `ask` finds nothing in it yet |
 | `ready` | Searchable |
-| `failed` | It will **never** be found; `indexError` says why |
+| `failed` | Never searchable; `indexError` says why |
 
-`waitForIndex` polls and returns whatever it settles as — it does not throw on `failed`,
-so check the status. It also returns on timeout without stopping the indexing; a large
-PDF can outlast a default wait.
+`waitForIndex` does not throw on `failed`, and on timeout it returns without stopping
+the indexing — check the status it returns. A large PDF can outlast the default wait.
+The usual `failed` cause is an upload under an unmapped extension, stored as
+`application/octet-stream`; pass `mimeType` at upload.
 
-The most common `failed` cause is not the document at all: it was uploaded under an
-extension the SDK could not map, so its MIME is `application/octet-stream`. Fix it at
-upload time by passing `mimeType`.
-
-## `ask` in practice
+## `ask`
 
 ```ts
-const passages = await erp.wiki.ask(slug, "Nhóm A giữ tồn tối thiểu bao nhiêu ngày?", {
-  limit: 8,          // ≤ 20
-});
+const passages = await erp.wiki.ask(slug, question, { limit: 8 });   // limit ≤ 20
 
 for (const p of passages) {
-  p.text;            // the passage itself
-  p.source;          // the document's title — this is what you cite
-  p.headingPath;     // where in the document, when the format had headings
-  p.pageNumber;      // for paginated documents
-  p.link;            // back to the page and passage, clickable in a citation
-  p.score;           // relevance; ordering is already by it
+  p.text;          // the passage
+  p.source;        // document title — what you cite
+  p.headingPath;   // position in the document, when it had headings
+  p.pageNumber;    // for paginated documents
+  p.link;          // back to the page and passage
+  p.score;         // relevance; results are already ordered by it
 }
 ```
 
-Three properties decide how to use it:
+1. **One page's attachments, nothing else** — not the wiki, not the drive. To widen,
+   find the page with `catalog()` / `search()` first. When the right page is unclear,
+   ask the user rather than looping `ask` over many pages.
+2. **Hybrid matching** — meaning and wording together, so a natural question works
+   and a part number or invoice code still matches literally. Pass the question as
+   asked; don't reduce it to keywords.
+3. **Retrieval only** — the passages are context to reason over or quotes to show.
 
-1. **Scope is one page.** It searches that page's attachments and nothing else — not the
-   wiki, not the drive. Widening means `catalog()`/`search()` first, then asking inside
-   the page you land on. If the right page is unclear, ask the user which one rather than
-   asking five pages in a loop.
-2. **Hybrid matching.** Meaning and wording together, so a natural question works *and* a
-   part number, an invoice code or a proper noun still matches literally. Don't
-   pre-process the user's question into keywords; pass it as asked.
-3. **It retrieves, it does not answer.** Nothing here writes prose. The passages are the
-   context you reason over, or the quotes a person reads.
+A 503 means the indexer or embedding model is unavailable; retry, and say so.
 
-`503` means the indexer or the embedding model is unavailable — a service problem, not
-an empty page. Retry, and say which it was.
-
-## Turning passages into an answer
+## From passages to an answer
 
 ```ts
 const passages = await erp.wiki.ask(slug, question, { limit: 6 });
 if (passages.length === 0) {
-  return `Không có tài liệu nào gắn ở trang "${slug}" trả lời được câu này.`;
+  return `No document attached to "${slug}" answers this.`;
 }
-
 const context = passages
-  .map((p, i) => `[${i + 1}] ${p.source}${p.pageNumber ? ` tr.${p.pageNumber}` : ""}\n${p.text}`)
+  .map((p, i) => `[${i + 1}] ${p.source}${p.pageNumber ? ` p.${p.pageNumber}` : ""}\n${p.text}`)
   .join("\n\n");
-// hand `context` to the model, and require it to cite [n]
+// give `context` to the model and require a [n] citation on every claim
 ```
 
-Rules worth keeping:
-
-- **Never state something the passages do not contain.** Empty results are an answer:
-  say the documents do not cover it.
-- **Cite every claim** — `p.source` plus `p.link`. An answer from the wiki that cannot be
-  traced is worth less than no answer.
-- **Say when the evidence disagrees with the page.** If a passage contradicts what the
-  page states, that is a `contested: true` finding for the user to resolve, not something
-  to smooth over.
-- **Don't paste passages into the page body** as if they were the wiki's own words.
-  Summarise, and cite the source id in `sourceIds`.
-
-## Answering a question end to end
-
-```ts
-// 1. Where would this live?
-const catalog = await erp.wiki.catalog({ status: "published" });
-// 2. Narrow by wording if the catalog is not obvious
-const matches = await erp.wiki.search(question, { limit: 5 });
-const slug = matches[0]?.slug;
-// 3. Read what the workspace already concluded
-const page = await erp.wiki.page(slug);
-// 4. Only then go into the documents
-const passages = await erp.wiki.ask(slug, question);
-```
-
-Step 3 matters: the page is the workspace's *conclusion*, the passages are raw material.
-An answer that skips the page and quotes a document can contradict a decision that was
-already made — and reporting that contradiction is more useful than either half alone.
+- **Never state what the passages do not contain.** No results is an answer: the
+  documents do not cover it.
+- **Cite every claim** with `p.source` and `p.link`.
+- **Read the page before the passages.** The page is the workspace's conclusion; a
+  passage that contradicts it is a `contested` finding to raise with the user, not
+  something to smooth over.
+- **Don't paste passages into a page body** as the wiki's own words — summarise, and
+  cite the source in `sourceIds`.

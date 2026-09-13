@@ -1,67 +1,59 @@
-# The AI Task Board — a Member's Kanban, Shared with Arion
+# The AI task board
 
-Every member has **exactly one board per workspace**, and only two parties ever
-work on it: that member and **Arion**, the copilot. The member files and moves
-cards; Arion files what it produced as a task — a markdown report in the
-description, tags saying which analysis it came from — and hands it back.
+Each member has **one board per workspace**, worked only by that member and **Arion**,
+the copilot. The member files and moves cards; Arion files what it produced — a
+markdown report in the description, tags naming the analysis — and hands it back. It
+is not a team tracker: nobody else can open it, not even an owner, and it cannot be
+shared.
 
-It is not a team tracker. Nobody else can open the board, not even a workspace
-owner, and there is no way to share it.
+## Contents
+
+- [Who reaches it](#who-reaches-it)
+- [Methods](#methods)
+- [Checked before sending](#checked-before-sending)
+- [Authorship and assignment](#authorship-and-assignment)
+- [Behaviour](#behaviour)
+- [Limits](#limits)
+- [Filing a report](#filing-a-report)
 
 ## Who reaches it
 
 | Credential | Result |
 | --- | --- |
-| A logged-in session (`erp.asUser(token)`, `session(initData).client`) | the caller's own board |
-| A personal API key `erp_uk_…` | the key owner's board — this is how Arion gets in: its sandbox holds a key minted for the member |
-| A service account key `erp_sk_…` | **`TaskBoardError`** (`field: "credential"`) before any request — the server would answer 403, because no member stands behind the key. Every mini app's own key is one of these |
+| A session — `erp.asUser(token)`, `session(initData).client` | The caller's own board |
+| A personal key `erp_uk_…` | The key owner's board — how Arion gets in |
+| A service-account key `erp_sk_…` | `TaskBoardError` (`field: "credential"`) before any request; every mini app's own key is one |
 
-There is no RBAC resource and no item ACL: being the owner is the whole check.
-Every lookup is scoped to the caller's board, so a task on another member's board
-is **`UnknownTaskError`** — the server answers 404, never 403, and the id reveals
-nothing.
+There is no RBAC resource or item ACL: owning the board is the check. Every lookup is
+scoped to the caller's board, so another member's task is `UnknownTaskError` (404,
+never 403). The API cannot tell Arion's key from any other personal key the member
+made.
 
-Any personal key the member creates reaches the board too; the API cannot tell
-Arion's key from another of theirs.
-
-## `erp.tasks`
+## Methods
 
 ```ts
-import { createMiniApp } from "erp-sdk";
-
-const erp = await createMiniApp({
-  baseUrl: process.env.ERP_BASE_URL,
-  apiKey: process.env.ERP_API_KEY,          // an erp_uk_ personal key
-});
-
-const board = await erp.tasks.board();
-board.taskCounts;                            // every status present, zero included
+const board = await erp.tasks.board();   // created on first call, id cached; taskCounts covers every status
 ```
 
-| Method | Endpoint | Notes |
-| --- | --- | --- |
-| `board()` | `GET /boards`, then `GET /boards/:id` | The board is **created on first call**; its id is cached on the client |
-| `updateBoard({ name?, description? })` | `PATCH /boards/:id` | There is no create or delete — the board exists because the member does |
-| `list({ status?, priority?, assignee?, unassigned?, tag?, page?, perPage? })` | `GET /boards/:id/tasks` | `{ tasks, meta }`, newest first. `assignee` is `{ type, id }` |
-| `listAll(options)` | same, every page | Walks `meta.totalPages` |
-| `create(spec)` | `POST /boards/:id/tasks` | See below |
-| `get(id)` | `GET /tasks/:id` | `TaskDetailDto` — tags and comments embedded |
-| `update(id, changes)` | `PATCH /tasks/:id` | `title`, `description`, `status`, `priority`, `dueDate`, `metadata` |
-| `setStatus(id, status)` | `PATCH /tasks/:id/status` | |
-| `assign(id, assignee \| null)` | `PATCH /tasks/:id/assign` | `null` unassigns |
-| `delete(id, { dryRun? })` | `DELETE /tasks/:id` | Refuses in development mode |
-| `comments(id)` | `GET /tasks/:id/comments` | Oldest first |
-| `comment(id, content \| { content, attachmentUrl?, actor? })` | `POST /tasks/:id/comments` | |
-| `deleteComment(id, commentId, { dryRun? })` | `DELETE /tasks/:id/comments/:commentId` | Refuses in development mode |
-| `addTag(id, name \| { name, color? })` | `POST /tasks/:id/tags` | Returns the task's whole tag list |
-| `removeTag(id, name)` | `DELETE /tasks/:id/tags/:name` | Name is URL-encoded for you |
+| Method | Notes |
+| --- | --- |
+| `board()` · `updateBoard({ name?, description? })` | No create or delete — the board exists because the member does |
+| `list({ status?, priority?, assignee?, unassigned?, tag?, page?, perPage? })` · `listAll(options)` | `{ tasks, meta }`, newest first; `assignee` is `{ type, id }` |
+| `create(spec)` | See below |
+| `get(id)` | `TaskDetailDto`, tags and comments included |
+| `update(id, { title?, description?, status?, priority?, dueDate?, metadata? })` | |
+| `setStatus(id, status)` · `assign(id, assignee \| null)` | `null` unassigns |
+| `delete(id, { dryRun? })` | Refuses in development mode |
+| `comments(id)` · `comment(id, content \| { content, attachmentUrl?, actor? })` | Oldest first |
+| `deleteComment(id, commentId, { dryRun? })` | Refuses in development mode |
+| `addTag(id, name \| { name, color? })` · `removeTag(id, name)` | `addTag` returns the whole tag list |
 
 ```ts
 const task = await erp.tasks.create({
   title: "Hàng chậm luân chuyển — tháng 8/2026",
   description: reportMarkdown,                       // markdown
-  status: "review",                                  // TASK_STATUSES
-  priority: "high",                                  // TASK_PRIORITIES
+  status: "review",                                  // todo | in_progress | review | done | archived
+  priority: "high",                                  // low | medium | high | urgent
   assignee: { type: "user", id: board.ownerId },
   dueDate: new Date("2026-09-20T17:00:00+07:00"),    // or a full RFC 3339 string
   tags: ["inventory-analysis", { name: "kho", color: "#F59E0B" }],
@@ -69,107 +61,63 @@ const task = await erp.tasks.create({
 });
 ```
 
-## What the SDK checks before sending
+Types — `TaskBoardDto`, `TaskDto`, `TaskDetailDto`, `TaskCommentDto`, `TaskActor` — and
+the enums `TASK_STATUSES` / `TASK_PRIORITIES` are exported from `erp-sdk`.
 
-Each of these throws `TaskBoardError` with `.field` and `.reason`, and sends
-nothing:
+## Checked before sending
 
-- a service account key (`credential`);
-- `title` missing or empty, or any text past its limit;
-- `status`, `priority` or an actor type outside its enum;
-- `dueDate` that is not a `Date` or a **full** RFC 3339 timestamp —
-  `"2026-09-20"` fails here instead of as a server 400;
-- a tag color that is not hex (`#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`), an empty
-  tag name, more than 50 tags;
-- `actor: { type: "agent" }` without an `id`, an assignee without an `id`;
-- an `update` or `updateBoard` carrying no change;
-- a comment `attachmentUrl` that is not an absolute URL.
+Each throws `TaskBoardError` with `.field` and `.reason`, and sends nothing:
 
-What it cannot check is left to the server: a `user` assignee who is not the
-board owner (400), signing as another member (403).
+- a service-account key;
+- a missing or empty `title`, or any text over its limit;
+- a `status`, `priority` or actor type outside its enum;
+- a `dueDate` that is neither a `Date` nor a **full** RFC 3339 timestamp —
+  `"2026-09-20"` fails;
+- a tag color that is not hex (`#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`), an empty tag
+  name, more than 50 tags;
+- an agent actor or an assignee without an `id`;
+- an `update` or `updateBoard` with no change;
+- a comment `attachmentUrl` that is not absolute.
 
-## Shapes
-
-```ts
-interface TaskActor { id: string; type: "user" | "agent" }
-
-interface TaskBoardDto {
-  id: string; workspaceId: string; ownerId?: string;
-  name: string; description: string;
-  createdBy: TaskActor; createdAt: string; updatedAt: string;
-}
-interface TaskBoardDetailDto extends TaskBoardDto {
-  taskCounts: Partial<Record<TaskStatus, number>>;
-}
-
-interface TaskDto {
-  id: string; boardId: string; workspaceId: string;
-  title: string; description: string;
-  status: "todo" | "in_progress" | "review" | "done" | "archived";
-  priority: "low" | "medium" | "high" | "urgent";
-  assignedTo: TaskActor | null;
-  createdBy: TaskActor;
-  dueDate?: string;
-  tags: { id: string; name: string; color: string }[];
-  metadata: Record<string, unknown>;
-  createdAt: string; updatedAt: string;
-}
-interface TaskDetailDto extends TaskDto { comments: TaskCommentDto[] }
-
-interface TaskCommentDto {
-  id: string; taskId: string; author: TaskActor;
-  content: string; attachmentUrl?: string;
-  createdAt: string; updatedAt: string;
-}
-```
+The server checks the rest: a `user` assignee must be the board owner (400), and
+nobody signs as another member (403).
 
 ## Authorship and assignment
 
-`create` and `comment` take an optional `actor`, deciding whose name goes on the
-row:
-
-| `actor` | Row is signed by |
+| `actor` on `create` / `comment` | Signed by |
 | --- | --- |
-| absent | the caller, as `user` |
-| `{ type: "agent", id }` | that agent id, **as given — nothing verifies it** |
-| `{ type: "user", id }` with someone else's id | server 403 — a member never signs another member's name |
+| Absent | The caller, as `user` |
+| `{ type: "agent", id }` | That agent id, **unverified** |
+| `{ type: "user", id }` of someone else | Server 403 |
 
-A `user` assignee **must be the board owner**. An `agent` id is accepted as given.
+A `user` assignee must be the board owner; an `agent` id is taken as given.
 
-## Behaviour worth knowing
+## Behaviour
 
-- **`dueDate` cannot be cleared.** Leaving it out of `update` means "unchanged",
-  and there is no way to send a clear.
-- **`metadata` replaces the whole object** when sent. Read the task, merge, send
-  it all back.
-- **Tags are case-insensitive on the way in, case-sensitive on the way out.**
-  Duplicates in a create collapse; adding a tag the task already has returns the
-  current list; `removeTag` matches the name **exactly**, else the server 404s.
-- Two concurrent adds of the same tag name: one lands, the other gets a 500 from
-  the unique index.
-- A **user's** comment can be deleted only by its author (403 otherwise); an
-  **agent's** comment by any member — on a personal board, the owner.
-- **No dry run.** Creating, editing, moving, assigning, commenting and tagging
-  write for real in development mode. `delete` and `deleteComment` refuse there
-  with `DryRunUnsupportedError`, because the API has no way to restore either;
-  pass `{ dryRun: false }` once the user has agreed.
+- **`dueDate` cannot be cleared** once set; omitting it means unchanged.
+- **`metadata` replaces the whole object** — read, merge, send it all.
+- **Tags** match case-insensitively when added (duplicates collapse, re-adding returns
+  the list) but `removeTag` needs the **exact** name, else 404.
+- A **user's** comment can be deleted only by its author; an **agent's** by the board's
+  owner.
+- Creating, editing, moving, assigning, commenting and tagging write for real in
+  development mode. `delete` and `deleteComment` refuse there because nothing restores
+  them; pass `{ dryRun: false }` once the user agrees.
 
 ## Limits
 
 | Item | Limit | Constant |
 | --- | --- | --- |
-| Board name / description | 255 / 5 000 | `MAX_TASK_BOARD_NAME_LENGTH` / `MAX_TASK_BOARD_DESCRIPTION_LENGTH` |
+| Board name / description | 255 / 5,000 | `MAX_TASK_BOARD_NAME_LENGTH` / `MAX_TASK_BOARD_DESCRIPTION_LENGTH` |
 | Task title | 500 | `MAX_TASK_TITLE_LENGTH` |
-| Task description | 100 000 | `MAX_TASK_DESCRIPTION_LENGTH` |
-| Comment content | 100 000 | `MAX_TASK_COMMENT_LENGTH` |
+| Task description | 100,000 | `MAX_TASK_DESCRIPTION_LENGTH` |
+| Comment | 100,000 | `MAX_TASK_COMMENT_LENGTH` |
 | Tag name / tags per task | 100 / 50 | `MAX_TASK_TAG_NAME_LENGTH` / `MAX_TASK_TAGS` |
-| Attachment URL | 1 024 | `MAX_TASK_ATTACHMENT_URL_LENGTH` |
+| Attachment URL | 1,024 | `MAX_TASK_ATTACHMENT_URL_LENGTH` |
 
-Lengths count characters, so a Vietnamese letter with its accent is one.
+Lengths count characters; an accented Vietnamese letter is one.
 
-## Filing a report as a task
-
-The board exists so an analysis ends somewhere the member will see it:
+## Filing a report
 
 ```ts
 const tag = "slow-moving-stock-2026-08";
@@ -182,36 +130,17 @@ if (tasks.length === 0) {
     status: "review",
     priority: "high",
     tags: [{ name: tag, color: "#F59E0B" }, "inventory-analysis"],
-    metadata: { source: "sql", objects: ["Tồn kho", "Xuất kho"] },
   });
-  await erp.tasks.comment(task.id, {
-    content: "File chi tiết đính kèm.",
-    attachmentUrl: downloadPageUrl,
-  });
+  await erp.tasks.comment(task.id, { content: "File chi tiết đính kèm.", attachmentUrl: documentPageUrl });
 }
 ```
 
-- **Look before filing.** Nothing de-duplicates tasks; a tag naming the run makes
-  a second run find the first card instead of adding another.
-- **`review` is the hand-back column.** It says "done on my side, yours to judge"
-  without claiming the member agreed.
-- **The description is the report.** Markdown renders; put the numbers and how they
-  were computed there, not only in the conversation.
-- **Link a document instead of pasting it.** Upload to the drive
-  (`references/files.md`) and put a link to where the member can open it in a
-  comment's `attachmentUrl` — not `files.downloadUrl`, which expires.
-- Moving a member's own card to `done`, deleting a task, or rewriting their
-  description is their decision — **ask first**.
-
-## Pitfalls
-
-| Symptom | Cause |
-| --- | --- |
-| `TaskBoardError` on `credential` | The client runs on a service account key; use a member's session or `erp_uk_` key |
-| `UnknownTaskError` for a task id you know exists | It is on another member's board — scoping hides it |
-| `TaskBoardError` on `dueDate` | A bare date; pass a `Date` or a full timestamp |
-| Server 400 assigning to a colleague | A user assignee must be the board owner |
-| A metadata key disappeared | `update` with `metadata` replaced the whole object |
-| Server 404 removing a tag you can see | Case differs — removal matches the exact name |
-| `DryRunUnsupportedError` deleting | `ERP_ENV=development`; deletes cannot be undone |
-| The same report appears twice | Nothing de-duplicates; `list({ tag })` first |
+- **Look before filing.** Nothing de-duplicates; a tag naming the run lets the next run
+  find this card.
+- **`review` is the hand-back column**: done on Arion's side, the member's to judge.
+- **The description is the report** — numbers and how they were computed, not only a
+  pointer to the conversation.
+- **Link documents, don't paste them.** Upload to the drive and link where the member
+  can open the file — not a `downloadUrl`, which expires.
+- Moving the member's card to `done`, deleting a task or rewriting their description is
+  their decision — ask.

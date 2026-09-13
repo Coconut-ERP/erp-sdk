@@ -1,125 +1,113 @@
-# The Drive — Folders, Files, Sharing, Trash
+# The drive
 
-`erp.files` is the workspace's document store. Use it for what is a *document* — a
-signed PDF, an exported spreadsheet, a photo of a delivery note — not for what is a
-row. Anything the wiki should be able to answer questions about (`erp.wiki.ask`) also
-starts here.
+`erp.files` is the workspace's document store — a signed PDF, an exported spreadsheet,
+a delivery photo — not a place for rows. A document the wiki should answer questions
+about (`erp.wiki.ask`) starts here too.
 
-Permissions: `file:create/read/update/delete`, plus the matching `file:public:*` for
-anything inside the workspace's shared `Public` tree. A `writer` service account holds
-both sets.
+Permissions: `file:create` / `read` / `update` / `delete`, plus the matching
+`file:public:*` inside `Public`. A `writer` service account has both sets.
 
-## The root holds exactly two folders
+## Contents
+
+- [Folders](#folders)
+- [Uploading](#uploading)
+- [Listing and downloading](#listing-and-downloading)
+- [Sharing](#sharing)
+- [Trash](#trash)
+- [Pitfalls](#pitfalls)
+
+## Folders
 
 ```ts
-await erp.files.folders();            // no parentId → the drive root
-// [{ kind: "personal", name: "…" }, { kind: "public", name: "Public" }]
-
+await erp.files.folders();                      // the root: [{ kind: "personal" }, { kind: "public", name: "Public" }]
 const mine = await erp.files.personalFolder();
 const shared = await erp.files.publicFolder();
 const sub = await erp.files.createFolder("Hợp đồng 2026", mine.id);
 ```
 
-`parentId`/`folderId` is **required everywhere** — nothing new is created at the root,
-and the two system folders can't be renamed, moved or deleted. The root coming back
-empty means the credentials lack `file:read` (or `file:public:read`), not that the
-drive is empty.
+Nothing is created at the root, so `parentId` / `folderId` is required everywhere. The
+two system folders cannot be renamed, moved, deleted or re-shared. An empty root means
+no `file:read` (or `file:public:read`), not an empty drive.
 
-## Upload is three steps; `upload()` is all three
-
-```
-POST /files/uploads → { file, uploadUrl } → PUT bytes to S3 → POST /files/{id}/complete
-```
+## Uploading
 
 ```ts
 const file = await erp.files.upload({
   folderId: mine.id,
   name: "bao-cao-thang-8.csv",
   content: csv,                 // string | Uint8Array | ArrayBuffer | Blob
-  mimeType: "text/csv",         // optional — inferred from the extension
+  mimeType: "text/csv",         // optional; inferred from the extension
 });
 file.status;                    // "available"
 ```
 
-- The presigned URL is **signed over the content type**, so the PUT must send exactly
-  the type the first step declared. `upload()` handles it; hand-rolling does not get to
-  skip it.
-- Leaving `mimeType` out infers from the extension (`mimeTypeForName`). An unknown
-  extension becomes `application/octet-stream`: it stores, but viewers won't open it
-  and **the wiki will not index it**. For a document meant to be asked about, set the
-  type.
-- If the PUT fails you get `FileUploadError` and the row is stranded in status
-  `uploading` — nothing completes it later. Delete it, or re-PUT and call
-  `completeUpload(fileId)`.
-- Same name in the same folder → `409` from the first step.
-- Browser doing its own PUT (progress bar, large file): `startUpload` then
+`upload()` runs `POST /files/uploads` → PUT to the presigned URL → `POST
+/files/{id}/complete`.
+
+- The presigned URL is signed over the content type; a PUT with another type fails
+  with S3 `SignatureDoesNotMatch`.
+- Without `mimeType` the type comes from `mimeTypeForName`. An unknown extension is
+  `application/octet-stream`: stored, but viewers won't open it and **the wiki will not
+  index it**. Set the type for anything meant to be asked about.
+- A failed PUT throws `FileUploadError` and strands the row in `uploading`. Delete it,
+  or PUT again and call `completeUpload(fileId)`.
+- The same name in the same folder is a 409.
+- A browser doing its own PUT (progress, large files) uses `startUpload` then
   `completeUpload`.
 
-## Reading
+## Listing and downloading
 
 ```ts
 const { files, meta } = await erp.files.list({ folderId: mine.id, page: 1, perPage: 50 });
 const all = await erp.files.listAll({ folderId: mine.id, search: "hợp đồng" });
 
-await erp.files.downloadUrl(id);    // { downloadUrl, expiresInSeconds } — hand to a browser
 await erp.files.download(id);       // Uint8Array
 await erp.files.downloadText(id);   // string
+await erp.files.downloadUrl(id);    // { downloadUrl, expiresInSeconds } — for a browser
 ```
 
-`folderId` is required. With `search` the listing covers the whole subtree by default;
-plain browsing stays in the folder — flip either with `recursive`. The download URL
-carries **no ERP credential** and expires: pass it on, never store it.
+With `search`, a listing covers the whole subtree; without it, only the folder —
+`recursive` flips either. A download URL carries no ERP credential and expires: pass it
+on, never store it.
 
 ## Sharing
 
 ```ts
-await erp.files.setFolderSharing(folderId, "restricted", [
-  { subjectType: "group", subjectId, access: "write" },
-]);
+await erp.files.setFolderSharing(folderId, "restricted", [{ subjectType: "group", subjectId, access: "write" }]);
 await erp.files.setSharing(fileId, "inherit");
 ```
 
 | Visibility | Folder | File |
 | --- | --- | --- |
-| `inherit` | follows its parent | follows its folder; `entries` add access on top |
-| `workspace` | everyone in the workspace | — (not accepted on a file) |
-| `restricted` | only the `entries` | self-governed, stops following the folder |
+| `inherit` | Follows its parent | Follows its folder; `entries` add access on top |
+| `workspace` | Everyone in the workspace | Not accepted |
+| `restricted` | Only the `entries` | Only the `entries`; stops following the folder |
 
-`entries` are only accepted alongside `restricted` (and `inherit` on a file). Reading or
-setting an ACL takes **manage** on that item. System folders reject ACL changes.
+`entries` are accepted only with `restricted`, or `inherit` on a file. Reading or
+setting an ACL needs manage on the item.
 
 ## Trash
 
-Deleting is trashing: 7 days, then the sweep takes the bytes too.
+Deleting trashes for 7 days; then a sweep removes the bytes.
 
 ```ts
-const { items } = await erp.files.trash();     // one entry per DELETION, not per file
-await erp.files.restoreFile(id);               // 409 if the name was taken since
-await erp.files.restoreFolder(id);             // brings back the whole subtree
-
-await erp.files.purgeFile(id);                 // no undo
+const { items } = await erp.files.trash();     // one entry per deletion — a folder is one entry
+await erp.files.restoreFile(id);               // 409 if the name was taken meanwhile
+await erp.files.restoreFolder(id);             // the whole subtree
+await erp.files.purgeFile(id);                 // irreversible
 const r = await erp.files.emptyTrash();        // { purged, skipped, freedBytes, hasMore }
 ```
 
-A deleted folder is **one** trash entry and restores with everything it took down.
-`emptyTrash` works in batches — `hasMore: true` means calling again reclaims more, and
-`skipped` counts deletions belonging to someone else.
-
-## Dry-run mode
-
-The drive has no server-side dry run, and a document is not a record: in
-`ERP_ENV=development` uploads, renames and trashing all **write for real**, the same as
-creating a workflow. The exception is the irreversible pair — `purgeFile`,
-`purgeFolder`, `emptyTrash` — which throw `DryRunUnsupportedError` instead of shredding
-bytes during a rehearsal. Override per call with `{ dryRun: false }`.
+`emptyTrash` works in batches: `hasMore: true` means call again; `skipped` counts
+other people's deletions. In development mode uploads, renames and trashing write for
+real, while `purgeFile`, `purgeFolder` and `emptyTrash` refuse.
 
 ## Pitfalls
 
 | Symptom | Cause |
 | --- | --- |
-| 403 uploading into Public | Missing `file:public:create`, not `file:create` |
-| File stuck in `uploading` forever | The PUT step failed; nothing retries it |
-| S3 `SignatureDoesNotMatch` | The PUT's `Content-Type` differs from the presign's |
-| The wiki won't index an attached file | It uploaded as `application/octet-stream` |
-| Restore returns 409 | Something else took that name in the folder meanwhile |
-| `folderId is required` | You listed or uploaded without one — the root is not a folder |
+| 403 uploading into Public | Needs `file:public:create` |
+| File stuck in `uploading` | The PUT failed; nothing completes it later |
+| S3 `SignatureDoesNotMatch` | PUT `Content-Type` differs from the presigned one |
+| Wiki won't index an attachment | Uploaded as `application/octet-stream` |
+| `folderId is required` | The root is not a folder |

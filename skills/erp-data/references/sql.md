@@ -1,59 +1,60 @@
-# Writing SQL for ERP
+# SQL on the ERP
 
-`erp.sql(sql, { params, values })` runs **one** read-only `SELECT` in the workspace's
-database and returns `{ columns, rows, rowCount, truncated, compiledSql }`.
+`erp.sql(sql, { params, values })` runs **one** read-only `SELECT` against the
+workspace and returns `{ columns, rows, rowCount, truncated, compiledSql }`.
 
-## Tables and columns are display names
+## Contents
 
-The server translates each object into a CTE named its **display name**, each
-field into a column named its display name:
+- [Names](#names)
+- [Endpoint rules](#endpoint-rules)
+- [Return types](#return-types)
+- [Parameters](#parameters)
+- [Examples](#examples)
+- [When not to use SQL](#when-not-to-use-sql)
+
+## Names
+
+The server compiles each object into a CTE named after its **display name**, with
+fields as columns of the same names:
 
 ```sql
 SELECT "Machine Name", "Actual Output" FROM "Production"
 ```
 
-| Rule | Details |
+| Rule | Detail |
 | --- | --- |
-| Double quotes | Required — names with diacritics or spaces |
-| **Case-sensitive** | `FROM "production"` → 400 `Unknown table`. Get the correct name: `npx erp objects list` |
-| System columns | Every table has `id`, `created_at`, `updated_at` |
-| Computed fields | `formula`/`lookup`/`rollup` work like regular columns |
-| `relation` fields | Return as **uuid arrays** (`uuid[]`) |
-| Only workspace tables | `pg_catalog`, `information_schema`… are blocked |
-| `@workspace_id` | Always available, correct for your credential |
+| Double quotes | Always — names carry spaces and diacritics |
+| Case-sensitive | `FROM "production"` → 400 `Unknown table`; copy names from `npx erp objects list` |
+| System columns | `id`, `created_at`, `updated_at` on every table |
+| Computed fields | `formula` / `lookup` / `rollup` read like any column |
+| `relation` fields | `uuid[]` |
+| Scope | Workspace tables only; `pg_catalog`, `information_schema` are blocked |
+| `@workspace_id` | Always available, bound to the caller |
 
-`compiledSql` in the result shows the actual query the server ran — use it to understand how a
-field was translated.
+`compiledSql` shows what actually ran — the way to see how a field was translated.
 
 ## Endpoint rules
 
-- **One statement.** `WITH … SELECT` is OK; `;` then a second statement → 400. `(SELECT …)
-  UNION ALL (SELECT …)` is rejected because it doesn't start with `SELECT` — drop the parens.
-- **Read-only.** INSERT/UPDATE/DELETE/DDL all rejected; data writes are `ObjectHandle`'s job.
-- **Max 1,000 rows**, `truncated: true` when cut, **no cursor**.
-  → Aggregate in SQL. For more raw data use
-  `records().fetchAll()`.
-- SQL ≤ 20,000 characters, ≤ 20 parameters.
-- Row scope of the caller still applies — results may differ by user.
+- **One statement.** `WITH … SELECT` is fine; a second statement after `;` is a 400.
+  `(SELECT …) UNION ALL (SELECT …)` is rejected for not starting with `SELECT` — drop
+  the outer parentheses.
+- **Read-only.** Writes go through `ObjectHandle`.
+- **≤ 1,000 rows, no cursor**; `truncated: true` means rows were cut, which usually
+  means a missing `GROUP BY`.
+- ≤ 20,000 characters and ≤ 20 parameters.
+- The caller's row scope still applies, so results can differ between users.
 
-## Return data types
+## Return types
 
 | Postgres | JSON |
 | --- | --- |
-| `numeric` (all number-type fields, `SUM`, `AVG`) | **string** — `"327970"` |
+| `numeric` — every number field, `SUM`, `AVG` | **string**, `"327970"` |
 | `::float8`, `::int`, `COUNT(*)` | number |
-| `timestamptz` | ISO string `"2026-08-12T00:00:00Z"` |
-| `uuid[]` (relation) | string `"{uuid,uuid}"` |
+| `timestamptz` | ISO string |
+| `uuid[]` | string `"{uuid,uuid}"` |
 
-Cast right in SQL for cleanliness:
-
-```sql
-SUM("Total Amount")::float8 AS revenue
-AVG("Actual Output")::float8 AS average
-```
-
-`DataFrame` auto-casts when you `sum`/`avg`/`sortBy`, so you only need to worry when reading
-`rows` directly or exporting to JSON/CSV.
+Cast in the query (`SUM("Total Amount")::float8`). `DataFrame` aggregates coerce on
+their own; raw `rows` and JSON/CSV exports do not.
 
 ## Parameters
 
@@ -61,46 +62,45 @@ AVG("Actual Output")::float8 AS average
 await erp.sql(
   `SELECT "Customer" AS customer, SUM("Total Amount")::float8 AS amount
    FROM "Order"
-   WHERE "Order Date" >= @startDate AND "Order Date" < @endDate AND "Status" = @status
+   WHERE "Order Date" >= @from AND "Order Date" < @to AND "Status" = @status
    GROUP BY 1 ORDER BY 2 DESC`,
   {
     params: [
-      { name: "startDate",  type: "date" },
-      { name: "endDate", type: "date" },
-      { name: "status",  type: "text", default: "paid" },
+      { name: "from", type: "date" },
+      { name: "to", type: "date" },
+      { name: "status", type: "text", default: "paid" },
     ],
-    values: { startDate: "2026-01-01", endDate: "2027-01-01" },
+    values: { from: "2026-01-01", to: "2027-01-01" },
   },
 );
 ```
 
-`type`: `text` · `number` · `boolean` · `date` · `datetime`. Server casts by declaration,
-values go separately from the statement — **never concatenate values into SQL**.
-For saved queries, pass values to `dash.run(name, { startDate: "…" })`; missing parameters use `default`.
+Types: `text`, `number`, `boolean`, `date`, `datetime`. Values travel separately and
+the server casts them — **never concatenate values into the SQL**. A saved query takes
+its values as `dash.run(name, { from: "…" })`; a missing value falls back to `default`.
 
-## Example queries
+## Examples
 
 ```sql
--- aggregate by month
+-- by month
 SELECT to_char("Order Date", 'YYYY-MM') AS month,
        SUM("Total Amount")::float8 AS revenue,
-       COUNT(*) AS order_count
-FROM "Order"
-GROUP BY 1 ORDER BY 1;
+       COUNT(*) AS orders
+FROM "Order" GROUP BY 1 ORDER BY 1;
 
--- join two tables on text field
-SELECT p."Customer Name" AS customer, SUM(o."Quantity")::float8 AS total_qty
-FROM "PurchaseOrder" o
-JOIN "Product" p ON o."Product Name" = p."Product Code"
-GROUP BY 1 ORDER BY 2 DESC;
-
--- join via relation field (relations are uuid arrays)
+-- join on a relation (an id array)
 SELECT c."Customer Name" AS customer, SUM(o."Total Amount")::float8 AS amount
 FROM "Order" o
 JOIN "Customer" c ON c.id = ANY(o."Customer")
 GROUP BY 1;
 
--- rank within group
+-- join on a text key
+SELECT p."Product Name" AS product, SUM(o."Quantity")::float8 AS qty
+FROM "Purchase Order" o
+JOIN "Product" p ON o."Product Code" = p."Product Code"
+GROUP BY 1 ORDER BY 2 DESC;
+
+-- top 3 per month
 SELECT * FROM (
   SELECT "Machine Name" AS machine,
          to_char("Date", 'YYYY-MM') AS month,
@@ -109,14 +109,10 @@ SELECT * FROM (
                             ORDER BY SUM("Actual Output") DESC) AS rank
   FROM "Production" GROUP BY 1, 2
 ) t WHERE rank <= 3;
-
--- distribution by status
-SELECT "Status" AS status, COUNT(*) AS count
-FROM "Order" GROUP BY 1 ORDER BY 2 DESC;
 ```
 
-## When NOT to use SQL
+## When not to use SQL
 
-- Need complete `RecordDto` (version for update, `computedData`, relations as id arrays) → use `records()`.
-- Need > 1,000 raw rows → use `fetchAll({ max })`.
-- Writing data → use `create` / `update` / `createMany`.
+- Whole records — `version` for an update, `computedData`, relations → `records()`.
+- More than 1,000 raw rows → `fetchAll({ max })`.
+- Any write → `create` / `update` / `createMany`.

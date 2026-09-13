@@ -669,9 +669,11 @@ no cron host, and a place to keep secrets. Its `kind` decides what a run does �
 `code` (the default) executes a TypeScript file exposing
 `async function main(input)`, `agent` hands a stored prompt to the copilot
 instead (below). The runner provides `erp`, `_` (lodash), `moment`,
-`axios` and `input` without an import; `zod`, `nodemailer`,
-`node-telegram-bot-api`, `@slack/web-api`, `yahoo-finance2`, `ai` and the
-`@ai-sdk/*` providers are importable by name. Nothing else — `node:fs` included.
+`axios`, `input` and `env` without an import. Imports come from a fixed
+registry — `zod`, `decimal.js`, `node:crypto`, `exceljs`, `papaparse`, mail and
+chat clients, Google, CRM and payment SDKs, `ai` and the `@ai-sdk/*` providers
+among them — and saving code that imports anything else fails with the full list.
+`node:fs` and `node:child_process` are not in it.
 
 ```ts
 const wf = await app.workflows.create({
