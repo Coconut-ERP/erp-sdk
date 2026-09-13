@@ -383,12 +383,7 @@ describe("scaffolding", () => {
       .json()
       .skills.map((s: { skill: string }) => s.skill)
       .sort();
-    expect(names).toEqual([
-      "erp-data",
-      "erp-miniapp",
-      "erp-wiki",
-      "erp-workflow",
-    ]);
+    expect(names).toEqual(["erp-data", "erp-miniapp", "erp-tools", "erp-wiki"]);
     for (const name of names) {
       const skill = await readFile(
         join(dir, "skills", name, "SKILL.md"),
@@ -480,7 +475,7 @@ describe("scaffolding", () => {
     const claude = wiring.find((w) => w.agent === "claude")?.how ?? "";
     expect(claude).toContain("~/.claude/skills/erp-data");
     expect(claude).toContain("~/.claude/skills/erp-miniapp");
-    expect(claude).toContain("~/.claude/skills/erp-workflow");
+    expect(claude).toContain("~/.claude/skills/erp-tools");
     // Everything else reads AGENTS.md, so it gets a pointer at the same files.
     const shared = wiring.find((w) => w.agent.includes("codex"))?.how ?? "";
     expect(shared).toContain("AGENTS.md");
@@ -495,8 +490,8 @@ describe("scaffolding", () => {
     expect(skills.map((s) => s.skill).sort()).toEqual([
       "erp-data",
       "erp-miniapp",
+      "erp-tools",
       "erp-wiki",
-      "erp-workflow",
     ]);
     expect(skills[0]?.entry).toMatch(/erp-data[\\/]SKILL\.md$/);
   });

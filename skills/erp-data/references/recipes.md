@@ -340,7 +340,7 @@ const rows = await (await erp.dashboard("Operations")).run("Revenue by month");
 ## 13. Workflow running 9am daily
 
 Build workflow, publish, test, read results — full example with all rules
-(triggers, version/publish, write-only env): **`references/workflows.md`**.
+(triggers, version/publish, write-only env): skill **`erp-tools`**, `references/workflows.md`.
 
 ## Lessons learned (pitfalls)
 

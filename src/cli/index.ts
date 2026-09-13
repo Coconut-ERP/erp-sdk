@@ -9,10 +9,12 @@ import {
   RelationValueError,
   SchemaMismatchError,
   SqlQueryError,
+  TaskBoardError,
   UnknownDashboardError,
   UnknownFieldError,
   UnknownObjectError,
   UnknownQueryError,
+  UnknownTaskError,
   UnknownWikiPageError,
   UnknownWorkflowError,
   WikiPageError,
@@ -115,6 +117,23 @@ function serializeError(error: unknown): Record<string, unknown> {
       message: error.message,
       field: error.field,
       hint: "Page type is entity|concept|comparison|query; confidence is high|medium|low",
+    };
+  }
+  if (error instanceof UnknownTaskError) {
+    return {
+      type: "UnknownTaskError",
+      message: error.message,
+      taskId: error.taskId,
+      hint: "Task calls only reach the caller's own board — list it with erp.tasks.list()",
+    };
+  }
+  if (error instanceof TaskBoardError) {
+    return {
+      type: "TaskBoardError",
+      message: error.message,
+      field: error.field,
+      reason: error.reason,
+      hint: "The task board takes a member's session or erp_uk_ key; dueDate is a full RFC 3339 timestamp",
     };
   }
   if (error instanceof FilterValueError) {

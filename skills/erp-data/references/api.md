@@ -208,10 +208,10 @@ Parameters: `params: [{ name, type: "text"|"number"|"boolean"|"date"|"datetime",
 label?, default? }]`, values passed via `values` (ad-hoc) or second arg
 of `dash.run` (saved queries). Syntax details: `references/sql.md`.
 
-## Workflows
+## Workflows, drive, variables, conversations, task board
 
-`erp.workflows` / `erp.workflow(nameOrId)` — server-side scripts running on
-`manual` or `cron` trigger. Full surface, draft/publish lifecycle, write-only env, how to read run results: **`references/workflows.md`**.
+`erp.workflows` / `erp.workflow(nameOrId)`, `erp.files`, `erp.variables`,
+`erp.conversations` and `erp.tasks` are covered by skill **`erp-tools`**.
 
 ## Permissions
 

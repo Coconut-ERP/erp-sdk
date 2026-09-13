@@ -776,3 +776,71 @@ export interface ConversationDetailDto extends ConversationDto {
   messages: ConversationMessageDto[];
   activeTurn?: ConversationActiveTurnDto;
 }
+
+export type TaskStatus =
+  | "todo"
+  | "in_progress"
+  | "review"
+  | "done"
+  | "archived";
+
+export type TaskPriority = "low" | "medium" | "high" | "urgent";
+
+export type TaskActorType = "user" | "agent";
+
+export interface TaskActor {
+  id: string;
+  type: TaskActorType;
+}
+
+export interface TaskBoardDto {
+  id: string;
+  workspaceId: string;
+  ownerId?: string;
+  name: string;
+  description: string;
+  createdBy: TaskActor;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskBoardDetailDto extends TaskBoardDto {
+  taskCounts: Partial<Record<TaskStatus, number>>;
+}
+
+export interface TaskTagDto {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export interface TaskDto {
+  id: string;
+  boardId: string;
+  workspaceId: string;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  assignedTo: TaskActor | null;
+  createdBy: TaskActor;
+  dueDate?: string;
+  tags: TaskTagDto[];
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskCommentDto {
+  id: string;
+  taskId: string;
+  author: TaskActor;
+  content: string;
+  attachmentUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskDetailDto extends TaskDto {
+  comments: TaskCommentDto[];
+}

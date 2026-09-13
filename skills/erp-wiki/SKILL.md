@@ -1,6 +1,6 @@
 ---
 name: erp-wiki
-description: Write and maintain the Coconut ERP workspace wiki, and retrieve from it — pages (entity/concept/comparison/query), immutable sources, `[[slug]]` wikilinks, catalog and log, the lint pass, drive documents attached to a page and indexed, and `erp.wiki.ask(slug, question)` retrieval (RAG) over them. Use when the task involves the ERP wiki or knowledge base, writing up what a workspace has concluded, `erp.wiki`, wiki pages/slug/publish/archive/lint, ingesting sources, attaching a PDF and asking questions about it, citing where an answer came from, or when the user says "write this into the wiki", "what do we know about X", "ask the document", "build a knowledge base on ERP", "our notes about this supplier". Reading and writing records is the erp-data skill; the drive itself is `references/files.md` there.
+description: Write and maintain the Coconut ERP workspace wiki, and retrieve from it — pages (entity/concept/comparison/query), immutable sources, `[[slug]]` wikilinks, catalog and log, the lint pass, drive documents attached to a page and indexed, and `erp.wiki.ask(slug, question)` retrieval (RAG) over them. Use when the task involves the ERP wiki or knowledge base, writing up what a workspace has concluded, `erp.wiki`, wiki pages/slug/publish/archive/lint, ingesting sources, attaching a PDF and asking questions about it, citing where an answer came from, or when the user says "write this into the wiki", "what do we know about X", "ask the document", "build a knowledge base on ERP", "our notes about this supplier". Reading and writing records is the erp-data skill; the drive itself is the erp-tools skill.
 ---
 
 # The ERP Wiki
@@ -209,5 +209,5 @@ lint periodically → fix broken links, orphans, off-taxonomy tags
   lint findings and what to do about each.
 - `references/retrieval.md` — attachments, indexing states, `ask` in depth, and how to
   turn passages into a cited answer.
-- Uploading the documents you attach → skill **`erp-data`**, `references/files.md`.
+- Uploading the documents you attach → skill **`erp-tools`**, `references/files.md`.
 - Records, SQL and analysis → skill **`erp-data`**.

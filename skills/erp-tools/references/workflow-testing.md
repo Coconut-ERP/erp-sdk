@@ -120,7 +120,7 @@ as minimal as you can make it (one recipient, one row).
 
 ## 3. After `ok: true`: save, publish
 
-Now use the SDK (details in the **`erp-data`** skill, `references/workflows.md`):
+Now use the SDK (details in `workflows.md`):
 
 ```ts
 const wf = await erp.workflows.create({
@@ -171,3 +171,20 @@ edit file  →  workflows.check  →  workflows.testRun (real input)  →  ok?
 
 Never jump from "done writing" to "create + publish": a published cron is something
 running on real data, every day, under the publisher's permissions.
+
+## Before handing a workflow over
+
+- [ ] `check` passes, `testRun` is `ok: true` with real input.
+- [ ] Running twice in a row doesn't double side effects (idempotent).
+- [ ] Every loop and `fetchAll` has a limit, estimated to finish under 60s.
+- [ ] No secrets in code; the env var names it needs are listed for the user.
+- [ ] If the script keeps checkpoints: the shared variable key is documented, and this
+      workflow is already in its `workflowIds`.
+- [ ] `main()` returns enough to understand what the run did, and it's small enough.
+- [ ] Object/field names come from the real schema (`npx erp objects show`), not guesses.
+- [ ] Cron: exactly 6 fields + timezone, and the user knows what hour it runs.
+- [ ] Webhook: code verifies before doing anything, and **the URL never appears in a
+      report** — it's a credential; say "the workflow has a webhook URL, see its page".
+
+Tell the user: workflow name/id/version/trigger, what the run returned or what error,
+missing env var names, and what remains to do.

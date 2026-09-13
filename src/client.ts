@@ -23,6 +23,7 @@ import {
   type SchemaObjectPlan,
   type WorkspaceObjectShape,
 } from "./schema";
+import { TaskBoardApi } from "./tasks";
 import type {
   EnsureFieldSpec,
   FieldDto,
@@ -96,6 +97,8 @@ export class ErpClient {
 
   readonly conversations: ConversationsApi;
 
+  readonly tasks: TaskBoardApi;
+
   constructor(
     readonly http: Http,
     private readonly required: RequiredPermission[] = [],
@@ -112,6 +115,10 @@ export class ErpClient {
     });
     this.wiki = new WikiApi(http, { dryRun: this.dryRun });
     this.conversations = new ConversationsApi(http);
+    this.tasks = new TaskBoardApi(http, {
+      dryRun: this.dryRun,
+      serviceAccount: config?.apiKey?.startsWith("erp_sk_") ?? false,
+    });
   }
 
   /** Whether record writes through this client are dry runs by default. */

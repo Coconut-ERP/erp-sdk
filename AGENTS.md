@@ -117,6 +117,7 @@ write the app's `schema.json` and validate its format with `validateSchema`.
 | `src/variables.ts` | `WorkflowVariablesApi` — the workspace's shared key/value store for workflow scripts (checkpoints, cursors): plain text, granted per workflow, and refusing to write in development mode |
 | `src/files.ts` | `FilesApi` — the workspace drive: the two system folders at the root, the three-step upload (row → presigned PUT → complete) done in one call, downloads, sharing and a trash whose only irreversible calls refuse to run in development mode |
 | `src/wiki.ts` | `WikiApi`/`WikiPageHandle` — the workspace wiki: pages addressed by slug (`wikiSlug` mirrors the server's Vietnamese-aware folding), immutable sources, drive documents attached and indexed, and `ask` retrieving the passages of one page's documents |
+| `src/tasks.ts` | `TaskBoardApi` — the member's personal AI task board (`/ai-task`): one board per member, found once and cached, every call scoped to it; a service-account key is refused client-side, and `delete`/`deleteComment` refuse in development mode |
 | `src/schema.ts` | The `schema.json` model plus the backend's validation and diff rules as **pure functions** (`validateSchema`, `planSchema`, `schemaConflicts`, `unresolvedRelations`) — no I/O, so the CLI, the SDK and build scripts all share one source of truth |
 | `src/frame.ts` | `DataFrame`/`GroupedFrame` — immutable pandas-style analysis over fetched records; every method returns a new frame |
 | `src/permissions.ts` | `isAllowed`/`missingPermissions`, mirroring the backend enforcer (deny beats allow, `*` wildcards, `manage` implies nothing) |
@@ -125,7 +126,7 @@ write the app's `schema.json` and validate its format with `validateSchema`.
 | `src/errors.ts` | Error classes that carry the fix, not just a message |
 | `src/mode.ts` | `ERP_ENV` → `production` \| `development`, the switch that makes every record write a server-side dry run |
 | `src/cli/` | `args` (parsing), `commands` (the registry), `index` (`runCli`), `help`, `main` (bin entry), `scaffold` (`erp init`), `skill` (`erp skill install`) |
-| `skills/` | Four agent skills shipped inside the package, split by job: `erp-miniapp/` (build an app on the ERP — `schema.json`, initData, deploy), `erp-data/` (read, write and analyse workspace data with the SDK, plus the drive), `erp-workflow/` (write the code *inside* a workflow — the runner's sandbox, its module registry, its limits, and the `check`/`testRun` loop that proves a script without saving one) and `erp-wiki/` (write and maintain the workspace wiki, and retrieve from the documents attached to it). Each is a lean `SKILL.md` plus `references/` loaded on demand. `erp skill install` discovers every directory holding a `SKILL.md`, copies them to `~/.agents/skills/` (tool-neutral, one copy per machine) and prints how each agent reaches them — adding a fifth skill needs no code change |
+| `skills/` | Four agent skills shipped inside the package, split by job: `erp-miniapp/` (build an app on the ERP — `schema.json`, initData, deploy), `erp-data/` (read, write and analyse workspace data with the SDK — records, SQL, dashboards), `erp-tools/` (use the ERP's tools beyond records — workflows and the code inside them, the drive, shared variables, copilot conversations, the personal AI task board) and `erp-wiki/` (write and maintain the workspace wiki, and retrieve from the documents attached to it). Each is a lean `SKILL.md` plus `references/` loaded on demand. `erp skill install` discovers every directory holding a `SKILL.md`, copies them to `~/.agents/skills/` (tool-neutral, one copy per machine) and prints how each agent reaches them — adding a fifth skill needs no code change |
 
 Two cross-cutting ideas explain most of the code:
 
@@ -162,7 +163,8 @@ same as `createObject` and `updateDefinition`.
 The drive and the wiki settled the same question the same way: a document and a wiki
 page are definitions rather than records, so uploading, renaming, trashing and editing
 a page all write for real in development mode. Only what cannot be undone refuses —
-`purgeFile`/`purgeFolder`/`emptyTrash` and `wiki.deletePage`. A workflow **test run** is
+`purgeFile`/`purgeFolder`/`emptyTrash`, `wiki.deletePage`, and the task board's
+`tasks.delete`/`tasks.deleteComment`. A workflow **test run** is
 the inverse: it is a rehearsal by construction (the server puts the script's own SDK in
 development mode), so it is never blocked by the mode, unlike `run()`.
 

@@ -323,3 +323,24 @@ export class WikiPageError extends Error {
     this.name = "WikiPageError";
   }
 }
+
+export class UnknownTaskError extends Error {
+  constructor(readonly taskId: string) {
+    super(
+      `Task not found on your board: "${taskId}". Every task call is scoped ` +
+        "to the caller's own board, so a task on another member's board " +
+        "answers the same way.",
+    );
+    this.name = "UnknownTaskError";
+  }
+}
+
+export class TaskBoardError extends Error {
+  constructor(
+    readonly field: string,
+    readonly reason: string,
+  ) {
+    super(`Task board ${field} is invalid: ${reason}`);
+    this.name = "TaskBoardError";
+  }
+}

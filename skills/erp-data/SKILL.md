@@ -1,6 +1,6 @@
 ---
 name: erp-data
-description: Read, write, query SQL, analyze data, manage files, and run workflows on Coconut ERP workspace using erp-sdk (TypeScript/JavaScript). Use when the task mentions erp-sdk, ErpClient, ObjectHandle, RecordQuery, DataFrame, erp.sql / dashboard / saved queries / charts, workflows / cron / publish / run on ERP, agent workflows written as a prompt, upload/download files or folders on ERP, renaming a table or changing its groups, ERP_API_KEY / erp_sk_, ERP_ENV / dryRun / test run before writing, link–relation between two tables, object–field–record of ERP, or when the user wants to fetch/aggregate/import/edit data on ERP ("get order list from ERP", "revenue report by month", "aggregate by month using SQL", "create dashboard", "run scheduled script each morning", "import CSV to table", "bulk update", "join two tables", "export Excel/CSV from ERP"). For building web apps using ERP as backend (schema.json, initData, deploy) use the erp-miniapp skill.
+description: Read, write, query SQL and analyze data on a Coconut ERP workspace using erp-sdk (TypeScript/JavaScript). Use when the task mentions erp-sdk, ErpClient, ObjectHandle, RecordQuery, DataFrame, erp.sql / dashboard / saved queries / charts, renaming a table or changing its groups, ERP_API_KEY / erp_sk_, ERP_ENV / dryRun / test run before writing, link–relation between two tables, object–field–record of ERP, or when the user wants to fetch/aggregate/import/edit data on ERP ("get order list from ERP", "revenue report by month", "aggregate by month using SQL", "create dashboard", "import CSV to table", "bulk update", "join two tables", "export Excel/CSV from ERP"). For building web apps using ERP as backend (schema.json, initData, deploy) use the erp-miniapp skill; for workflows, uploading or downloading files on the drive, shared variables and copilot conversations use the erp-tools skill.
 ---
 
 # Working with ERP data using erp-sdk
@@ -47,7 +47,7 @@ const erp = await createMiniApp({
 ```
 
 Add `object:record` + `create`/`update`/`delete` when the script writes; `dashboard`
-for SQL; `workflow` for automation. Run: `node --env-file=.env script.mjs`
+for SQL. Run: `node --env-file=.env script.mjs`
 (Node 20.6+) or `npx tsx script.ts`. Place scripts in a temporary directory, don't scatter into source.
 
 ## 2. View the real schema first
@@ -156,70 +156,24 @@ dry run — in development mode they throw `DryRunUnsupportedError` instead of s
 Unlike regular fields (where `null` = *delete value*). Adding 1 link to a record with 3 existing = send all 4 ids: `[...orders.linkedIds(rec, "Line Items"), newId]`.
 Max **100 ids/field/record**; longer requires `createLink`/`deleteLink` individually.
 
-## 8. Workflows — automation running on ERP server
+## 8. Beyond records
 
-Scheduled tasks (deadline reminders every morning, nightly sync) don't need a separate service: ERP stores the schedule and what to run. A workflow's `kind` says what that is — `code` (the default) is a TypeScript file with `async function main(input)` the runner executes, `agent` is a prompt handed to the ERP copilot in a hidden conversation.
+Records are one store among several, and the others have their own skills:
 
-```ts
-const wf = await erp.workflows.create({ name, code, trigger: { type: "cron",
-  config: { schedule: "0 0 9 * * *", timezone: "Asia/Ho_Chi_Minh" } } });
-await wf.publish();          // ⚠ runs use old version until published
-```
+| Need | Where |
+| --- | --- |
+| Automation on the server — workflows (script or agent), cron, webhooks, runs | skill **`erp-tools`** |
+| Documents — upload, download, folders, sharing, trash (`erp.files`) | skill **`erp-tools`** |
+| Checkpoints between workflow runs (`erp.variables`), copilot conversations | skill **`erp-tools`** |
+| Handing a report back to a member as a card on their AI task board | skill **`erp-tools`** |
+| What the workspace has concluded — the wiki, and `ask` over attached documents | skill **`erp-wiki`** |
 
-Four common mistakes: triggers are only `manual`/`cron`/`webhook` (no record events);
-cron is **6 fields with seconds**; **any edit reverts to draft**, must republish;
-`setEnv` **replaces the entire map**. Full workflow management: `references/workflows.md`.
-
-An agent workflow takes a `prompt` instead of `code`, ≤ 8 000 characters, and has no env,
-no shared variables and no way to rehearse — running it is the only test, and it writes
-real data. Its run answers `{ conversationId, turnId }` and ends there: `SUCCESS` means
-the job was handed to the copilot, not finished. Read the result through
-`agentRunResult(run)` then `erp.conversations.get(id)`. Needs `ai:create` besides
-`workflow:run:create`.
-
-```ts
-const wf = await erp.workflows.create({ name, kind: "agent", prompt, trigger });
-```
-
-Prove code before saving it — neither call stores anything:
-
-```ts
-const report = await erp.workflows.check(code);       // { valid, error? { message, line, column } }
-const t = await erp.workflows.testRun({ code, input, workflowId });   // { ok, result, logs, error? }
-const t2 = await wf.testRun(code, input);             // same, as that workflow (its env)
-```
-
-**Writing or editing code inside `main()`** — runner sandbox, which modules import, 60s/256KB limits, `check`/`testRun` to test without creating a draft — and **writing an agent workflow's prompt** → use skill **`erp-workflow`**.
-
-Before creating/editing/deleting user workflows: **ask**. These run on real data on a schedule.
-
-## 9. Documents and shared memory
-
-Not everything is a record. Two other stores sit beside the object engine:
-
-```ts
-const folder = await erp.files.personalFolder();          // or publicFolder()
-const file = await erp.files.upload({ folderId: folder.id, name: "bao-cao.csv", content: csv });
-const bytes = await erp.files.downloadText(file.id);
-```
-
-The **drive** holds documents (PDF, spreadsheets, images): folders, sharing, and a
-trash that keeps a deletion for 7 days. The root is not writable — it holds exactly
-two system folders, the caller's personal one and the workspace `Public` tree — so
-every upload names a folder inside one of them. An upload is three steps (row →
-presigned PUT → complete) that `upload()` does in one. Details:
-`references/files.md`.
-
-The **wiki** is what the workspace has concluded, written down: pages, the sources
-they cite, and `ask()` retrieval over documents attached to a page.
+Reading the wiki is the floor permission, and useful in any script that has to
+explain a number:
 
 ```ts
 const passages = await erp.wiki.ask("chinh-sach-ton-kho", "Tồn tối thiểu nhóm A?");
 ```
-
-Reading it (catalog, search, `ask`) is the floor permission and useful in almost any
-script that has to explain a number. **Writing** it — pages, sources, attachments,
-lint — is its own job: use skill **`erp-wiki`**.
 
 ## Lessons learned (pitfalls)
 
@@ -257,11 +211,8 @@ they **cannot create tables/fields** (403). To create tables use admin keys — 
 - `references/recipes.md` — runnable example scripts: reports, joins, CSV import,
   safe bulk updates, CSV export, data quality checks.
 - `references/sql.md` — writing SQL for ERP: table/column names, parameters, return types, examples.
-- `references/workflows.md` — complete workflows: the two kinds, triggers,
-  version/publish, env, runs and reading results.
-- `references/files.md` — the drive: folders, upload/download, sharing, trash.
-- Writing **what runs inside a workflow** — script code (runtime, allowed modules,
-  limits, `test-run`) or an agent workflow's prompt → skill **`erp-workflow`**.
+- **Workflows** (managing them and writing the code inside), the **drive**
+  (upload/download), shared variables, copilot conversations → skill **`erp-tools`**.
 - Building **mini apps** (web apps using ERP as backend, `schema.json`, initData,
   deploy) → skill **`erp-miniapp`**.
 - Writing and maintaining the **workspace wiki** (pages, sources, attachments, `ask`

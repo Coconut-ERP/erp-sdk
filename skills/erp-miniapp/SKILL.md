@@ -174,4 +174,5 @@ Before modifying the deployer's workspace structure (creating tables, changing f
   two permission models, security checklist.
 - `references/deploy.md` — runtime contract, three sources, schema review UI,
   state lifecycle, ENV, logo, common error table.
-- Reading/writing/analyzing data (queries, DataFrame, SQL, workflows) → skill **`erp-data`**.
+- Reading/writing/analyzing data (queries, DataFrame, SQL) → skill **`erp-data`**.
+- Workflows, files on the drive (upload, download), shared variables → skill **`erp-tools`**.

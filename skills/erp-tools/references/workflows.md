@@ -29,7 +29,7 @@ Anything not in that list — **including `node:fs`** — is off-limits.
 Secrets are read from `process.env.NAME` (set via `setEnv`).
 
 Writing/editing the code itself (runtime, limits, `workflows.check`/`workflows.testRun`) →
-**`erp-workflow`** skill.
+`workflow-runtime.md` and `workflow-testing.md`.
 
 ## Lifecycle
 
@@ -97,7 +97,7 @@ hồi luôn.
 
 Payload tới `main(input)` là `{ source: "webhook", method, query, headers, body,
 receivedAt }` với `body` là **chuỗi thô**; verify chữ ký là việc của code trong
-workflow (skill `erp-workflow`).
+workflow (`workflow-patterns.md`).
 
 The SDK validates before making calls with `assertWorkflowTrigger` / `assertWorkflowCode` /
 `assertWorkflowEnv` → `WorkflowDefinitionError` with `.field` and `.reason`.
@@ -150,7 +150,7 @@ answer.
   the env as well when moving to `agent`. `update` insists on the replacement
   in the same call: `wf.update({ kind: "agent", prompt })`.
 
-Writing the prompt itself → skill **`erp-workflow`**, `references/agent.md`.
+Writing the prompt itself → `agent-workflows.md`.
 
 ## Env — write-only, replaces entire map
 

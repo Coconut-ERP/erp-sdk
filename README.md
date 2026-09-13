@@ -98,15 +98,15 @@ for:
 | Skill | Teaches |
 | --- | --- |
 | **`erp-miniapp`** | Building an app on the ERP: declaring `schema.json` and `assertSchema`, identifying users through initData, the two authority models, and the deploy contract |
-| **`erp-data`** | Working a live workspace: reading the real schema first, querying with filters/sorting/pagination, walking `relation` fields without N+1, aggregating with `DataFrame` or read-only SQL, writing (and bulk-writing) safely behind a dry run, and the drive |
-| **`erp-workflow`** | Writing what runs *inside* a workflow: the runner's sandbox and its fixed module registry, the limits that shape a script (60s, no retry, 256KB result), the `check` → `testRun` loop that proves one without saving a draft — and, for agent workflows, writing a prompt that runs unattended |
+| **`erp-data`** | Working a live workspace: reading the real schema first, querying with filters/sorting/pagination, walking `relation` fields without N+1, aggregating with `DataFrame` or read-only SQL, writing (and bulk-writing) safely behind a dry run |
+| **`erp-tools`** | Using the ERP's tools beyond records: workflows (script or agent — triggers, publish, env, runs, plus the runner's sandbox and the `check` → `testRun` loop for the code inside one), the drive (upload, download, sharing, trash), shared variables, copilot conversations and the personal AI task board |
 | **`erp-wiki`** | Writing and maintaining the workspace wiki: the four page types, slugs as addresses, draft → publish, sources versus attached documents, the lint pass, and `ask` retrieval over a page's documents |
 
 Each is a lean `SKILL.md` plus `references/` the agent loads only when it needs
 the detail.
 
 ```bash
-npx erp skill install                    # → ~/.agents/skills/{erp-miniapp,erp-data,erp-workflow,erp-wiki}
+npx erp skill install                    # → ~/.agents/skills/{erp-miniapp,erp-data,erp-tools,erp-wiki}
 npx erp skill install --skill erp-data   # just one
 npx erp skill path                       # or point an agent at the files in place
 ```
@@ -119,7 +119,7 @@ one that autoloads a `SKILL.md`, and only from its own directory:
 mkdir -p ~/.claude/skills \
   && ln -sfn ~/.agents/skills/erp-data ~/.claude/skills/erp-data \
   && ln -sfn ~/.agents/skills/erp-miniapp ~/.claude/skills/erp-miniapp \
-  && ln -sfn ~/.agents/skills/erp-workflow ~/.claude/skills/erp-workflow \
+  && ln -sfn ~/.agents/skills/erp-tools ~/.claude/skills/erp-tools \
   && ln -sfn ~/.agents/skills/erp-wiki ~/.claude/skills/erp-wiki
 # codex / opencode / pi — one line in AGENTS.md:
 #   ERP tasks (erp-sdk): read the SKILL.md files under ~/.agents/skills first.
@@ -935,6 +935,40 @@ const passages = await app.wiki.ask(page.slug, "Nhóm A giữ tồn bao nhiêu n
   provenance and tags outside the taxonomy; `archivePage` retires a page without
   turning what links to it into broken links, which `deletePage` does.
 
+## Task board — a member's kanban, shared with Arion
+
+Every member has exactly one board per workspace, and only two parties work on
+it: the member and Arion, the copilot. Arion files what it produced as a task —
+a markdown report, tags naming the analysis — and hands it back.
+
+```ts
+const member = (await app.session(initData)).client;   // a service account has no board
+const board = await member.tasks.board();              // created on first call, with taskCounts
+
+const task = await member.tasks.create({
+  title: "Hàng chậm luân chuyển — tháng 8/2026",
+  description: reportMarkdown,
+  status: "review",
+  priority: "high",
+  dueDate: new Date("2026-09-20T17:00:00+07:00"),
+  tags: ["inventory-analysis", { name: "kho", color: "#F59E0B" }],
+});
+await member.tasks.comment(task.id, "Đã đối chiếu với phiếu xuất kho.");
+await member.tasks.setStatus(task.id, "done");
+const { tasks } = await member.tasks.list({ status: "review", tag: "kho" });
+```
+
+- **Only a member reaches it** — a session or a personal key (`erp_uk_…`). A
+  service account key throws `TaskBoardError` before the request, where the
+  server would answer 403.
+- **Every call is scoped to the caller's own board.** A task on someone else's
+  board is `UnknownTaskError`; there is no admin override and no sharing.
+- `dueDate` is a `Date` or a full RFC 3339 timestamp and cannot be cleared;
+  `metadata` on update replaces the whole object; `actor: { type: "agent", id }`
+  signs a task or comment as an agent, unverified.
+- The board has no dry run. Edits write for real in development mode;
+  `delete` and `deleteComment`, which nothing restores, refuse.
+
 ## Permissions at runtime
 
 ```ts
@@ -959,11 +993,13 @@ source of truth; the SDK check is a fast preflight.
 | `UnknownObjectError` | `app.object(name)` doesn't match any object in the workspace |
 | `UnknownFieldError` | a filter/sort/data key doesn't match any field (`.known` lists fields) |
 | `RelationValueError` | a relation was written as something other than ≤ 100 record ids (`.field`, `.reason`) |
-| `DryRunUnsupportedError` | a delete/restore/link call, `workflow.run()`, a trash purge or `wiki.deletePage()`, while the client is in development mode (`.operation`) |
+| `DryRunUnsupportedError` | a delete/restore/link call, `workflow.run()`, a trash purge, `wiki.deletePage()` or deleting a task or comment, while the client is in development mode (`.operation`) |
 | `ObjectDefinitionError` | `updateDefinition` with no change, a blank name, or more than 10 groups (`.object`, `.reason`) |
 | `FileUploadError` | the bytes never reached storage; the file row is stuck in `uploading` (`.file`, `.status`) |
 | `UnknownWikiPageError` | no wiki page under that slug — pages are addressed by slug, not title (`.slug`) |
 | `WikiPageError` | a page type or confidence outside the enum, a summary/body/tag list past the cap (`.field`, `.reason`) |
+| `UnknownTaskError` | no task under that id on the caller's own board (`.taskId`) |
+| `TaskBoardError` | a service account key on the task board, a bare-date `dueDate`, a value outside an enum or past a limit (`.field`, `.reason`) |
 | `SqlQueryError` | SQL that is not a single read-only `SELECT` (`.reason`) |
 | `UnknownWorkflowError` / `UnknownDashboardError` / `UnknownQueryError` | name or id doesn't match (`.known` lists what does) |
 | `UnknownWorkflowVariableError` | no shared variable under that key, or this workflow was not granted it (`.key`) |

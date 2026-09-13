@@ -54,6 +54,7 @@ không được đọc. Chi tiết và các bẫy: [03 — Dữ liệu](03-du-li
 | `workflows` | `WorkflowsApi` (thuộc tính) — tự động hoá chạy trên server: script hoặc agent |
 | `workflow(nameOrId)` | `WorkflowHandle` (đã nạp `code`); không thấy → `UnknownWorkflowError`. Không cache: version đổi sau mỗi lần ghi |
 | `files` | `FilesApi` (thuộc tính) — drive của workspace. Chi tiết: [13](13-tep-va-thu-muc.md) |
+| `tasks` | `TaskBoardApi` (thuộc tính) — task board AI cá nhân của member. Chi tiết: [15](15-task-board.md) |
 | `wiki` | `WikiApi` (thuộc tính) — wiki + RAG. Chi tiết: [14](14-wiki.md) |
 | `wikiPage(slug)` | `WikiPageHandle`; sai slug → `UnknownWikiPageError` |
 | `conversations` | `ConversationsApi` (thuộc tính) — hội thoại copilot, chỉ đọc; nơi agent workflow để lại kết quả |
@@ -400,6 +401,31 @@ Chi tiết: [14 — Wiki & RAG](14-wiki.md).
 | `WIKI_INDEX_PENDING_STATUSES` | `pending`, `indexing` — hết hai cái đó là xong (`ready`/`failed`) |
 | `MAX_WIKI_*` | `SLUG_LENGTH` 160 · `TITLE_LENGTH` 255 · `SUMMARY_LENGTH` 500 · `BODY_LENGTH` 200 000 · `SOURCE_BODY_LENGTH` 2 000 000 · `TAGS` 20 · `PAGE_SOURCES` 50 · `ASK_PASSAGES` 20 |
 
+## Task board (AI)
+
+Chi tiết: [15 — Task board AI](15-task-board.md).
+
+**`TaskBoardApi`** (`erp.tasks`) — chỉ session hoặc personal key `erp_uk_…`; key
+service account → `TaskBoardError` trước khi gửi request.
+
+| Method | Mô tả |
+| --- | --- |
+| `board()` | Board của chính người gọi kèm `taskCounts` đủ mọi status. Tạo ở lần gọi đầu; id được nhớ trong client |
+| `updateBoard({ name?, description? })` | Đổi tên / mô tả. Không có tạo hay xoá board |
+| `list({ status?, priority?, assignee?, unassigned?, tag?, page?, perPage? })` · `listAll(options)` | `{ tasks, meta }`, mới nhất trước · đi hết các trang theo `meta` |
+| `create({ title, description?, status?, priority?, assignee?, dueDate?, tags?, metadata?, actor? })` | `assignee: { type, id }`; `tags`: chuỗi hoặc `{ name, color? }`; `dueDate`: `Date` hoặc timestamp RFC 3339 đầy đủ |
+| `get(id)` | `TaskDetailDto` kèm tag và comment. Không thấy → `UnknownTaskError` |
+| `update(id, { title?, description?, status?, priority?, dueDate?, metadata? })` | `metadata` **thay cả object**; `dueDate` không xoá được |
+| `setStatus(id, status)` · `assign(id, assignee \| null)` | Chuyển cột · giao cho chủ board hoặc agent, `null` bỏ giao |
+| `delete(id, { dryRun? })` | Không có endpoint khôi phục → throw `DryRunUnsupportedError` ở chế độ development |
+| `comments(id)` · `comment(id, content \| { content, attachmentUrl?, actor? })` · `deleteComment(id, commentId, { dryRun? })` | Cũ nhất trước · thêm · xoá (comment của user chỉ tác giả xoá được; bị chặn ở development) |
+| `addTag(id, name \| { name, color? })` · `removeTag(id, name)` | Thêm không phân biệt hoa thường, trả cả danh sách tag · gỡ phải khớp đúng tên |
+
+| Export | Mô tả |
+| --- | --- |
+| `TASK_STATUSES` · `TASK_PRIORITIES` · `TASK_ACTOR_TYPES` | `todo\|in_progress\|review\|done\|archived` · `low\|medium\|high\|urgent` · `user\|agent` |
+| `MAX_TASK_*` | `TITLE_LENGTH` 500 · `DESCRIPTION_LENGTH` 100 000 · `COMMENT_LENGTH` 100 000 · `TAGS` 50 · `TAG_NAME_LENGTH` 100 · `BOARD_NAME_LENGTH` 255 · `BOARD_DESCRIPTION_LENGTH` 5 000 · `ATTACHMENT_URL_LENGTH` 1 024 |
+
 ## Web app helpers (browser)
 
 | Export | Mô tả |
@@ -422,11 +448,13 @@ Chi tiết: [14 — Wiki & RAG](14-wiki.md).
 | `UnknownFieldError` | Tên field không khớp | `field`, `objectName`, `known: string[]` |
 | `FilterValueError` | `in`/`not_in` nhận giá trị server sẽ từ chối (không phải mảng, rỗng, > 200) | `field`, `operator`, `reason` |
 | `RelationValueError` | Field `relation` nhận thứ không phải mảng ≤ 100 record id | `field`, `reason` |
-| `DryRunUnsupportedError` | Gọi `delete`/`restore`/`createLink`/`deleteLink`/`workflow.run()`/`variables.set()`/`files.purge*()`/`files.emptyTrash()`/`wiki.deletePage()` khi client đang ở chế độ development | `operation` |
+| `DryRunUnsupportedError` | Gọi `delete`/`restore`/`createLink`/`deleteLink`/`workflow.run()`/`variables.set()`/`files.purge*()`/`files.emptyTrash()`/`wiki.deletePage()`/`tasks.delete()`/`tasks.deleteComment()` khi client đang ở chế độ development | `operation` |
 | `ObjectDefinitionError` | `updateDefinition` không mang thay đổi nào, tên rỗng, hoặc > 10 groups | `object`, `reason` |
 | `FileUploadError` | Bước PUT bytes lên storage hỏng — row nằm lại ở `uploading` | `file`, `status`, `detail` |
 | `UnknownWikiPageError` | Slug wiki không có (hoặc bị ẩn) | `slug`, `known: string[]` |
 | `WikiPageError` | `type`/`confidence` ngoài enum, summary/body/tags vượt trần, update rỗng | `field`, `reason` |
+| `UnknownTaskError` | Task không có trên board của chính người gọi (task của người khác cũng trả như vậy) | `taskId` |
+| `TaskBoardError` | Key service account, `dueDate` chỉ có ngày, status/priority ngoài enum, màu tag sai, vượt trần, update rỗng | `field`, `reason` |
 | `UnknownWorkflowError` · `UnknownDashboardError` | Tên/id không khớp | `workflow` / `dashboard`, `known: string[]` |
 | `UnknownQueryError` | Query đã lưu không có trên dashboard đó | `query`, `dashboard`, `known` |
 | `UnknownWorkflowVariableError` | Không có shared variable theo key đó, **hoặc** workflow đang chạy không được cấp | `key` |
@@ -494,7 +522,11 @@ string tuỳ ý) · `Action` (`"create" | "read" | "update" | "delete" | "manage
 `WikiCatalogEntry` · `WikiPageMatchDto` · `WikiLintReportDto` ·
 `WikiLintFinding` · `WikiSettingsDto` · `WikiLogEntryDto` · `WikiPageSpec` ·
 `WikiPageChanges` · `WikiSourceSpec` · `WikiCatalogFilter` ·
-`WikiSettingsChanges`.
+`WikiSettingsChanges` · `TaskDto` · `TaskDetailDto` · `TaskBoardDto` ·
+`TaskBoardDetailDto` · `TaskCommentDto` · `TaskTagDto` · `TaskActor` ·
+`TaskActorType` · `TaskStatus` · `TaskPriority` · `TaskSpec` · `TaskChanges` ·
+`TaskBoardChanges` · `TaskCommentSpec` · `TaskAuthor` · `TaskTag` ·
+`ListTasksOptions` · `TaskBoardApiOptions`.
 
 Chi tiết từng field: xem `src/types.ts` (được ship kèm `.d.ts`).
 
