@@ -205,6 +205,33 @@ describe("assertSchema", () => {
     expect(error.message).toContain("review its schema");
   });
 
+  it("names a declared field that the workspace holds archived", async () => {
+    const http = new FakeHttp({
+      "GET /objects": [
+        [{ id: "obj-1", workspaceId: "ws-1", name: "Nhân viên", position: 0 }],
+      ],
+      "GET /objects/obj-1/fields": [
+        [],
+        [{ ...field("obj-1", "code", "mã nv", "text"), isArchived: true }],
+      ],
+    });
+    const error = await new ErpClient(http)
+      .assertSchema(SMALL)
+      .catch((e: SchemaMismatchError) => e);
+
+    expect(error).toBeInstanceOf(SchemaMismatchError);
+    expect((error as SchemaMismatchError).missing).toEqual([
+      { object: "Nhân viên", field: "Mã NV", type: "text", archived: true },
+    ]);
+    expect((error as SchemaMismatchError).message).toContain(
+      "archived Nhân viên.Mã NV",
+    );
+    expect((error as SchemaMismatchError).message).not.toContain("missing");
+    expect(http.calls[http.calls.length - 1]?.options.query).toEqual({
+      includeArchived: true,
+    });
+  });
+
   it("separates a type conflict from a missing field", async () => {
     const http = new FakeHttp({
       "GET /objects": [

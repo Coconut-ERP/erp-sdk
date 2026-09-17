@@ -82,7 +82,8 @@ function serializeError(error: unknown): Record<string, unknown> {
       conflicts: error.conflicts,
       hint:
         "Compare the declaration with `erp schema dump`, or diff it in code with " +
-        "planSchema() from erp-sdk; applying it is the deployer's step",
+        "planSchema() from erp-sdk; applying it is the deployer's step. " +
+        "A gap marked archived exists in the workspace: restore it, or drop it from schema.json",
     };
   }
   if (error instanceof ObjectDefinitionError) {

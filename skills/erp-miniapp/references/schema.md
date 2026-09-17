@@ -113,6 +113,11 @@ A match returns `Record<name, ObjectHandle>`. A mismatch throws `SchemaMismatchE
 with `.missing` and `.conflicts`, and a message telling the deployer to approve. Call
 it once at boot, not per request; `{ refresh: true }` skips the cache.
 
+An archived field counts as missing — the review screen sees it the same way, and it
+cannot be read or written — but its gap carries `archived: true` and the message lists
+it apart. Restoring it is the workspace owner's call; otherwise drop it from
+`schema.json`.
+
 ## Evolving a schema
 
 1. Edit `schema.json`.

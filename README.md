@@ -991,7 +991,7 @@ source of truth; the SDK check is a fast preflight.
 | --- | --- |
 | `MissingPermissionsError` | declared permissions not granted to the key (`.missing` lists them) |
 | `ErpApiError` | any non-2xx response (`.status`, `.trace`, `.details`) |
-| `SchemaMismatchError` | `assertSchema` found the workspace missing (or retyping) something `schema.json` declares (`.missing`, `.conflicts`) |
+| `SchemaMismatchError` | `assertSchema` found the workspace missing (or retyping) something `schema.json` declares (`.missing`, `.conflicts`; a gap with `archived: true` exists but is archived) |
 | `UnknownObjectError` | `app.object(name)` doesn't match any object in the workspace |
 | `UnknownFieldError` | a filter/sort/data key doesn't match any field (`.known` lists fields) |
 | `RelationValueError` | a relation was written as something other than ≤ 100 record ids (`.field`, `.reason`) |

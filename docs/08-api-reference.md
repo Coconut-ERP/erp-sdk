@@ -443,7 +443,7 @@ service account → `TaskBoardError` trước khi gửi request.
 | --- | --- | --- |
 | `ErpApiError` | Mọi response non-2xx | `status`, `trace?`, `details?` |
 | `MissingPermissionsError` | Key thiếu quyền đã khai | `missing: RequiredPermission[]` |
-| `SchemaMismatchError` | `assertSchema` thấy workspace chưa khớp `schema.json` | `missing: SchemaGap[]`, `conflicts: SchemaGap[]` |
+| `SchemaMismatchError` | `assertSchema` thấy workspace chưa khớp `schema.json` | `missing: SchemaGap[]` (`archived: true` khi field có trong workspace nhưng đã archive), `conflicts: SchemaGap[]` |
 | `UnknownObjectError` | `object(name)` không khớp | `object` |
 | `UnknownFieldError` | Tên field không khớp | `field`, `objectName`, `known: string[]` |
 | `FilterValueError` | `in`/`not_in` nhận giá trị server sẽ từ chối (không phải mảng, rỗng, > 200) | `field`, `operator`, `reason` |

@@ -354,6 +354,7 @@ export class ErpClient {
         }
       }
     }
+    await this.markArchived(missing);
     if (missing.length > 0 || conflicts.length > 0) {
       throw new SchemaMismatchError(missing, conflicts);
     }
@@ -363,6 +364,34 @@ export class ErpClient {
       handles[declared.name] = await this.object(declared.name);
     }
     return handles;
+  }
+
+  private async markArchived(missing: SchemaGap[]): Promise<void> {
+    const objects = new Set(
+      missing.filter((gap) => gap.field).map((gap) => gap.object),
+    );
+    for (const name of objects) {
+      const handle = await this.object(name);
+      const all = await this.http.request<FieldDto[]>(
+        "GET",
+        `/objects/${handle.id}/fields`,
+        { query: { includeArchived: true } },
+      );
+      const archived = new Set(
+        (all ?? [])
+          .filter((field) => field.isArchived)
+          .map((field) => field.name.toLowerCase()),
+      );
+      for (const gap of missing) {
+        if (
+          gap.object === name &&
+          gap.field &&
+          archived.has(gap.field.toLowerCase())
+        ) {
+          gap.archived = true;
+        }
+      }
+    }
   }
 
   /**

@@ -72,7 +72,9 @@ const { "Đơn xin nghỉ": leaves } = await app.assertSchema(schema);
 ```
 
 Sai một chỗ, hỏng một lần, ngay lúc boot — thay vì `UnknownFieldError` rơi rớt
-ở từng route. Muốn xem diff mà không throw: `app.schemaPlan(schema)` trả đúng
+ở từng route. Field đã archive được tính là thiếu — giống màn duyệt, vì không
+đọc/ghi được — nhưng lỗi ghi riêng là `archived` (`missing[i].archived: true`):
+khôi phục field, hoặc bỏ nó khỏi `schema.json`. Muốn xem diff mà không throw: `app.schemaPlan(schema)` trả đúng
 cấu trúc mà màn duyệt dùng (`action`: `create` / `update` / `unchanged` /
 `conflict`).
 

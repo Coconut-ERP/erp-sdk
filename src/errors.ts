@@ -38,6 +38,8 @@ export interface SchemaGap {
   type?: string;
   /** Only on a conflict: the type the workspace currently holds. */
   currentType?: string;
+  /** Only on a missing field: the workspace holds it, but archived. */
+  archived?: boolean;
 }
 
 /**
@@ -54,8 +56,16 @@ export class SchemaMismatchError extends Error {
     const describe = (gap: SchemaGap) =>
       gap.field ? `${gap.object}.${gap.field}` : gap.object;
     const parts = [];
-    if (missing.length > 0) {
-      parts.push(`missing ${missing.map(describe).join(", ")}`);
+    const absent = missing.filter((gap) => !gap.archived);
+    const archived = missing.filter((gap) => gap.archived);
+    if (absent.length > 0) {
+      parts.push(`missing ${absent.map(describe).join(", ")}`);
+    }
+    if (archived.length > 0) {
+      parts.push(
+        `archived ${archived.map(describe).join(", ")} ` +
+          "(restore the field, or drop it from schema.json)",
+      );
     }
     for (const gap of conflicts) {
       parts.push(
