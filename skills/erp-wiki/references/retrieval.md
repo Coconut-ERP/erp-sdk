@@ -69,7 +69,8 @@ for (const p of passages) {
   p.source;        // document title — what you cite
   p.headingPath;   // position in the document, when it had headings
   p.pageNumber;    // for paginated documents
-  p.link;          // back to the page and passage
+  p.link;          // back to the page and passage — currently unset by the backend
+                    // on every ask() response; treat as optional, never required
   p.score;         // relevance; results are already ordered by it
 }
 ```
@@ -99,7 +100,9 @@ const context = passages
 
 - **Never state what the passages do not contain.** No results is an answer: the
   documents do not cover it.
-- **Cite every claim** with `p.source` and `p.link`.
+- **Cite every claim** with `p.source` (plus `p.headingPath` / `p.pageNumber` when
+  present). `p.link` is not currently populated — don't build a citation that depends
+  on it being there.
 - **Read the page before the passages.** The page is the workspace's conclusion; a
   passage that contradicts it is a `contested` finding to raise with the user, not
   something to smooth over.

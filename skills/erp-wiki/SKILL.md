@@ -123,12 +123,13 @@ Changed content is a new source; that keeps citations stable.
 
 ```ts
 const passages = await erp.wiki.ask(slug, "Nhóm A giữ tồn tối thiểu bao nhiêu ngày?", { limit: 5 });
-for (const p of passages) console.log(`${p.source}: ${p.text}`, p.link);
+for (const p of passages) console.log(`${p.source}: ${p.text}`);
 ```
 
 It searches **that page's attachments only**, matches by meaning and by exact wording,
-and returns passages, not prose. Every claim built on them cites `p.source` and
-`p.link`. Details, index states and composing a cited answer: `references/retrieval.md`.
+and returns passages, not prose. Every claim built on them cites `p.source` (`p.link`
+is optional and currently always empty — don't rely on it). Details, index states and
+composing a cited answer: `references/retrieval.md`.
 
 ## 7. Lint
 

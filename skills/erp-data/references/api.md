@@ -64,7 +64,7 @@ Properties: `id`, `name`, `groups`, `meta` (`ObjectDto`), `fields` (`FieldDto[]`
 | `get(id)` | `RecordDto`, **without** relations |
 | `getMany(ids, { chunkSize? })` | 200 ids per request, input order kept; hidden or deleted ids are simply absent |
 | `create(data, { dryRun? })` | Keys by display name or field key |
-| `createMany(rows, { chunkSize?, dryRun? })` | Chunks of ≤ 500, each all-or-nothing |
+| `createMany(rows, { chunkSize?, dryRun? })` | Chunks of ≤ 5,000, each all-or-nothing |
 | `update(id, data, version \| { version?, dryRun? })` | Reads the version when omitted; mismatch → 409 |
 | `updateWhere(filters, data, { limit?, dryRun? })` | Bulk update by raw filters (field keys) |
 | `delete(id, version \| { version? })` · `restore(id, version)` | Soft delete; no dry run |
@@ -109,7 +109,7 @@ transaction as the rest of the row.
 .whereIds(ids)
 .orderBy(field, "asc" | "desc")          // ≤ 3
 .preload(field, { limit?, direction? })  // ≤ 10
-.limit(n)                                // ≤ 100
+.limit(n)                                // ≤ 1,000 (server default 50 when omitted)
 .cursor(c) · .withTotal() · .build()     // build() shows the request body
 
 await .fetch()                           // { records, nextCursor, hasMore, total? }

@@ -23,9 +23,9 @@ import type {
   SortDirection,
 } from "./types";
 
-const MAX_PAGE_SIZE = 100;
+const MAX_PAGE_SIZE = 1000;
 
-const MAX_BULK_CREATE = 500;
+const MAX_BULK_CREATE = 5000;
 
 /**
  * The filter key that addresses a record's own id instead of a field. The

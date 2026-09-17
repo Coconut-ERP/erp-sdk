@@ -62,8 +62,8 @@ await paid().fetchAll({ max: 5000 });
 await paid().count();
 ```
 
-Server limits: 20 filters, 3 sorts, 100 records per page, 200 values for
-`in` / `not_in`.
+Server limits: 20 filters, 3 sorts, 1–1000 records per page (default 50 when
+`.limit()` is omitted), 200 values for `in` / `not_in`.
 
 `relation` fields hold arrays of record ids. Resolve them without N+1, in this order
 of preference: `preload()`, then `getMany(ids)`, then `DataFrame.leftJoin`. Never

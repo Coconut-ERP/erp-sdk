@@ -60,6 +60,7 @@ the authoritative list.
 | Commerce and finance | `stripe`, `@paypal/paypal-server-sdk` (`paypal`), `shopify-api-node` (`shopify`), `@woocommerce/woocommerce-rest-api` (`woocommerce`), `yahoo-finance2` (`yfinance`, `yahoo-finance`) |
 | Files and formats | `exceljs` (`excel`, `xlsx`), `papaparse`, `csv-parse` (`csv`), `fast-xml-parser` (`xml`), `pdf-lib` (`pdf`), `jszip` (`zip`), `handlebars`, `qrcode`, `cheerio` (`html`) |
 | AI | `ai`, `openai`, `@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google`, `@ai-sdk/google-vertex`, `@ai-sdk/azure`, `@ai-sdk/amazon-bedrock`, `@ai-sdk/mistral`, `@ai-sdk/deepseek`, `@ai-sdk/groq`, `@ai-sdk/xai`, `@ai-sdk/cohere`, `@ai-sdk/perplexity`, `@ai-sdk/openai-compatible` |
+| Databases | `pg` (`postgres`), `mysql2`/`mysql2/promise` (`mysql`, `mariadb`), `mssql` (`sqlserver`), `oracledb` thin mode (`oracle`), `ioredis` (`redis`), `mongodb` (`mongo`), `@clickhouse/client` (`clickhouse`) — raw TCP to whatever the runner reaches, so a refused connection just fails the run |
 
 - **Static imports with literal specifiers.** ES-only packages — `ai`, `@ai-sdk/*`,
   `jose`, `@octokit/rest`, `jira.js` — are loaded ahead of time from those imports, so
@@ -98,7 +99,7 @@ async function main() {
 | Input | 64 KB of JSON (a larger webhook body → 413) |
 | Result | 256 KB |
 | Logs | 64 KB |
-| One run | 60 s by default (the deployment can raise it); a test run is always ≤ 1 min |
+| One run | `WORKFLOW_RUN_TIMEOUT`, 6 h by default (the deployment sets the ceiling); a test run is always ≤ 1 min regardless |
 | Env | 50 entries |
 | Name / description | 255 / 2,000 chars |
 

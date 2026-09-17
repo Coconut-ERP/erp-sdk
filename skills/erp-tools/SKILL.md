@@ -48,7 +48,7 @@ The ERP stores the trigger and what to run; there is no separate service.
 
 | `kind` | Stores | One run |
 | --- | --- | --- |
-| `code` (default) | TypeScript with `async function main(input)` | the runner executes it — 60 s, no retry |
+| `code` (default) | TypeScript with `async function main(input)` | the runner executes it — 6 h by default, no retry |
 | `agent` | a prompt ≤ 8,000 characters | opens a hidden copilot conversation and hands it over |
 
 Prove a script before saving it — neither call stores anything:

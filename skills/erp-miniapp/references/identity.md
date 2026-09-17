@@ -1,8 +1,9 @@
 # User identity — initData and sessions
 
 A mini app runs on its own API key but still needs to know **who is clicking**. The
-host hands the iframe a signed string; the app's server trades it for a verified
-identity. User JWTs never reach a mini app.
+app is served at its own subdomain (its own origin, not an iframe); the ERP host
+hands it a signed string and the app's server trades it for a verified identity.
+User JWTs never reach a mini app.
 
 ## Contents
 
@@ -55,10 +56,11 @@ await fetch("api/leaves", { headers: { "X-Init-Data": initData } });
 ```
 
 On a 401, ask the host for a fresh string — the ERP host already answers this message
-— and retry:
+— and retry. This only works if the host kept a reference to the app's window (it
+opened it with `window.open`, not a plain redirect), so `window.opener` exists:
 
 ```ts
-window.parent.postMessage({ type: "erp-miniapp:request-init-data" }, "*");
+window.opener?.postMessage({ type: "erp-miniapp:request-init-data" }, "*");
 const fresh = await receiveInitData({ allowedOrigins: ["https://erp.example.com"] });
 ```
 
@@ -119,17 +121,21 @@ per endpoint — read as `client` to see only permitted rows, write as `app`.
 
 ## Host side
 
-Only when you also build the page that embeds the app:
+Only when you also build the page that opens the app. Each app lives at its own
+subdomain (its own origin) — there is no iframe to embed it in, so the host opens
+or navigates to that origin directly and hands it initData one of two ways:
 
 ```ts
 const { initData } = await hostClient.issueInitData(app.serviceAccountId);
 
-// A: URL fragment — keep the "/" before "#", or the app's relative fetches break
-iframe.src = `${app.url}/#erpInitData=${encodeURIComponent(initData)}`;
+// A: URL fragment — works for a new tab or a top-level redirect alike
+location.href = `${app.url}/#erpInitData=${encodeURIComponent(initData)}`;
+// or: window.open(`${app.url}/#erpInitData=${encodeURIComponent(initData)}`);
 
-// B: postMessage to one origin
+// B: postMessage — only if the host keeps a reference to the opened window
 import { sendInitDataToFrame } from "erp-sdk";
-sendInitDataToFrame(iframe.contentWindow, initData, new URL(app.url).origin);
+const opened = window.open(app.url);
+sendInitDataToFrame(opened, initData, new URL(app.url).origin);
 ```
 
 ## Local development

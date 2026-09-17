@@ -66,8 +66,14 @@ missed ticks on purpose.
 
 ## Staying under the time limit
 
+A published run gets `WORKFLOW_RUN_TIMEOUT`, **6 h by default** (a deployment can
+lower or raise it) — generous, but not infinite, and a `testRun` while developing is
+always capped at 1 minute regardless. For a job that could outgrow either one (a
+huge backlog, an unusually slow API), cap the work per invocation and let the cron
+tick pick up where it left off rather than trying to finish everything in one run:
+
 ```ts
-const BUDGET_MS = 45_000;   // room to return
+const BUDGET_MS = 45_000;   // room to return well inside a 1-minute testRun
 
 async function main() {
   const started = Date.now();
@@ -197,8 +203,9 @@ async function main() {
 }
 ```
 
-A slow model on a long prompt can spend the whole 60 seconds. For judgement that
-takes minutes, use an agent workflow instead (`agent-workflows.md`).
+A slow model on a long prompt can eat the whole minute a `testRun` gets while you're
+developing it, even though a published run's own budget is far larger by default.
+For judgement that takes minutes, use an agent workflow instead (`agent-workflows.md`).
 
 ## Outbound HTTP
 

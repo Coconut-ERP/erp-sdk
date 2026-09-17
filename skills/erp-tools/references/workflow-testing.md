@@ -132,7 +132,9 @@ Never go straight from "code written" to create and publish.
 
 - [ ] `check` passes and `testRun` is `ok: true` on real input.
 - [ ] Two runs in a row don't double any side effect.
-- [ ] Every loop and `fetchAll` is bounded and fits in 60 seconds.
+- [ ] Every loop and `fetchAll` is bounded, so a `testRun` (always ≤ 1 minute) finishes
+      instead of timing out — a published run gets much longer by default (6 h), but
+      don't rely on that ceiling never being lowered.
 - [ ] No secret in the code; the env names it needs are listed for the user.
 - [ ] Checkpoint variables are named, and this workflow is in their `workflowIds`.
 - [ ] `main()` returns a small summary of what the run did.

@@ -16,8 +16,10 @@
    `npm start`). Other stacks follow nixpacks conventions and call the REST API with
    the same headers the SDK sends.
 2. **Listen on `process.env.PORT`, bind `0.0.0.0`.**
-3. **Relative paths.** The app is served under `/apps/<slug>-<id>/`: `fetch("api/me")`,
-   not `/api/me`, and no root-relative assets.
+3. **Absolute paths are fine.** Each app gets its own subdomain — a Traefik
+   `Host()` router with nothing rewritten — so it is its own origin at the root
+   path, not a path prefix behind the ERP's. `fetch("/api/me")` and root-relative
+   assets both resolve correctly.
 4. **Credentials from the environment only**, never written to config files.
 
 | Injected | Meaning |
@@ -27,25 +29,32 @@
 | `ERP_WORKSPACE_ID` | The install's workspace (the key already pins it) |
 | `PORT` | The port to listen on |
 
-Custom variables are set at install or with `PUT /mini-apps/:id`. Never set
-`ERP_ENV=development` there: every record write would silently become a dry run.
+Custom variables are set at install or with `PUT /mini-apps/:id/env` (a dedicated,
+write-only endpoint — values come back as `***`, and `[KEEP]` in a whole-map PUT
+means "keep what's already stored under this name"). `PUT /mini-apps/:id` itself
+only covers `name`, `description`, `externalUrl` and `port`. Never set
+`ERP_ENV=development` in the env: every record write would silently become a dry
+run.
 
 ## Install sources
 
+Only two `source` values exist — anything else is a 400:
+
 | Source | Install | New version |
 | --- | --- | --- |
-| `builtin` | `{ "source": "builtin", "templateKey": "…" }` — catalog at `GET /mini-apps/templates` | `POST /:id/deploy` |
-| `repo` | `{ "source": "repo", "repoUrl": "…", "repoBranch": "main" }` | push, then `POST /:id/deploy` |
 | `zip` | multipart `POST /mini-apps`, field `file` | multipart `PUT /:id/source`, field `file` — redeploys |
+| `external` | JSON body naming a URL the developer already runs themselves — **not built, hosted or fetched server-side**; only the importer sees or removes it, and it can't be shared workspace-wide | n/a — edit the URL and reopen it |
 
-A zip is ≤ 25 MB, built from the project root without `node_modules/` or `.git/`, and
-keeps `schema.json`:
+A zip is built from the project root without `node_modules/` or `.git/`, capped at
+20,000 entries and 1 GiB uncompressed, and keeps `schema.json`:
 
 ```bash
 zip -r app.zip . -x "node_modules/*" -x ".git/*"
 ```
 
 The first deploy after install is automatic unless the schema is pending.
+`external` apps land in status `development` and reject deploy/start/stop/logs/source
+upload with 409 — there is nothing here to build.
 
 ## Schema review
 
@@ -96,7 +105,8 @@ install / deploy ──► pending ──► building ──► running
 POST   /mini-apps/:id/deploy         build and restart (rotates the API key)
 POST   /mini-apps/:id/start          start a stopped container
 POST   /mini-apps/:id/stop           stop without deleting
-PUT    /mini-apps/:id                name, description, port, env, repoBranch — applied on the next deploy
+PUT    /mini-apps/:id                name, description, externalUrl, port — applied on the next deploy
+PUT    /mini-apps/:id/env            env vars — write-only, `[KEEP]` keeps a stored value
 GET    /mini-apps/:id/logs?tail=200  container logs (504 if the worker is silent for 10 s)
 DELETE /mini-apps/:id                remove the container and service account; data tables stay
 ```
@@ -123,7 +133,6 @@ falls back to a default.
 | 403 on apply | The clicker lacks `object:create` / `object:field:create` |
 | `failed` with nixpacks output | No `start` script, stale lockfile, or unrecognised stack |
 | Build succeeds, never `running` | Not listening on `PORT`, or bound to `localhost` |
-| Frontend `api/...` calls return 404 | The app URL lacks the `/` before `#`, so relative paths resolve wrongly |
 | 401 from `session()` | initData expired or belongs to another app; fetch a fresh one |
 | 401/403 after a redeploy | The old key was cached; read `process.env.ERP_API_KEY` each time |
 | Reads return 0 records although data exists | Row scope, not the filter |

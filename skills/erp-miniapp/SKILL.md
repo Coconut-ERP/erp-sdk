@@ -5,10 +5,11 @@ description: Builds mini apps on Coconut ERP with erp-sdk — small web apps tha
 
 # Mini apps on the ERP
 
-A mini app is a small web app installed per workspace and opened in an iframe inside
-the ERP, which supplies its data, access control and user identity — the Telegram
-Mini App model. The **server** half is required: it holds the API key and calls the
-ERP through the SDK. The **frontend** half is optional and never sees the key.
+A mini app is a small web app installed per workspace and served at its own
+subdomain (its own origin, no path prefix, no iframe), while the ERP supplies its
+data, access control and user identity through Telegram-style signed initData. The
+**server** half is required: it holds the API key and calls the ERP through the
+SDK. The **frontend** half is optional and never sees the key.
 
 Three constraints shape every design:
 
@@ -124,10 +125,12 @@ The ERP builds with nixpacks and runs the container behind Traefik. The app must
 
 - have a start command (Node: a `start` script);
 - **listen on `process.env.PORT` and bind `0.0.0.0`**, not `localhost`;
-- **use relative URLs** in the frontend (`fetch("api/me")`, not `/api/me`), because it
-  is served under `/apps/<slug>-<id>/`;
 - read every credential from the environment, where the ERP injects `ERP_BASE_URL`,
   `ERP_API_KEY`, `ERP_WORKSPACE_ID` and `PORT`.
+
+Each app gets its own subdomain (its own origin, Traefik `Host()` routing, nothing
+rewritten), so absolute paths and asset URLs work as written — no path-prefix or
+relative-URL requirement.
 
 **Never set `ERP_ENV=development` on an installed app**: every record write becomes a
 dry run, and the app looks healthy while saving nothing.

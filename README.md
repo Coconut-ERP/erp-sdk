@@ -187,7 +187,8 @@ const n   = await invoices.records().count();
 
 Operators: `equals`, `not_equals`, `contains`, `in`, `not_in`, `greater_than`,
 `greater_than_or_equal`, `less_than`, `less_than_or_equal`, `is_empty`,
-`is_not_empty`. Max 20 filters, 3 sorts, 100 records/page (server limits).
+`is_not_empty`. Max 20 filters, 3 sorts, 1–1 000 records/page (default 50, server
+limits).
 
 ### Matching a set of values, and fetching by id
 
@@ -290,7 +291,7 @@ const result = await invoices
 ```
 
 An invalid row rejects the whole insert naming its index, so a half-imported
-table never happens; batches over 500 records are split for you. A bulk update
+table never happens; batches over 5 000 records are split for you. A bulk update
 is capped server-side (5 000 rows per call) and sets `hasMore` when the filters
 matched more than that — repeat the same call until it is false. Two rules to
 know: a **unique** field cannot be *set* by a bulk update (one value across many
