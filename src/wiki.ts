@@ -8,8 +8,12 @@ import type { Http } from "./http";
 import type { WriteOptions } from "./objects";
 import type {
   PageMeta,
+  SharingAccess,
+  SharingDto,
+  SharingVisibility,
   WikiCatalogDto,
   WikiConfidence,
+  WikiExcerptDto,
   WikiLintReportDto,
   WikiLogEntryDto,
   WikiPageDetailDto,
@@ -55,6 +59,10 @@ export const MAX_WIKI_SOURCE_BODY_LENGTH = 2_000_000;
 export const MAX_WIKI_TAGS = 20;
 export const MAX_WIKI_PAGE_SOURCES = 50;
 export const MAX_WIKI_ASK_PASSAGES = 20;
+/** Alternate phrasings one `ask` may carry, on top of the question itself. */
+export const MAX_WIKI_ASK_QUERIES = 4;
+/** The widest range `excerpt` returns in one call — `to - from + 1`. */
+export const MAX_WIKI_EXCERPT_SEQS = 20;
 
 /** An attached document is indexed in the background — these are the stages. */
 export const WIKI_INDEX_PENDING_STATUSES: readonly string[] = [
@@ -116,7 +124,11 @@ export interface WikiPageSpec {
   confidence?: WikiConfidence;
   /** Say so when the workspace does not agree yet — lint surfaces it. */
   contested?: boolean;
-  /** Ids of {@link WikiApi.ingestSource}d sources this page rests on. */
+  /**
+   * Ids of {@link WikiApi.ingestSource}d sources this page rests on. Citing a
+   * source publishes it to the page's readers, so the server refuses sources
+   * the writer may not read.
+   */
   sourceIds?: string[];
 }
 
@@ -153,6 +165,16 @@ export interface WikiSettingsChanges {
   conventions?: string;
   /** The tags a page may carry. Lint reports anything outside it. */
   taxonomy?: string[];
+}
+
+export interface WikiAskOptions {
+  limit?: number;
+  /**
+   * Alternate phrasings of the same question, searched alongside `query` —
+   * expansion is the caller's job, the wiki only searches. At most
+   * {@link MAX_WIKI_ASK_QUERIES}, each at least 2 characters.
+   */
+  queries?: string[];
 }
 
 export interface WaitForIndexOptions {
@@ -239,8 +261,15 @@ function assertPageFields(
  * text ingested into the wiki and cited by a page. An *attachment* is a drive
  * file copied into the wiki and indexed, so {@link ask} can retrieve the
  * passages of it that answer a question — the RAG half. Attaching hands the
- * document to everyone who may read the wiki: the file's own sharing stops
+ * document to everyone who may read the page: the file's own sharing stops
  * applying at that moment.
+ *
+ * **Two permission layers, both narrowing.** The `wiki` RBAC grant decides who
+ * may use the wiki at all; a page's `visibility` then decides *which* members
+ * — `workspace` is open, `restricted` is creator plus grants (read < write <
+ * manage), and an excluded member gets a 404, not a 403. Sources carry no ACL
+ * of their own: readable by whoever can read a page citing them, so citing is
+ * publishing.
  *
  * The wiki has no dry run on the server. Pages are definitions rather than
  * records, so writes execute in `development` mode too — except
@@ -411,7 +440,8 @@ export class WikiApi {
   /**
    * Removes the page. Links pointing at it survive as **broken** links, which
    * {@link lint} then reports — {@link archivePage} is usually what was meant.
-   * Not reversible, so it refuses in development mode.
+   * Takes `wiki:delete` plus `manage` on the page itself. Not reversible, so
+   * it refuses in development mode.
    */
   async deletePage(slug: string, options: WriteOptions = {}): Promise<void> {
     if (options.dryRun ?? this.options.dryRun ?? false) {
@@ -424,9 +454,28 @@ export class WikiApi {
     );
   }
 
+  // ------------------------------------------------------------- page ACL
+
+  /**
+   * The page's visibility and its grants — read-only here, changed in the ERP
+   * app. Takes `manage` on the page: for a `restricted` page that means the
+   * creator or a `manage` grant; a `workspace` page answers `manage` to
+   * everyone the gate lets in.
+   */
+  async pageSharing(slug: string): Promise<SharingDto> {
+    return this.pageCall<SharingDto>(
+      "GET",
+      `/ai-wiki/pages/${encodeURIComponent(slug)}/acl`,
+      slug,
+    );
+  }
+
   // ---------------------------------------------------------------- sources
 
-  /** One page of ingested sources, newest first. Bodies are omitted. */
+  /**
+   * One page of the sources this caller may read, newest first — what they
+   * ingested themselves plus what a readable page cites. Bodies are omitted.
+   */
   async sources(
     options: { page?: number; perPage?: number } = {},
   ): Promise<{ sources: WikiSourceDto[]; meta?: PageMeta }> {
@@ -438,7 +487,11 @@ export class WikiApi {
     return { sources: paged.data ?? [], meta: paged.meta };
   }
 
-  /** One source with its body and the pages compiled from it. */
+  /**
+   * One source with its body and the readable pages compiled from it. A
+   * source nobody may reach — not ingested by the caller, not cited by any
+   * page they can read — answers 404.
+   */
   async source(sourceId: string): Promise<WikiSourceDetailDto> {
     return this.http.request<WikiSourceDetailDto>(
       "GET",
@@ -450,6 +503,10 @@ export class WikiApi {
    * Stores raw material a page will cite. Sources are **immutable**:
    * re-ingesting changed content creates a new one, which is what makes a
    * citation stable.
+   *
+   * Pasted text is indexed exactly like an attached document — the response
+   * carries `indexStatus: "pending"` and {@link waitForIndex} applies, so a
+   * source cited on a page joins that page's {@link ask} pool once `ready`.
    */
   async ingestSource(spec: WikiSourceSpec): Promise<WikiSourceDto> {
     if (!WIKI_SOURCE_KINDS.includes(spec.kind)) {
@@ -480,11 +537,13 @@ export class WikiApi {
   /**
    * Copies a drive file into the wiki and queues it for indexing, so
    * {@link ask} can retrieve what it says. Answers 202 — the copy exists,
-   * its passages do not yet: poll {@link waitForIndex}.
+   * its passages do not yet: poll {@link waitForIndex}. Takes `wiki:create`
+   * plus `write` on the page.
    *
    * **The copy belongs to the wiki from here on.** The file's own sharing
-   * stops applying, so everyone who may read this wiki may ask about what the
-   * document says. The caller must be able to read the file themselves.
+   * stops applying, so everyone who may read this page may ask about what the
+   * document says — on a `restricted` page that is still a disclosure. The
+   * caller must be able to read the file themselves.
    */
   async attachFile(slug: string, fileId: string): Promise<WikiSourceDto> {
     return this.pageCall<WikiSourceDto>(
@@ -508,26 +567,30 @@ export class WikiApi {
   }
 
   /**
-   * Retrieval over **this page's attached documents and no further**: the
+   * Retrieval over **this page's sources and no further** — everything the
+   * page cites or has attached, plus the page's own body once published: the
    * passages that answer the question, matched by meaning and by wording
-   * together, each carrying the source to cite and a link back to it.
+   * together and reranked, each carrying the source to cite and a `link` back
+   * to it.
    *
    * It retrieves; it does not write an answer. What comes back is the context
    * a model is given, or the quotes a person reads:
    *
    * ```ts
-   * const passages = await erp.wiki.ask("chinh-sach-ton-kho", "Mức tồn tối thiểu nhóm A?");
+   * const passages = await erp.wiki.ask("chinh-sach-ton-kho", "Mức tồn tối thiểu nhóm A?", {
+   *   queries: ["Reorder threshold nhóm A", "tồn kho an toàn"],  // widen it yourself
+   * });
    * for (const p of passages) console.log(`${p.source}: ${p.text}`);
    * ```
    *
    * 503 means the indexer or the embedding model is unavailable, not that the
-   * page has nothing to say. A page whose attachments are still `pending` has
+   * page has nothing to say. A page whose sources are still `pending` has
    * nothing to retrieve yet.
    */
   async ask(
     slug: string,
     query: string,
-    options: { limit?: number } = {},
+    options: WikiAskOptions = {},
   ): Promise<WikiPassageDto[]> {
     if (options.limit !== undefined && options.limit > MAX_WIKI_ASK_PASSAGES) {
       throw new WikiPageError(
@@ -535,13 +598,42 @@ export class WikiApi {
         `${options.limit} passages, but at most ${MAX_WIKI_ASK_PASSAGES} are returned`,
       );
     }
+    if (options.queries && options.queries.length > MAX_WIKI_ASK_QUERIES) {
+      throw new WikiPageError(
+        "ask queries",
+        `${options.queries.length} phrasings, but at most ${MAX_WIKI_ASK_QUERIES} are searched`,
+      );
+    }
     return (
       (await this.pageCall<WikiPassageDto[]>(
         "POST",
         `/ai-wiki/pages/${encodeURIComponent(slug)}/ask`,
         slug,
-        { body: { query, limit: options.limit } },
+        {
+          body: {
+            query,
+            limit: options.limit,
+            queries: options.queries,
+          },
+        },
       )) ?? []
+    );
+  }
+
+  /**
+   * The stored passage text of one source between two `seq` values — the
+   * follow-up a passage's `link` points at when one passage was not enough.
+   * The window is capped at {@link MAX_WIKI_EXCERPT_SEQS} seqs; a range with
+   * nothing indexed answers 404.
+   */
+  async excerpt(
+    sourceId: string,
+    range: { from?: number; to?: number } = {},
+  ): Promise<WikiExcerptDto> {
+    return this.http.request<WikiExcerptDto>(
+      "GET",
+      `/ai-wiki/sources/${sourceId}/excerpt`,
+      { query: { from: range.from, to: range.to } },
     );
   }
 
@@ -570,15 +662,22 @@ export class WikiApi {
   // ------------------------------------------------------------------ audit
 
   /**
-   * Audits the whole wiki: broken links, orphans, contested and stale pages,
-   * thin provenance, tags outside the taxonomy. Takes `wiki:update` rather
-   * than read — it stamps `lintedAt` and appends to the log.
+   * Audits the wiki: broken links, orphans, contested and stale pages, thin
+   * provenance, tags outside the taxonomy — findings covering only what the
+   * caller may read, so a `restricted` page never leaks through a report.
+   * Takes `wiki:update` rather than read — it stamps `lintedAt` and appends
+   * to the log.
    */
   async lint(): Promise<WikiLintReportDto> {
     return this.http.request<WikiLintReportDto>("POST", "/ai-wiki/lint");
   }
 
-  /** The append-only record of every wiki action, newest first. */
+  /**
+   * The append-only record of every wiki action, newest first. Takes
+   * `wiki:update` — entries name the pages and sources they touched,
+   * restricted ones included, and there is no per-row filter that could hide
+   * them without pretending the record is gone.
+   */
   async log(
     options: { page?: number; perPage?: number } = {},
   ): Promise<{ entries: WikiLogEntryDto[]; meta?: PageMeta }> {
@@ -632,6 +731,16 @@ export class WikiPageHandle {
     return this.dto.status === "published";
   }
 
+  /** `workspace` or `restricted`; grants live behind {@link sharing}. */
+  get visibility(): SharingVisibility {
+    return this.dto.visibility;
+  }
+
+  /** The caller's effective access on this page — `read`, `write`, `manage`. */
+  get access(): SharingAccess {
+    return this.dto.access;
+  }
+
   get body(): string {
     return this.dto.body;
   }
@@ -676,6 +785,11 @@ export class WikiPageHandle {
     await this.wiki.deletePage(this.slug, options);
   }
 
+  /** {@link WikiApi.pageSharing} on this page. Takes `manage` on it. */
+  async sharing(): Promise<SharingDto> {
+    return this.wiki.pageSharing(this.slug);
+  }
+
   /** {@link WikiApi.attachFile} on this page. */
   async attach(fileId: string): Promise<WikiSourceDto> {
     const source = await this.wiki.attachFile(this.slug, fileId);
@@ -688,10 +802,10 @@ export class WikiPageHandle {
     await this.refresh();
   }
 
-  /** {@link WikiApi.ask} scoped to this page's attached documents. */
+  /** {@link WikiApi.ask} scoped to this page's sources and published body. */
   async ask(
     query: string,
-    options: { limit?: number } = {},
+    options: WikiAskOptions = {},
   ): Promise<WikiPassageDto[]> {
     return this.wiki.ask(this.slug, query, options);
   }

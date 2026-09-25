@@ -254,7 +254,7 @@ export interface PageMeta {
   totalPages: number;
 }
 
-/** Who a workflow or dashboard is shared with. `object` is drive-only. */
+/** Who a shared item is shared with. `object` is drive-only. */
 export type SharingSubjectType = "user" | "role" | "group" | "object";
 
 export type SharingAccess = "read" | "write" | "manage";
@@ -274,6 +274,7 @@ export interface SharingDto {
   entries: SharingEntry[];
   workflowId?: string;
   dashboardId?: string;
+  pageId?: string;
 }
 
 export type WorkflowTriggerType = "manual" | "cron" | "webhook";
@@ -613,6 +614,12 @@ export interface WikiPageDto {
   /** The workspace does not agree on this page yet. Lint reports it. */
   contested: boolean;
   status: WikiPageStatus;
+  /**
+   * `workspace` is open to everyone the `wiki` gate lets in; `restricted`
+   * limits the page to its creator and granted subjects — excluded members get
+   * a 404, not a 403. Visibility and grants are managed in the ERP app.
+   */
+  visibility: SharingVisibility;
   createdAt: string;
   updatedAt: string;
 }
@@ -625,6 +632,8 @@ export interface WikiPageLink {
 }
 
 export interface WikiPageDetailDto extends WikiPageDto {
+  /** The caller's effective access on this page: `read`, `write` or `manage`. */
+  access: SharingAccess;
   body: string;
   sources: WikiSourceDto[];
   outbound: WikiPageLink[];
@@ -646,7 +655,11 @@ export interface WikiSourceDto {
   fileId?: string;
   mimeType?: string;
   pageCount?: number;
-  /** Indexing is queued: `pending` → `ready`, or `failed` with `indexError`. */
+  /**
+   * Set whenever indexing is configured — pasted text is indexed exactly like
+   * an attached document, so {@link WikiApi.waitForIndex} applies to
+   * `ingestSource` too: `pending` → `ready`, or `failed` with `indexError`.
+   */
   indexStatus?: string;
   indexError?: string;
 }
@@ -658,21 +671,43 @@ export interface WikiSourceDetailDto extends WikiSourceDto {
 }
 
 /**
- * One retrieved chunk of an attached document — what `ask` answers with.
- * `link` points back at the page and passage so a citation is clickable.
+ * One retrieved chunk — what `ask` answers with. `docKind` says what the chunk
+ * came from: `source` for an ingested or attached document, `page` for the
+ * published page itself. `link` is the follow-up: `/ai-wiki/pages/{slug}` for
+ * page passages, or the {@link WikiApi.excerpt} path for a source.
  */
 export interface WikiPassageDto {
+  /** `text` or `image` — an image passage carries `imageUrl`. */
   kind: string;
+  /** `source` or `page`. */
+  docKind: string;
   text: string;
-  /** The source's title, ready to be cited. */
+  /** The source's or page's title, ready to be cited. */
   source: string;
   sourceId: string;
   fileId?: string;
   headingPath?: string;
   pageNumber?: number;
+  /** The page the passage belongs to, when `docKind` is `page`. */
+  pageSlug?: string;
+  /** Slugs of the pages citing this source that the caller may read. */
+  pageSlugs?: string[];
+  /** The passage's position inside its document — what `excerpt` ranges over. */
+  seq: number;
   imageUrl?: string;
   link?: string;
   score: number;
+}
+
+/**
+ * Passage text around a position in one source — the "read on" a citation's
+ * `link` points at when the passage alone was not enough.
+ */
+export interface WikiExcerptDto {
+  sourceId: string;
+  from: number;
+  to: number;
+  text: string;
 }
 
 export interface WikiCatalogEntry {
@@ -680,6 +715,7 @@ export interface WikiCatalogEntry {
   title: string;
   summary: string;
   status: WikiPageStatus;
+  visibility: SharingVisibility;
   tags: string[];
   updatedAt: string;
 }
@@ -696,6 +732,7 @@ export interface WikiPageMatchDto {
   type: WikiPageType | (string & {});
   summary: string;
   status: WikiPageStatus;
+  visibility: SharingVisibility;
   rank: number;
 }
 

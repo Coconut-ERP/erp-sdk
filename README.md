@@ -928,15 +928,22 @@ const passages = await app.wiki.ask(page.slug, "Nhóm A giữ tồn bao nhiêu n
   wiki without writing it.
 - **Sources and attachments are different things.** A source is immutable text
   the page cites; an attachment is a drive file copied into the wiki and
-  indexed. Attaching hands the document to everyone who may read the wiki — the
+  indexed. Attaching hands the document to everyone who may read the page — the
   file's own sharing stops applying at that moment.
+- **Each page also has its own ACL.** `workspace` opens it to everyone the
+  `wiki` gate lets in; `restricted` limits it to the creator plus grants, and
+  excluded members see a 404 rather than a 403. `pageSharing(slug)` reads the
+  grants — changing them is done in the ERP app, not the SDK.
 - **`ask` retrieves, it does not answer.** It returns the passages of *that
-  page's* documents that match the question, by meaning and wording together,
-  each carrying the source to cite. Widening means searching the catalog first
-  and asking inside the page you land on.
+  page's* sources — cited and attached — plus the page itself once published,
+  matched by meaning and wording together and reranked, each carrying the
+  source to cite and a `link` to read around the hit (`excerpt`). Pass extra
+  phrasings as `queries` — expansion is the caller's job. Widening the pool
+  means searching the catalog first and asking inside the page you land on.
 - `lint()` reports broken links, orphans, contested and stale pages, thin
   provenance and tags outside the taxonomy; `archivePage` retires a page without
-  turning what links to it into broken links, which `deletePage` does.
+  turning what links to it into broken links, which `deletePage` does. Both
+  `lint()` and `log()` take `wiki:update` — the log names restricted pages.
 
 ## Task board — a member's kanban, shared with Arion
 

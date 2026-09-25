@@ -7,6 +7,7 @@
 - [Links](#links)
 - [Create or extend](#create-or-extend)
 - [Status](#status)
+- [Visibility and sharing](#visibility-and-sharing)
 - [Sources](#sources)
 - [Lint findings](#lint-findings)
 - [The log](#the-log)
@@ -23,7 +24,7 @@
 | `tags` | ≤ 20, slugified by the server, expected inside `settings.taxonomy` |
 | `confidence` | `high` · `medium` · `low` — how far the workspace should lean on it |
 | `contested` | `true` while the workspace disagrees; lint lists these |
-| `sourceIds` | ≤ 50 ingested sources the page rests on |
+| `sourceIds` | ≤ 50 ingested sources the page rests on — you must be able to read each |
 
 The summary deserves the most care: "Mức tồn tối thiểu theo nhóm hàng và ai được
 duyệt vượt mức" says what is inside; "Về chính sách tồn kho" says nothing.
@@ -89,6 +90,29 @@ A draft is a proposal, and writing one is normal agent work. Publishing is the
 workspace's decision: draft, then ask. Archive what was superseded; delete only what
 should never have existed.
 
+## Visibility and sharing
+
+Every page is `workspace` (open to all the `wiki` gate lets in) or `restricted`
+(creator plus grants). Item checks narrow on top of the route gate — a `member`
+with a `manage` grant still cannot publish, because `wiki:manage` is not theirs.
+
+**Grants are managed in the ERP app, not the SDK.** Pages created through the SDK
+are `workspace`-visible; `restricted` pages and their grants are set up by a
+member in the ERP. What the SDK reads:
+
+```ts
+await erp.wiki.pageSharing(slug);   // { pageId, visibility, entries } — takes page manage
+const detail = await erp.wiki.page(slug);
+detail.visibility;                  // "workspace" | "restricted"
+detail.access;                      // your effective level: "read" | "write" | "manage"
+```
+
+- Exclusion reads as **404**, not 403 — to a non-granted member the page does not
+  exist, and `[[links]]` to it show as unresolved.
+- Grants rank `read < write < manage`; `manage` controls the ACL itself.
+- Updates need page `write`, publish/delete page `manage`, attach/detach page
+  `write`.
+
 ## Sources
 
 ```ts
@@ -105,6 +129,17 @@ await erp.wiki.source(source.id);                   // body plus the pages built
 Sources are immutable: changed content is a new source, and the page moves its
 citation. A claim resting on pasted text with no origin is what `confidence: "low"`
 is for.
+
+Two rules the ACL adds:
+
+- **A source is readable through any page citing it**, or by its creator. Listing and
+  detail both follow that rule — a source nobody may reach answers 404.
+- **Citing is publishing.** Putting a source in `sourceIds` exposes it to the page's
+  readers, so the server refuses (403) a source you cannot read yourself. On an open
+  page, citing a confidential note *is* sharing it with the wiki.
+
+Pasted text is indexed too — a `ready` source joins the `ask` pool of every page
+citing it, so `waitForIndex` applies after `ingestSource` as well as `attachFile`.
 
 ## Lint findings
 
@@ -123,14 +158,16 @@ const report = await erp.wiki.lint();
 | Tag outside taxonomy | Use an existing tag, or ask before widening the taxonomy |
 
 Lint needs `wiki:update` because it stamps `lintedAt` and writes to the log. Run it
-after a batch of writing.
+after a batch of writing. Findings are scoped to pages you may read — a restricted
+page you are excluded from produces none.
 
 ## The log
 
 ```ts
-const { entries } = await erp.wiki.log({ page: 1, perPage: 50 });
+const { entries } = await erp.wiki.log({ page: 1, perPage: 50 });   // wiki:update
 ```
 
 Append-only, newest first: every ingest, edit, publish, archive, delete and lint, with
-who did it. Read it when history is the question ("when did we decide this?"), never
-instead of the page.
+who did it. Entries name the pages they touched — restricted ones included — which is
+why the log moved behind `wiki:update`. Read it when history is the question ("when
+did we decide this?"), never instead of the page.

@@ -214,6 +214,7 @@ export type {
   WikiCatalogDto,
   WikiCatalogEntry,
   WikiConfidence,
+  WikiExcerptDto,
   WikiLintFinding,
   WikiLintReportDto,
   WikiLogEntryDto,
@@ -261,7 +262,9 @@ export {
 } from "./webapp";
 export {
   MAX_WIKI_ASK_PASSAGES,
+  MAX_WIKI_ASK_QUERIES,
   MAX_WIKI_BODY_LENGTH,
+  MAX_WIKI_EXCERPT_SEQS,
   MAX_WIKI_PAGE_SOURCES,
   MAX_WIKI_SLUG_LENGTH,
   MAX_WIKI_SOURCE_BODY_LENGTH,
@@ -274,6 +277,7 @@ export {
   WIKI_PAGE_TYPES,
   WIKI_SOURCE_KINDS,
   WikiApi,
+  type WikiAskOptions,
   type WikiCatalogFilter,
   type WikiPageChanges,
   WikiPageHandle,

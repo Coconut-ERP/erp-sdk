@@ -20,6 +20,7 @@ function page(overrides: Partial<WikiPageDto> = {}): WikiPageDto {
     tags: ["kho"],
     contested: false,
     status: "draft",
+    visibility: "workspace",
     createdAt: "",
     updatedAt: "",
     ...overrides,
@@ -29,6 +30,7 @@ function page(overrides: Partial<WikiPageDto> = {}): WikiPageDto {
 function detail(overrides: Partial<WikiPageDetailDto> = {}): WikiPageDetailDto {
   return {
     ...page(),
+    access: "manage",
     body: "Xem [[quy-trinh-nhap-kho]].",
     sources: [],
     outbound: [{ slug: "quy-trinh-nhap-kho", resolved: false }],
@@ -65,6 +67,25 @@ describe("pages", () => {
       type: "concept",
       contested: false,
       sourceIds: [],
+    });
+  });
+
+  it("reads a page's visibility and grants", async () => {
+    const http = new FakeHttp({
+      "GET /ai-wiki/pages/chinh-sach-ton-kho/acl": [
+        {
+          pageId: "page-1",
+          visibility: "restricted",
+          entries: [{ subjectType: "user", subjectId: "u-1", access: "write" }],
+        },
+      ],
+    });
+    const wiki = new WikiApi(http);
+
+    const sharing = await wiki.pageSharing("chinh-sach-ton-kho");
+    expect(sharing).toMatchObject({
+      visibility: "restricted",
+      entries: [{ subjectType: "user", subjectId: "u-1", access: "write" }],
     });
   });
 
@@ -154,13 +175,35 @@ describe("attachments and retrieval", () => {
 
     const passages = await wiki.ask("chinh-sach-ton-kho", "Tồn tối thiểu?", {
       limit: 5,
+      queries: ["Reorder threshold", "tồn kho an toàn"],
     });
     expect(passages[0]?.source).toBe("Quy chế kho 2026");
-    expect(http.body(0)).toEqual({ query: "Tồn tối thiểu?", limit: 5 });
+    expect(http.body(0)).toEqual({
+      query: "Tồn tối thiểu?",
+      limit: 5,
+      queries: ["Reorder threshold", "tồn kho an toàn"],
+    });
 
     await expect(
       wiki.ask("chinh-sach-ton-kho", "x", { limit: 50 }),
     ).rejects.toBeInstanceOf(WikiPageError);
+    await expect(
+      wiki.ask("chinh-sach-ton-kho", "x", {
+        queries: ["a", "b", "c", "d", "e"],
+      }),
+    ).rejects.toBeInstanceOf(WikiPageError);
+  });
+
+  it("reads the passages around a hit through excerpt", async () => {
+    const http = new FakeHttp({
+      "GET /ai-wiki/sources/src-1/excerpt": [
+        { sourceId: "src-1", from: 4, to: 6, text: "…context…" },
+      ],
+    });
+    const wiki = new WikiApi(http);
+
+    const excerpt = await wiki.excerpt("src-1", { from: 4, to: 6 });
+    expect(excerpt.text).toBe("…context…");
   });
 
   it("waits for an attached document to finish indexing", async () => {
