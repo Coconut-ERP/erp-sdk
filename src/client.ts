@@ -91,7 +91,7 @@ export class ErpClient {
 
   /**
    * The workspace's knowledge base: pages, the sources they cite, and
-   * retrieval over the documents attached to them ({@link WikiApi.ask}).
+   * retrieval over the documents attached to them ({@link WikiApi.askWiki}).
    */
   readonly wiki: WikiApi;
 

@@ -100,7 +100,7 @@ for:
 | **`erp-miniapp`** | Building an app on the ERP: declaring `schema.json` and `assertSchema`, identifying users through initData, the two authority models, and the deploy contract |
 | **`erp-data`** | Working a live workspace: reading the real schema first, querying with filters/sorting/pagination, walking `relation` fields without N+1, aggregating with `DataFrame` or read-only SQL, writing (and bulk-writing) safely behind a dry run |
 | **`erp-tools`** | Using the ERP's tools beyond records: workflows (script or agent — triggers, publish, env, runs, plus the runner's sandbox and the `check` → `testRun` loop for the code inside one), the drive (upload, download, sharing, trash), shared variables, copilot conversations and the personal AI task board |
-| **`erp-wiki`** | Writing and maintaining the workspace wiki: the four page types, slugs as addresses, draft → publish, sources versus attached documents, the lint pass, and `ask` retrieval over a page's documents |
+| **`erp-wiki`** | Writing and maintaining the workspace wiki: the four page types, slugs as addresses, draft → publish, sources versus attached documents, the lint pass, and the retrieval loop (`askWiki` with `autoRetrieve`, then the whole wiki, then a broader query) |
 
 Each is a lean `SKILL.md` plus `references/` the agent loads only when it needs
 the detail.
@@ -914,7 +914,10 @@ await app.wiki.publishPage(page.slug);       // takes wiki:manage
 
 const attached = await app.wiki.attachFile(page.slug, file.id);
 await app.wiki.waitForIndex(attached.id);
-const passages = await app.wiki.ask(page.slug, "Nhóm A giữ tồn bao nhiêu ngày?");
+const passages = await app.wiki.askWiki("Nhóm A giữ tồn tối thiểu bao nhiêu ngày?", {
+  queries: ["safety stock nhóm A"],
+  autoRetrieve: true,
+});
 ```
 
 - **A page is addressed by its slug, never its title.** The slug is folded once
@@ -934,12 +937,20 @@ const passages = await app.wiki.ask(page.slug, "Nhóm A giữ tồn bao nhiêu n
   `wiki` gate lets in; `restricted` limits it to the creator plus grants, and
   excluded members see a 404 rather than a 403. `pageSharing(slug)` reads the
   grants — changing them is done in the ERP app, not the SDK.
-- **`ask` retrieves, it does not answer.** It returns the passages of *that
-  page's* sources — cited and attached — plus the page itself once published,
-  matched by meaning and wording together and reranked, each carrying the
-  source to cite and a `link` to read around the hit (`excerpt`). Pass extra
-  phrasings as `queries` — expansion is the caller's job. Widening the pool
-  means searching the catalog first and asking inside the page you land on.
+- **`askWiki` retrieves across the wiki. It does not write the answer.** It
+  returns passages from published pages and their indexed sources, matched by
+  meaning and by wording together, then reranked. Each passage carries the source
+  to cite and a `link` for reading around the hit (`excerpt`).
+  - `autoRetrieve: true` first runs `retrieve(query)`, which picks the relevant
+    pages, and searches only those. If `retrieve` finds no page, the call returns
+    `[]`; the search does not widen by itself.
+  - With no `pages`, it searches everything the caller may read.
+  - `pages` limits the search to the pages you name (ids or slugs).
+  - Rewriting the query and passing extra phrasings as `queries` is the caller's
+    job. The skill's retrieval loop is: rewrite, then `autoRetrieve`, then the
+    whole wiki, then a broader query.
+  - `ask(slug, …)` searches one page's sources and body.
+  - `retrieve(query)` returns the matching pages instead of passages.
 - `lint()` reports broken links, orphans, contested and stale pages, thin
   provenance and tags outside the taxonomy; `archivePage` retires a page without
   turning what links to it into broken links, which `deletePage` does. Both

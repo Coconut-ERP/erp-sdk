@@ -726,6 +726,17 @@ export interface WikiCatalogDto {
   sections: Record<string, WikiCatalogEntry[]>;
 }
 
+export interface WikiRetrievedPageDto {
+  slug: string;
+  title: string;
+  type: WikiPageType | (string & {});
+  summary: string;
+  score: number;
+  via?: string;
+  search_hit?: boolean;
+  link: string;
+}
+
 export interface WikiPageMatchDto {
   slug: string;
   title: string;

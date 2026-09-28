@@ -8,7 +8,9 @@ question to the exact passages.
 - [Pipeline](#pipeline)
 - [Attaching is a disclosure](#attaching-is-a-disclosure)
 - [Index states](#index-states)
-- [`ask`](#ask)
+- [The retrieval loop](#the-retrieval-loop)
+- [Passages](#passages)
+- [Asking one page](#asking-one-page)
 - [Reading around a hit](#reading-around-a-hit)
 - [From passages to an answer](#from-passages-to-an-answer)
 
@@ -19,7 +21,7 @@ files.upload(...)            → a document in the drive
 wiki.attachFile(slug, id)    → 202: copied into the wiki, indexing queued
 wiki.ingestSource({…})       → pasted text, also queued for indexing
 wiki.waitForIndex(sourceId)  → pending → indexing → ready | failed
-wiki.ask(slug, question)     → passages, each with its source and a link
+wiki.askWiki(query, {…})     → passages from across the wiki, each with its source and a link
 ```
 
 ```ts
@@ -36,8 +38,9 @@ const ready = await erp.wiki.waitForIndex(source.id, { timeoutMs: 180_000 });
 if (ready.indexStatus === "failed") throw new Error(ready.indexError);
 ```
 
-Pasted sources index the same way — an ingested note is searchable through `ask`
-on every page citing it once `indexStatus` is `ready`.
+Pasted sources are indexed the same way. Once an ingested note's `indexStatus` is
+`ready`, it is searchable through every page that cites it. A published page's own
+body is indexed as well; drafts and archived pages are not.
 
 ## Attaching is a disclosure
 
@@ -57,24 +60,92 @@ points at it — but cannot undo what people already read.
 
 | `indexStatus` | Meaning |
 | --- | --- |
-| `pending` / `indexing` | Queued or running; `ask` finds nothing in it yet |
+| `pending` / `indexing` | Queued or running; nothing in it is searchable yet |
 | `ready` | Searchable |
 | `failed` | Never searchable; `indexError` says why |
-| unset | Indexing is not configured on this workspace — `ask` answers 503 |
+| unset | Indexing is not configured on this workspace; every ask answers 503 |
 
 `waitForIndex` does not throw on `failed`, and on timeout it returns without
 stopping the indexing — check the status it returns. A large PDF can outlast the
 default wait. The usual `failed` cause is an upload under an unmapped extension,
 stored as `application/octet-stream`; pass `mimeType` at upload.
 
-## `ask`
+## The retrieval loop
+
+To answer a question, don't open pages one at a time and `ask` each of them.
+`askWiki` searches the wiki in one call, and the server picks the pages:
+
+| Step | Call | Searches |
+| --- | --- | --- |
+| 1 | You rewrite the question into `query` plus up to 4 `queries` | — |
+| 2 | `askWiki(query, { queries, autoRetrieve: true })` | The pages `retrieve` returns, plus the sources they cite |
+| 2.1 | Empty → `askWiki(query, { queries })` | Every page and source you may read |
+| 2.2 | Still empty → broaden `query`, back to step 2 | — |
+| 3 | Return the passages, cited | — |
+
+**Step 1: rewrite.** The user's words are rarely the best query. Make it standalone:
+replace "it", "that supplier" and "last month" with what they refer to, and spell out
+abbreviations. Keep codes, part numbers and names exactly as written, because the
+lexical leg matches them literally. Write in the language of the documents. Use
+`queries` for other wordings: a synonym, the English term, the formal name. Each
+phrasing is at least 2 characters and there are at most 4.
+
+**Step 2: `autoRetrieve`.** The server runs `retrieve` first, which picks pages by
+search and by a walk over `[[links]]` judged by a decisions model, then searches
+only those pages. That is the precise pool, but a `retrieve` that finds no page
+returns `[]` without searching anything.
+
+**Step 2.1: the whole wiki.** Ask again without `pages` and without `autoRetrieve`.
+That searches every published page and indexed source you may read. Restricted
+pages you are not granted, and sources only they cite, are never candidates.
+
+**Step 2.2: broaden.** Drop the narrow qualifiers (year, figure, site, person), or
+ask about the parent concept instead ("tồn kho tối thiểu nhóm A tháng 8" →
+"chính sách tồn kho tối thiểu"). Then run step 2 again. Stop after two broadened
+rounds, and report that the wiki doesn't cover the question.
 
 ```ts
-const passages = await erp.wiki.ask(slug, question, {
-  limit: 8,                            // ≤ 20, default 8
-  queries: ["phrasing 2", "phrasing 3"], // alternate phrasings, ≤ 4 — expansion is
-});                                    // the caller's job; the wiki only searches
+import { ErpApiError, type WikiPassageDto } from "erp-sdk";
 
+async function findPassages(query: string, queries: string[]): Promise<WikiPassageDto[]> {
+  const scoped = await erp.wiki
+    .askWiki(query, { queries, autoRetrieve: true, limit: 8 })
+    .catch((e) => {
+      if (e instanceof ErpApiError && e.status === 503) return [];
+      throw e;
+    });
+  if (scoped.length > 0) return scoped;
+  return erp.wiki.askWiki(query, { queries, limit: 8 });
+}
+
+const rounds: Array<[string, string[]]> = [
+  ["Tồn kho tối thiểu nhóm A tháng 8/2026", ["safety stock nhóm A", "mức tồn an toàn nhóm A"]],
+  ["Tồn kho tối thiểu nhóm A", ["safety stock group A"]],
+  ["chính sách tồn kho tối thiểu", ["safety stock policy"]],
+];
+let passages: WikiPassageDto[] = [];
+for (const [query, queries] of rounds) {
+  passages = await findPassages(query, queries);
+  if (passages.length > 0) break;
+}
+```
+
+In practice you write the broader round only after the narrower one comes back
+empty. The array above just shows how the rounds progress.
+
+A 503 **with** `autoRetrieve` means `retrieve` has no decisions model configured.
+Skip to step 2.1. A 503 **without** it means the indexer or embedding model is down.
+Retry once, then tell the user; it doesn't mean the wiki is empty.
+
+`erp.wiki.retrieve(query)` is the first half of step 2 on its own: it returns the
+pages, best first (`slug`, `title`, `summary`, `score`, `via`, `search_hit`, `link`).
+Use it for "which pages cover X", or to name those pages in `pages` yourself. The
+server caches retrieve by meaning for 7 days, per reader, so asking the same
+question again is cheap.
+
+## Passages
+
+```ts
 for (const p of passages) {
   p.text;          // the passage — a hit merged with its ±1 neighbours
   p.source;        // document or page title — what you cite
@@ -92,18 +163,25 @@ for (const p of passages) {
 }
 ```
 
-1. **One page's pool, nothing else** — its indexed sources (cited via `sourceIds`
-   *and* attached documents; both are the same link) plus the page's own body once
-   published. Not the wiki, not the drive. To widen, find the page with
-   `catalog()` / `search()` first. When the right page is unclear, ask the user
-   rather than looping `ask` over many pages.
-2. **Hybrid matching** — dense embeddings and a word-level pass fused, then
-   reranked: a natural question works and a part number or invoice code still
-   matches literally. Pass the question as asked; add `queries` when the wording
-   could go several ways — the wiki no longer expands it for you.
-3. **Retrieval only** — the passages are context to reason over or quotes to show.
+- **Hybrid matching.** Dense embeddings and a word-level pass are fused, then
+  reranked, so a natural question works and a part number or invoice code still
+  matches literally.
+- **`limit`** is at most 20 and defaults to 8. `pages` takes at most 50 ids or slugs.
+  If none of the named pages is readable, the call throws `UnknownWikiPageError`.
+- **Retrieval only.** The passages are context to reason over or quotes to show.
 
-A 503 means the indexer or embedding model is unavailable; retry, and say so.
+## Asking one page
+
+```ts
+const passages = await erp.wiki.ask(slug, question, { queries, limit: 8 });
+```
+
+This searches one page's pool and nothing else: its indexed sources (cited through
+`sourceIds` and attached documents, which are the same link) plus the page's body
+once published. Use it when the user names the page or the document ("ask the
+contract PDF"), or right after attaching a file to check that it answers. For an
+open question, use the retrieval loop above. `askWiki(q, { pages: [slug] })` is the
+same pool addressed from the wiki-wide endpoint.
 
 ## Reading around a hit
 
@@ -121,9 +199,9 @@ const { text } = await erp.wiki.excerpt(p.sourceId, {
 ## From passages to an answer
 
 ```ts
-const passages = await erp.wiki.ask(slug, question, { limit: 6 });
+const passages = await findPassages(query, queries);
 if (passages.length === 0) {
-  return `No document attached to "${slug}" answers this.`;
+  return "The wiki does not cover this.";
 }
 const context = passages
   .map((p, i) => `[${i + 1}] ${p.source}${p.pageNumber ? ` p.${p.pageNumber}` : ""}\n${p.text}`)
@@ -136,8 +214,9 @@ const context = passages
 - **Cite every claim** with `p.source` (plus `p.headingPath` / `p.pageNumber` when
   present). `p.link` leads back to the page or the excerpt range when a reader
   wants the original.
-- **Read the page before the passages.** The page is the workspace's conclusion; a
-  passage that contradicts it is a `contested` finding to raise with the user, not
-  something to smooth over.
+- **Passages from a source can contradict a page.** When they conflict with
+  `p.pageSlugs`, the page holds the workspace's conclusion. Raise the conflict with
+  the user as a `contested` finding instead of smoothing it over. Open the page
+  (`wiki.page(slug)`) only when the passages leave the answer ambiguous.
 - **Don't paste passages into a page body** as the wiki's own words — summarise, and
   cite the source in `sourceIds`.

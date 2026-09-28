@@ -225,6 +225,7 @@ export type {
   WikiPageStatus,
   WikiPageType,
   WikiPassageDto,
+  WikiRetrievedPageDto,
   WikiSettingsDto,
   WikiSourceDetailDto,
   WikiSourceDto,
@@ -261,6 +262,7 @@ export {
   sendInitDataToFrame,
 } from "./webapp";
 export {
+  MAX_WIKI_ASK_PAGES,
   MAX_WIKI_ASK_PASSAGES,
   MAX_WIKI_ASK_QUERIES,
   MAX_WIKI_BODY_LENGTH,
@@ -278,6 +280,7 @@ export {
   WIKI_SOURCE_KINDS,
   WikiApi,
   type WikiAskOptions,
+  type WikiAskWikiOptions,
   type WikiCatalogFilter,
   type WikiPageChanges,
   WikiPageHandle,

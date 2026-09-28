@@ -194,6 +194,67 @@ describe("attachments and retrieval", () => {
     ).rejects.toBeInstanceOf(WikiPageError);
   });
 
+  it("asks across the wiki, scoped by retrieve or by named pages", async () => {
+    const http = new FakeHttp({
+      "POST /ai-wiki/ask": [[], [{ text: "Nhóm A: 30 ngày.", score: 0.7 }]],
+    });
+    const wiki = new WikiApi(http);
+
+    expect(
+      await wiki.askWiki("Tồn tối thiểu nhóm A", {
+        queries: ["safety stock nhóm A"],
+        autoRetrieve: true,
+      }),
+    ).toEqual([]);
+    expect(http.body(0)).toEqual({
+      query: "Tồn tối thiểu nhóm A",
+      queries: ["safety stock nhóm A"],
+      autoRetrieve: true,
+    });
+
+    const global = await wiki.askWiki("Tồn tối thiểu nhóm A");
+    expect(global[0]?.text).toBe("Nhóm A: 30 ngày.");
+    expect(http.body(1)).toEqual({ query: "Tồn tối thiểu nhóm A" });
+
+    await expect(
+      wiki.askWiki("x", {
+        pages: Array.from({ length: 51 }, (_, i) => `p${i}`),
+      }),
+    ).rejects.toBeInstanceOf(WikiPageError);
+  });
+
+  it("reports named pages nobody may read as unknown", async () => {
+    const http = new FakeHttp({
+      "POST /ai-wiki/ask": [new ErpApiError(404, "not found")],
+    });
+    await expect(
+      new WikiApi(http).askWiki("x", { pages: ["mat", "khong-co"] }),
+    ).rejects.toBeInstanceOf(UnknownWikiPageError);
+    expect(http.body(0)).toEqual({ query: "x", pages: ["mat", "khong-co"] });
+  });
+
+  it("retrieves the pages a question points at", async () => {
+    const http = new FakeHttp({
+      "POST /ai-wiki/retrieve": [
+        [
+          {
+            slug: "chinh-sach-ton-kho",
+            title: "Chính sách tồn kho",
+            type: "concept",
+            summary: "…",
+            score: 0.9,
+            via: "fts+dense",
+            search_hit: true,
+            link: "/ai-wiki/pages/chinh-sach-ton-kho",
+          },
+        ],
+      ],
+    });
+    const pages = await new WikiApi(http).retrieve("tồn kho nhóm A");
+    expect(pages[0]?.slug).toBe("chinh-sach-ton-kho");
+    expect(http.body(0)).toEqual({ query: "tồn kho nhóm A" });
+  });
+
   it("reads the passages around a hit through excerpt", async () => {
     const http = new FakeHttp({
       "GET /ai-wiki/sources/src-1/excerpt": [

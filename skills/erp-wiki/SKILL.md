@@ -1,6 +1,6 @@
 ---
 name: erp-wiki
-description: Writes, maintains and retrieves from the Coconut ERP workspace wiki with erp-sdk — pages (entity, concept, comparison, query) addressed by slug with per-page visibility and sharing grants, immutable sources, `[[slug]]` links, draft/publish/archive, conventions and lint, drive documents attached and indexed, and `erp.wiki.ask(slug, question)` retrieval over them. Use when the task involves the ERP wiki or knowledge base, recording what the workspace has concluded, attaching a document and asking questions about it, sharing or restricting a page, or citing where an answer came from ("write this into the wiki", "what do we know about this supplier", "ask the contract PDF"). Records are erp-data; the drive itself is erp-tools.
+description: Writes, maintains and retrieves from the Coconut ERP workspace wiki with erp-sdk — pages (entity, concept, comparison, query) addressed by slug with per-page visibility and sharing grants, immutable sources, `[[slug]]` links, draft/publish/archive, conventions and lint, drive documents attached and indexed, and `erp.wiki.askWiki(query, { autoRetrieve })` retrieval across the whole wiki. Use when the task involves the ERP wiki or knowledge base, recording what the workspace has concluded, attaching a document and asking questions about it, sharing or restricting a page, or citing where an answer came from ("write this into the wiki", "what do we know about this supplier", "ask the contract PDF"). Records are erp-data; the drive itself is erp-tools.
 ---
 
 # The ERP wiki
@@ -48,9 +48,9 @@ const page = await erp.wiki.page("chinh-sach-ton-kho");                   // bod
 const { conventions, taxonomy } = await erp.wiki.settings();
 ```
 
-To answer a question: **catalog → page → read it → `ask` its documents** if the answer
-is in an attachment. Going straight to `search` skips the map and finds pages that
-merely mention the words. Read `conventions` before writing a page, and write to them.
+This is the map for **writing** — find the page to extend before creating one. To
+**answer a question**, don't walk the catalog page by page: use the retrieval loop in
+§6. Read `conventions` before writing a page, and write to them.
 
 ## 2. The slug is the address
 
@@ -137,21 +137,58 @@ Changed content is a new source; that keeps citations stable.
 > and on a `workspace` page that is the whole wiki. Confirm with the user before
 > attaching anything shared narrowly, or restrict the page first.
 
-## 6. `ask` retrieves, it does not answer
+## 6. Answering a question: the retrieval loop
+
+Don't hop from page to page and `ask` each one. One call searches the wiki, and the
+server picks the pages:
+
+1. **Rewrite the question into a query.** Make it standalone: resolve "it"/"that
+   one" from the conversation, spell out abbreviations, keep codes, names and
+   numbers verbatim, and write it in the language the documents use. Add up to 4
+   alternate phrasings as `queries` (synonyms, the other language, the formal
+   term). The wiki does not expand queries, so this step is yours.
+2. **`askWiki` with `autoRetrieve: true`.** The server runs `retrieve` on the query
+   and searches only the pages it returns, plus the sources they cite.
+   1. **Empty → ask again with no `pages`.** That searches every page and source
+      you may read. An empty retrieval returns `[]`; it does not widen the search
+      by itself.
+   2. **Still empty → broaden the query and go back to step 2.** Drop the narrow
+      qualifiers (a date, a figure, a site name) or move up to the parent concept.
+      Stop after two broadened rounds.
+3. **Return the passages with citations.** If nothing turned up, the answer is that
+   the wiki does not cover the question. Don't fill the gap yourself.
 
 ```ts
-const passages = await erp.wiki.ask(slug, "Nhóm A giữ tồn tối thiểu bao nhiêu ngày?", {
-  limit: 5,
-  queries: ["Reorder threshold nhóm A", "safety stock group A"],   // your own rephrasings, ≤ 4
-});
-for (const p of passages) console.log(`${p.source}: ${p.text}`);
+import { ErpApiError, type WikiPassageDto } from "erp-sdk";
+
+async function findPassages(query: string, queries: string[]): Promise<WikiPassageDto[]> {
+  const scoped = await erp.wiki
+    .askWiki(query, { queries, autoRetrieve: true, limit: 8 })
+    .catch((e) => {
+      if (e instanceof ErpApiError && e.status === 503) return [];   // retrieve has no decisions model
+      throw e;
+    });
+  if (scoped.length > 0) return scoped;
+  return erp.wiki.askWiki(query, { queries, limit: 8 });              // no pages = whole wiki
+}
+
+let passages = await findPassages("Tồn kho tối thiểu nhóm A bao nhiêu ngày", [
+  "safety stock nhóm A",
+  "mức tồn an toàn hàng nhóm A",
+]);
+if (passages.length === 0) {
+  passages = await findPassages("chính sách tồn kho tối thiểu", ["safety stock policy"]);
+}
 ```
 
-It searches **that page's sources — cited and attached — plus the page itself once
-published**, matches by meaning and by exact wording, and returns passages, not
-prose. Cite every claim with `p.source` plus `p.headingPath`/`p.pageNumber`; `p.link`
-points at the page or at `excerpt` range to read around the hit. Details, index
-states and composing a cited answer: `references/retrieval.md`.
+`askWiki` retrieves; it doesn't write the answer. Every passage carries `p.source`
+(cite it, with `p.headingPath`/`p.pageNumber`), `p.pageSlug`/`p.pageSlugs` (the pages
+it belongs to) and `p.link` (the page, or an `excerpt` range to read around the hit).
+
+Use `erp.wiki.ask(slug, …)` only when the user names a page or document: it searches
+that page's sources and body and nothing else. `erp.wiki.retrieve(query)` returns
+the matching pages instead of passages, for "which pages cover X". Details, index
+states and composing a cited answer are in `references/retrieval.md`.
 
 ## 7. Lint
 
@@ -183,9 +220,12 @@ the next round of work.
 | `UnknownWikiPageError` on a page you can see | The title was passed; the address is the slug |
 | `UnknownWikiPageError` on a page others can see | It is `restricted` and you hold no grant — exclusion reads as absence |
 | Edits "disappear" | The edit returned the page to `draft`; readers still see the published version |
-| `ask` returns nothing | Sources still `pending`, or `failed` |
+| `autoRetrieve` returns `[]` | Retrieve found no page. Ask again with no `pages`, then broaden |
+| Nothing found even across the whole wiki | Sources are still `pending` or `failed`, or the wiki really doesn't cover it |
+| Looping `ask` over page after page | Use `askWiki`; it searches the whole wiki in one call |
 | `indexStatus: "failed"` | Usually uploaded as `application/octet-stream`; set `mimeType` on upload |
-| `ask` answers 503 | The indexer or embedding model is down, not an empty page |
+| 503 with `autoRetrieve` | No decisions model for retrieve; ask with no `pages` |
+| 503 without `autoRetrieve` | The indexer or embedding model is down, not an empty wiki |
 | Duplicate pages on one topic | The catalog was not read first |
 | New broken links after a cleanup | `delete` was used where `archive` was meant |
 | 403 on publish | Publishing takes `wiki:manage` |
@@ -195,6 +235,7 @@ the next round of work.
 
 - `references/writing.md` — page fields, conventions and taxonomy, links, create vs
   extend, sources, lint findings, the log.
-- `references/retrieval.md` — attaching, index states, `ask` in depth, cited answers.
+- `references/retrieval.md` — attaching, index states, the retrieval loop in depth,
+  cited answers.
 - Skill `erp-tools` — uploading the documents you attach.
 - Skill `erp-data` — records, SQL and analysis.

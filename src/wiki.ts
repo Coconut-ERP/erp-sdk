@@ -22,6 +22,7 @@ import type {
   WikiPageStatus,
   WikiPageType,
   WikiPassageDto,
+  WikiRetrievedPageDto,
   WikiSettingsDto,
   WikiSourceDetailDto,
   WikiSourceDto,
@@ -61,6 +62,7 @@ export const MAX_WIKI_PAGE_SOURCES = 50;
 export const MAX_WIKI_ASK_PASSAGES = 20;
 /** Alternate phrasings one `ask` may carry, on top of the question itself. */
 export const MAX_WIKI_ASK_QUERIES = 4;
+export const MAX_WIKI_ASK_PAGES = 50;
 /** The widest range `excerpt` returns in one call — `to - from + 1`. */
 export const MAX_WIKI_EXCERPT_SEQS = 20;
 
@@ -177,6 +179,11 @@ export interface WikiAskOptions {
   queries?: string[];
 }
 
+export interface WikiAskWikiOptions extends WikiAskOptions {
+  pages?: string[];
+  autoRetrieve?: boolean;
+}
+
 export interface WaitForIndexOptions {
   /** Give up after this long. Indexing continues. Default 120 000 ms. */
   timeoutMs?: number;
@@ -235,6 +242,27 @@ function assertPageFields(
       "sourceIds",
       `${fields.sourceIds.length} sources, but a page cites at most ` +
         `${MAX_WIKI_PAGE_SOURCES}`,
+    );
+  }
+}
+
+function assertAskOptions(options: WikiAskWikiOptions): void {
+  if (options.limit !== undefined && options.limit > MAX_WIKI_ASK_PASSAGES) {
+    throw new WikiPageError(
+      "ask limit",
+      `${options.limit} passages, but at most ${MAX_WIKI_ASK_PASSAGES} are returned`,
+    );
+  }
+  if (options.queries && options.queries.length > MAX_WIKI_ASK_QUERIES) {
+    throw new WikiPageError(
+      "ask queries",
+      `${options.queries.length} phrasings, but at most ${MAX_WIKI_ASK_QUERIES} are searched`,
+    );
+  }
+  if (options.pages && options.pages.length > MAX_WIKI_ASK_PAGES) {
+    throw new WikiPageError(
+      "ask pages",
+      `${options.pages.length} pages, but at most ${MAX_WIKI_ASK_PAGES} scope one ask`,
     );
   }
 }
@@ -592,18 +620,7 @@ export class WikiApi {
     query: string,
     options: WikiAskOptions = {},
   ): Promise<WikiPassageDto[]> {
-    if (options.limit !== undefined && options.limit > MAX_WIKI_ASK_PASSAGES) {
-      throw new WikiPageError(
-        "ask limit",
-        `${options.limit} passages, but at most ${MAX_WIKI_ASK_PASSAGES} are returned`,
-      );
-    }
-    if (options.queries && options.queries.length > MAX_WIKI_ASK_QUERIES) {
-      throw new WikiPageError(
-        "ask queries",
-        `${options.queries.length} phrasings, but at most ${MAX_WIKI_ASK_QUERIES} are searched`,
-      );
-    }
+    assertAskOptions(options);
     return (
       (await this.pageCall<WikiPassageDto[]>(
         "POST",
@@ -616,6 +633,43 @@ export class WikiApi {
             queries: options.queries,
           },
         },
+      )) ?? []
+    );
+  }
+
+  async askWiki(
+    query: string,
+    options: WikiAskWikiOptions = {},
+  ): Promise<WikiPassageDto[]> {
+    assertAskOptions(options);
+    const pages = options.pages ?? [];
+    const body = {
+      query,
+      queries: options.queries,
+      limit: options.limit,
+      pages: pages.length > 0 ? pages : undefined,
+      autoRetrieve: options.autoRetrieve,
+    };
+    const passages =
+      pages.length > 0
+        ? await this.pageCall<WikiPassageDto[]>(
+            "POST",
+            "/ai-wiki/ask",
+            pages.join(", "),
+            { body },
+          )
+        : await this.http.request<WikiPassageDto[]>("POST", "/ai-wiki/ask", {
+            body,
+          });
+    return passages ?? [];
+  }
+
+  async retrieve(query: string): Promise<WikiRetrievedPageDto[]> {
+    return (
+      (await this.http.request<WikiRetrievedPageDto[]>(
+        "POST",
+        "/ai-wiki/retrieve",
+        { body: { query } },
       )) ?? []
     );
   }

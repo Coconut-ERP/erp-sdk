@@ -211,4 +211,4 @@ Pass `{ dryRun: false }` to one refused call once the user has agreed.
   authorship, limits, filing a report.
 - Skill `erp-data` — records, SQL, `DataFrame`, dashboards.
 - Skill `erp-miniapp` — `schema.json`, initData, deploying a web app.
-- Skill `erp-wiki` — the wiki, attaching drive documents, `ask`.
+- Skill `erp-wiki` — the wiki, attaching drive documents, retrieval with `askWiki`.

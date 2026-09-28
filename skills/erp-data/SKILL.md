@@ -161,4 +161,4 @@ Never log, commit, print or write an API key into output files.
 - Skill `erp-miniapp` — web apps on the ERP (`schema.json`, initData, deploy).
 - Skill `erp-tools` — workflows, the drive, shared variables, copilot conversations,
   the AI task board.
-- Skill `erp-wiki` — the workspace wiki, and `erp.wiki.ask` over attached documents.
+- Skill `erp-wiki` — the workspace wiki, and `erp.wiki.askWiki` retrieval across it.

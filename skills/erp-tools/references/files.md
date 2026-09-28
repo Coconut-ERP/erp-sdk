@@ -2,7 +2,7 @@
 
 `erp.files` is the workspace's document store — a signed PDF, an exported spreadsheet,
 a delivery photo — not a place for rows. A document the wiki should answer questions
-about (`erp.wiki.ask`) starts here too.
+about (`erp.wiki.askWiki`) starts here too.
 
 Permissions: `file:create` / `read` / `update` / `delete`, plus the matching
 `file:public:*` inside `Public`. A `writer` service account has both sets.
