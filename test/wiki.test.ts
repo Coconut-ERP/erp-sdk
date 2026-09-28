@@ -157,43 +157,6 @@ describe("page handle", () => {
 });
 
 describe("attachments and retrieval", () => {
-  it("asks inside one page's documents", async () => {
-    const http = new FakeHttp({
-      "POST /ai-wiki/pages/chinh-sach-ton-kho/ask": [
-        [
-          {
-            kind: "text",
-            text: "Nhóm A giữ tồn tối thiểu 30 ngày.",
-            source: "Quy chế kho 2026",
-            sourceId: "src-1",
-            score: 0.82,
-          },
-        ],
-      ],
-    });
-    const wiki = new WikiApi(http);
-
-    const passages = await wiki.ask("chinh-sach-ton-kho", "Tồn tối thiểu?", {
-      limit: 5,
-      queries: ["Reorder threshold", "tồn kho an toàn"],
-    });
-    expect(passages[0]?.source).toBe("Quy chế kho 2026");
-    expect(http.body(0)).toEqual({
-      query: "Tồn tối thiểu?",
-      limit: 5,
-      queries: ["Reorder threshold", "tồn kho an toàn"],
-    });
-
-    await expect(
-      wiki.ask("chinh-sach-ton-kho", "x", { limit: 50 }),
-    ).rejects.toBeInstanceOf(WikiPageError);
-    await expect(
-      wiki.ask("chinh-sach-ton-kho", "x", {
-        queries: ["a", "b", "c", "d", "e"],
-      }),
-    ).rejects.toBeInstanceOf(WikiPageError);
-  });
-
   it("asks across the wiki, scoped by retrieve or by named pages", async () => {
     const http = new FakeHttp({
       "POST /ai-wiki/ask": [[], [{ text: "Nhóm A: 30 ngày.", score: 0.7 }]],
@@ -221,6 +184,12 @@ describe("attachments and retrieval", () => {
         pages: Array.from({ length: 51 }, (_, i) => `p${i}`),
       }),
     ).rejects.toBeInstanceOf(WikiPageError);
+    await expect(wiki.askWiki("x", { limit: 50 })).rejects.toBeInstanceOf(
+      WikiPageError,
+    );
+    await expect(
+      wiki.askWiki("x", { queries: ["a", "b", "c", "d", "e"] }),
+    ).rejects.toBeInstanceOf(WikiPageError);
   });
 
   it("reports named pages nobody may read as unknown", async () => {
@@ -231,28 +200,6 @@ describe("attachments and retrieval", () => {
       new WikiApi(http).askWiki("x", { pages: ["mat", "khong-co"] }),
     ).rejects.toBeInstanceOf(UnknownWikiPageError);
     expect(http.body(0)).toEqual({ query: "x", pages: ["mat", "khong-co"] });
-  });
-
-  it("retrieves the pages a question points at", async () => {
-    const http = new FakeHttp({
-      "POST /ai-wiki/retrieve": [
-        [
-          {
-            slug: "chinh-sach-ton-kho",
-            title: "Chính sách tồn kho",
-            type: "concept",
-            summary: "…",
-            score: 0.9,
-            via: "fts+dense",
-            search_hit: true,
-            link: "/ai-wiki/pages/chinh-sach-ton-kho",
-          },
-        ],
-      ],
-    });
-    const pages = await new WikiApi(http).retrieve("tồn kho nhóm A");
-    expect(pages[0]?.slug).toBe("chinh-sach-ton-kho");
-    expect(http.body(0)).toEqual({ query: "tồn kho nhóm A" });
   });
 
   it("reads the passages around a hit through excerpt", async () => {

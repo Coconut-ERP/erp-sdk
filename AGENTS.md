@@ -116,7 +116,7 @@ write the app's `schema.json` and validate its format with `validateSchema`.
 | `src/workflows.ts` | `WorkflowsApi`/`WorkflowHandle` — server-side scripts: versions, publish, write-only env, queued runs and the helpers that unpack a run's output |
 | `src/variables.ts` | `WorkflowVariablesApi` — the workspace's shared key/value store for workflow scripts (checkpoints, cursors): plain text, granted per workflow, and refusing to write in development mode |
 | `src/files.ts` | `FilesApi` — the workspace drive: the two system folders at the root, the three-step upload (row → presigned PUT → complete) done in one call, downloads, sharing and a trash whose only irreversible calls refuse to run in development mode |
-| `src/wiki.ts` | `WikiApi`/`WikiPageHandle` — the workspace wiki: pages addressed by slug (`wikiSlug` mirrors the server's Vietnamese-aware folding) with a per-page ACL on top of the `wiki` gate (`workspace`/`restricted`, excluded readers get 404; the SDK reads grants via `pageSharing`, changing them lives in the ERP app), immutable sources readable through citing pages, drive documents attached and indexed, and `ask` retrieving passages — reranked over the page's sources plus its published body, with caller-supplied `queries` and `excerpt` to read around a hit |
+| `src/wiki.ts` | `WikiApi`/`WikiPageHandle` — the workspace wiki: pages addressed by slug (`wikiSlug` mirrors the server's Vietnamese-aware folding) with a per-page ACL on top of the `wiki` gate (`workspace`/`restricted`, excluded readers get 404; the SDK reads grants via `pageSharing`, changing them lives in the ERP app), immutable sources readable through citing pages, drive documents attached and indexed, and `askWiki` retrieving reranked passages across the wiki — scoped by `autoRetrieve` (the server's page selection, not exposed on its own) or named `pages` — with caller-supplied `queries` and `excerpt` to read around a hit |
 | `src/tasks.ts` | `TaskBoardApi` — the member's personal AI task board (`/ai-task`): one board per member, found once and cached, every call scoped to it; a service-account key is refused client-side, and `delete`/`deleteComment` refuse in development mode |
 | `src/schema.ts` | The `schema.json` model plus the backend's validation and diff rules as **pure functions** (`validateSchema`, `planSchema`, `schemaConflicts`, `unresolvedRelations`) — no I/O, so the CLI, the SDK and build scripts all share one source of truth |
 | `src/frame.ts` | `DataFrame`/`GroupedFrame` — immutable pandas-style analysis over fetched records; every method returns a new frame |
@@ -173,7 +173,7 @@ documents, not rows — and `src/wiki.ts` is the workspace's knowledge base, whe
 page is addressed by an immutable **slug** (`wikiSlug` reimplements the server's
 Vietnamese-aware folding, so it must stay in step with `pkg/util/slug.go`) rather
 than through `resolveByName`. The two meet at attachments: a drive file copied into
-the wiki and indexed is what `wiki.ask` retrieves over, and copying it there drops the
+the wiki and indexed is what `wiki.askWiki` retrieves over, and copying it there drops the
 file's own sharing — say so wherever the call is documented.
 
 **Names are the address beyond records too.** `client.workflow()`,

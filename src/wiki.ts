@@ -22,7 +22,6 @@ import type {
   WikiPageStatus,
   WikiPageType,
   WikiPassageDto,
-  WikiRetrievedPageDto,
   WikiSettingsDto,
   WikiSourceDetailDto,
   WikiSourceDto,
@@ -60,7 +59,7 @@ export const MAX_WIKI_SOURCE_BODY_LENGTH = 2_000_000;
 export const MAX_WIKI_TAGS = 20;
 export const MAX_WIKI_PAGE_SOURCES = 50;
 export const MAX_WIKI_ASK_PASSAGES = 20;
-/** Alternate phrasings one `ask` may carry, on top of the question itself. */
+/** Alternate phrasings one `askWiki` may carry, on top of the question itself. */
 export const MAX_WIKI_ASK_QUERIES = 4;
 export const MAX_WIKI_ASK_PAGES = 50;
 /** The widest range `excerpt` returns in one call — `to - from + 1`. */
@@ -169,7 +168,7 @@ export interface WikiSettingsChanges {
   taxonomy?: string[];
 }
 
-export interface WikiAskOptions {
+export interface WikiAskWikiOptions {
   limit?: number;
   /**
    * Alternate phrasings of the same question, searched alongside `query` —
@@ -177,9 +176,6 @@ export interface WikiAskOptions {
    * {@link MAX_WIKI_ASK_QUERIES}, each at least 2 characters.
    */
   queries?: string[];
-}
-
-export interface WikiAskWikiOptions extends WikiAskOptions {
   pages?: string[];
   autoRetrieve?: boolean;
 }
@@ -287,7 +283,7 @@ function assertAskOptions(options: WikiAskWikiOptions): void {
  *
  * **Two kinds of provenance, and they are not interchangeable.** A *source* is
  * text ingested into the wiki and cited by a page. An *attachment* is a drive
- * file copied into the wiki and indexed, so {@link ask} can retrieve the
+ * file copied into the wiki and indexed, so {@link askWiki} can retrieve the
  * passages of it that answer a question — the RAG half. Attaching hands the
  * document to everyone who may read the page: the file's own sharing stops
  * applying at that moment.
@@ -380,7 +376,7 @@ export class WikiApi {
     }
   }
 
-  /** A page-scoped handle: update, publish, attach documents, ask them. */
+  /** A page-scoped handle: update, publish, attach documents. */
   async handle(slug: string): Promise<WikiPageHandle> {
     return new WikiPageHandle(this, await this.page(slug));
   }
@@ -534,7 +530,8 @@ export class WikiApi {
    *
    * Pasted text is indexed exactly like an attached document — the response
    * carries `indexStatus: "pending"` and {@link waitForIndex} applies, so a
-   * source cited on a page joins that page's {@link ask} pool once `ready`.
+   * source cited on a page becomes searchable through {@link askWiki} once
+   * `ready`.
    */
   async ingestSource(spec: WikiSourceSpec): Promise<WikiSourceDto> {
     if (!WIKI_SOURCE_KINDS.includes(spec.kind)) {
@@ -564,7 +561,7 @@ export class WikiApi {
 
   /**
    * Copies a drive file into the wiki and queues it for indexing, so
-   * {@link ask} can retrieve what it says. Answers 202 — the copy exists,
+   * {@link askWiki} can retrieve what it says. Answers 202 — the copy exists,
    * its passages do not yet: poll {@link waitForIndex}. Takes `wiki:create`
    * plus `write` on the page.
    *
@@ -591,49 +588,6 @@ export class WikiApi {
       "DELETE",
       `/ai-wiki/pages/${encodeURIComponent(slug)}/attachments/${sourceId}`,
       slug,
-    );
-  }
-
-  /**
-   * Retrieval over **this page's sources and no further** — everything the
-   * page cites or has attached, plus the page's own body once published: the
-   * passages that answer the question, matched by meaning and by wording
-   * together and reranked, each carrying the source to cite and a `link` back
-   * to it.
-   *
-   * It retrieves; it does not write an answer. What comes back is the context
-   * a model is given, or the quotes a person reads:
-   *
-   * ```ts
-   * const passages = await erp.wiki.ask("chinh-sach-ton-kho", "Mức tồn tối thiểu nhóm A?", {
-   *   queries: ["Reorder threshold nhóm A", "tồn kho an toàn"],  // widen it yourself
-   * });
-   * for (const p of passages) console.log(`${p.source}: ${p.text}`);
-   * ```
-   *
-   * 503 means the indexer or the embedding model is unavailable, not that the
-   * page has nothing to say. A page whose sources are still `pending` has
-   * nothing to retrieve yet.
-   */
-  async ask(
-    slug: string,
-    query: string,
-    options: WikiAskOptions = {},
-  ): Promise<WikiPassageDto[]> {
-    assertAskOptions(options);
-    return (
-      (await this.pageCall<WikiPassageDto[]>(
-        "POST",
-        `/ai-wiki/pages/${encodeURIComponent(slug)}/ask`,
-        slug,
-        {
-          body: {
-            query,
-            limit: options.limit,
-            queries: options.queries,
-          },
-        },
-      )) ?? []
     );
   }
 
@@ -664,16 +618,6 @@ export class WikiApi {
     return passages ?? [];
   }
 
-  async retrieve(query: string): Promise<WikiRetrievedPageDto[]> {
-    return (
-      (await this.http.request<WikiRetrievedPageDto[]>(
-        "POST",
-        "/ai-wiki/retrieve",
-        { body: { query } },
-      )) ?? []
-    );
-  }
-
   /**
    * The stored passage text of one source between two `seq` values — the
    * follow-up a passage's `link` points at when one passage was not enough.
@@ -694,7 +638,7 @@ export class WikiApi {
   /**
    * Polls a source until it is indexed. Returns it whatever it settles as —
    * `failed` carries `indexError`, and a document that fails to index is one
-   * {@link ask} will never find. Timing out does not stop the indexing.
+   * {@link askWiki} will never find. Timing out does not stop the indexing.
    */
   async waitForIndex(
     sourceId: string,
@@ -854,13 +798,5 @@ export class WikiPageHandle {
   async detach(sourceId: string): Promise<void> {
     await this.wiki.detachFile(this.slug, sourceId);
     await this.refresh();
-  }
-
-  /** {@link WikiApi.ask} scoped to this page's sources and published body. */
-  async ask(
-    query: string,
-    options: WikiAskOptions = {},
-  ): Promise<WikiPassageDto[]> {
-    return this.wiki.ask(this.slug, query, options);
   }
 }

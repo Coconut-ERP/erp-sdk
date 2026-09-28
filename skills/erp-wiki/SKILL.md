@@ -7,8 +7,8 @@ description: Writes, maintains and retrieves from the Coconut ERP workspace wiki
 
 One wiki per workspace, holding **what the organisation has concluded** — written
 once and linked, instead of re-derived from chat and files each time. Pages are
-drafted, published and linted; documents attached to a page are indexed so `ask` can
-retrieve the passages that answer a question.
+drafted, published and linted; documents attached to a page are indexed so `askWiki`
+can retrieve the passages that answer a question.
 
 ```ts
 import { createMiniApp } from "erp-sdk";
@@ -22,7 +22,7 @@ const erp = await createMiniApp({
 
 | Action | Permission |
 | --- | --- |
-| Read, search, `ask` | `wiki:read` — every role, including a mini app's `writer` key |
+| Read, search, `askWiki` | `wiki:read` — every role, including a mini app's `writer` key |
 | Draft, edit, ingest, attach, lint, read the log | `wiki:create` / `wiki:update` |
 | Publish, change settings | `wiki:manage` |
 
@@ -139,7 +139,7 @@ Changed content is a new source; that keeps citations stable.
 
 ## 6. Answering a question: the retrieval loop
 
-Don't hop from page to page and `ask` each one. One call searches the wiki, and the
+Don't hop from page to page asking each one. One call searches the wiki, and the
 server picks the pages:
 
 1. **Rewrite the question into a query.** Make it standalone: resolve "it"/"that
@@ -147,8 +147,9 @@ server picks the pages:
    numbers verbatim, and write it in the language the documents use. Add up to 4
    alternate phrasings as `queries` (synonyms, the other language, the formal
    term). The wiki does not expand queries, so this step is yours.
-2. **`askWiki` with `autoRetrieve: true`.** The server runs `retrieve` on the query
-   and searches only the pages it returns, plus the sources they cite.
+2. **`askWiki` with `autoRetrieve: true`.** The server picks the pages for the
+   query and searches only those, plus the sources they cite. That page selection
+   has no call of its own; `autoRetrieve` is the only way to use it.
    1. **Empty → ask again with no `pages`.** That searches every page and source
       you may read. An empty retrieval returns `[]`; it does not widen the search
       by itself.
@@ -165,7 +166,7 @@ async function findPassages(query: string, queries: string[]): Promise<WikiPassa
   const scoped = await erp.wiki
     .askWiki(query, { queries, autoRetrieve: true, limit: 8 })
     .catch((e) => {
-      if (e instanceof ErpApiError && e.status === 503) return [];   // retrieve has no decisions model
+      if (e instanceof ErpApiError && e.status === 503) return [];   // page selection has no decisions model
       throw e;
     });
   if (scoped.length > 0) return scoped;
@@ -185,10 +186,9 @@ if (passages.length === 0) {
 (cite it, with `p.headingPath`/`p.pageNumber`), `p.pageSlug`/`p.pageSlugs` (the pages
 it belongs to) and `p.link` (the page, or an `excerpt` range to read around the hit).
 
-Use `erp.wiki.ask(slug, …)` only when the user names a page or document: it searches
-that page's sources and body and nothing else. `erp.wiki.retrieve(query)` returns
-the matching pages instead of passages, for "which pages cover X". Details, index
-states and composing a cited answer are in `references/retrieval.md`.
+When the user names a page or document, pass it as `pages: [slug]`: that searches
+the page's sources and body and nothing else. Details, index states and composing a
+cited answer are in `references/retrieval.md`.
 
 ## 7. Lint
 
@@ -220,11 +220,11 @@ the next round of work.
 | `UnknownWikiPageError` on a page you can see | The title was passed; the address is the slug |
 | `UnknownWikiPageError` on a page others can see | It is `restricted` and you hold no grant — exclusion reads as absence |
 | Edits "disappear" | The edit returned the page to `draft`; readers still see the published version |
-| `autoRetrieve` returns `[]` | Retrieve found no page. Ask again with no `pages`, then broaden |
+| `autoRetrieve` returns `[]` | The server picked no page. Ask again with no `pages`, then broaden |
 | Nothing found even across the whole wiki | Sources are still `pending` or `failed`, or the wiki really doesn't cover it |
-| Looping `ask` over page after page | Use `askWiki`; it searches the whole wiki in one call |
+| Looping `askWiki` over page after page | Use `autoRetrieve` or no `pages`; one call searches the whole wiki |
 | `indexStatus: "failed"` | Usually uploaded as `application/octet-stream`; set `mimeType` on upload |
-| 503 with `autoRetrieve` | No decisions model for retrieve; ask with no `pages` |
+| 503 with `autoRetrieve` | No decisions model for page selection; ask with no `pages` |
 | 503 without `autoRetrieve` | The indexer or embedding model is down, not an empty wiki |
 | Duplicate pages on one topic | The catalog was not read first |
 | New broken links after a cleanup | `delete` was used where `archive` was meant |

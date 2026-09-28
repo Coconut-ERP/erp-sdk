@@ -671,7 +671,7 @@ export interface WikiSourceDetailDto extends WikiSourceDto {
 }
 
 /**
- * One retrieved chunk — what `ask` answers with. `docKind` says what the chunk
+ * One retrieved chunk — what `askWiki` answers with. `docKind` says what the chunk
  * came from: `source` for an ingested or attached document, `page` for the
  * published page itself. `link` is the follow-up: `/ai-wiki/pages/{slug}` for
  * page passages, or the {@link WikiApi.excerpt} path for a source.
@@ -724,17 +724,6 @@ export interface WikiCatalogEntry {
 export interface WikiCatalogDto {
   totalPages: number;
   sections: Record<string, WikiCatalogEntry[]>;
-}
-
-export interface WikiRetrievedPageDto {
-  slug: string;
-  title: string;
-  type: WikiPageType | (string & {});
-  summary: string;
-  score: number;
-  via?: string;
-  search_hit?: boolean;
-  link: string;
 }
 
 export interface WikiPageMatchDto {

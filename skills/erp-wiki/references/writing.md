@@ -138,7 +138,7 @@ Two rules the ACL adds:
   readers, so the server refuses (403) a source you cannot read yourself. On an open
   page, citing a confidential note *is* sharing it with the wiki.
 
-Pasted text is indexed too — a `ready` source joins the `ask` pool of every page
+Pasted text is indexed too — a `ready` source joins the `askWiki` pool of every page
 citing it, so `waitForIndex` applies after `ingestSource` as well as `attachFile`.
 
 ## Lint findings

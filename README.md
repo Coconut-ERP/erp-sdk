@@ -941,16 +941,16 @@ const passages = await app.wiki.askWiki("Nhóm A giữ tồn tối thiểu bao n
   returns passages from published pages and their indexed sources, matched by
   meaning and by wording together, then reranked. Each passage carries the source
   to cite and a `link` for reading around the hit (`excerpt`).
-  - `autoRetrieve: true` first runs `retrieve(query)`, which picks the relevant
-    pages, and searches only those. If `retrieve` finds no page, the call returns
-    `[]`; the search does not widen by itself.
+  - `autoRetrieve: true` first has the server pick the relevant pages (search
+    plus a walk over `[[links]]`) and searches only those. If it finds no page,
+    the call returns `[]`; the search does not widen by itself. That page
+    selection is not exposed on its own — `autoRetrieve` is the only way in.
   - With no `pages`, it searches everything the caller may read.
-  - `pages` limits the search to the pages you name (ids or slugs).
+  - `pages` limits the search to the pages you name (ids or slugs) — one slug
+    asks a single page's sources and body.
   - Rewriting the query and passing extra phrasings as `queries` is the caller's
     job. The skill's retrieval loop is: rewrite, then `autoRetrieve`, then the
     whole wiki, then a broader query.
-  - `ask(slug, …)` searches one page's sources and body.
-  - `retrieve(query)` returns the matching pages instead of passages.
 - `lint()` reports broken links, orphans, contested and stale pages, thin
   provenance and tags outside the taxonomy; `archivePage` retires a page without
   turning what links to it into broken links, which `deletePage` does. Both

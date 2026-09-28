@@ -1,6 +1,6 @@
 # Attachments and retrieval
 
-The page holds the conclusion; its sources hold the evidence; `ask` goes from a
+The page holds the conclusion; its sources hold the evidence; `askWiki` goes from a
 question to the exact passages.
 
 ## Contents
@@ -72,13 +72,13 @@ stored as `application/octet-stream`; pass `mimeType` at upload.
 
 ## The retrieval loop
 
-To answer a question, don't open pages one at a time and `ask` each of them.
+To answer a question, don't open pages one at a time and ask each of them.
 `askWiki` searches the wiki in one call, and the server picks the pages:
 
 | Step | Call | Searches |
 | --- | --- | --- |
 | 1 | You rewrite the question into `query` plus up to 4 `queries` | — |
-| 2 | `askWiki(query, { queries, autoRetrieve: true })` | The pages `retrieve` returns, plus the sources they cite |
+| 2 | `askWiki(query, { queries, autoRetrieve: true })` | The pages the server picks, plus the sources they cite |
 | 2.1 | Empty → `askWiki(query, { queries })` | Every page and source you may read |
 | 2.2 | Still empty → broaden `query`, back to step 2 | — |
 | 3 | Return the passages, cited | — |
@@ -90,10 +90,11 @@ lexical leg matches them literally. Write in the language of the documents. Use
 `queries` for other wordings: a synonym, the English term, the formal name. Each
 phrasing is at least 2 characters and there are at most 4.
 
-**Step 2: `autoRetrieve`.** The server runs `retrieve` first, which picks pages by
-search and by a walk over `[[links]]` judged by a decisions model, then searches
-only those pages. That is the precise pool, but a `retrieve` that finds no page
-returns `[]` without searching anything.
+**Step 2: `autoRetrieve`.** The server first picks pages by search and by a walk
+over `[[links]]` judged by a decisions model, then searches only those pages. That
+is the precise pool, but when it picks no page the call returns `[]` without
+searching anything. The page selection has no call of its own in the SDK;
+`autoRetrieve` is the only way to use it.
 
 **Step 2.1: the whole wiki.** Ask again without `pages` and without `autoRetrieve`.
 That searches every published page and indexed source you may read. Restricted
@@ -133,15 +134,12 @@ for (const [query, queries] of rounds) {
 In practice you write the broader round only after the narrower one comes back
 empty. The array above just shows how the rounds progress.
 
-A 503 **with** `autoRetrieve` means `retrieve` has no decisions model configured.
-Skip to step 2.1. A 503 **without** it means the indexer or embedding model is down.
-Retry once, then tell the user; it doesn't mean the wiki is empty.
+A 503 **with** `autoRetrieve` means page selection has no decisions model
+configured. Skip to step 2.1. A 503 **without** it means the indexer or embedding
+model is down. Retry once, then tell the user; it doesn't mean the wiki is empty.
 
-`erp.wiki.retrieve(query)` is the first half of step 2 on its own: it returns the
-pages, best first (`slug`, `title`, `summary`, `score`, `via`, `search_hit`, `link`).
-Use it for "which pages cover X", or to name those pages in `pages` yourself. The
-server caches retrieve by meaning for 7 days, per reader, so asking the same
-question again is cheap.
+The server caches its page selection by meaning for 7 days, per reader, so asking
+the same question again is cheap.
 
 ## Passages
 
@@ -173,15 +171,14 @@ for (const p of passages) {
 ## Asking one page
 
 ```ts
-const passages = await erp.wiki.ask(slug, question, { queries, limit: 8 });
+const passages = await erp.wiki.askWiki(question, { pages: [slug], queries, limit: 8 });
 ```
 
-This searches one page's pool and nothing else: its indexed sources (cited through
-`sourceIds` and attached documents, which are the same link) plus the page's body
-once published. Use it when the user names the page or the document ("ask the
-contract PDF"), or right after attaching a file to check that it answers. For an
-open question, use the retrieval loop above. `askWiki(q, { pages: [slug] })` is the
-same pool addressed from the wiki-wide endpoint.
+Naming one page searches its pool and nothing else: its indexed sources (cited
+through `sourceIds` and attached documents, which are the same link) plus the
+page's body once published. Use it when the user names the page or the document
+("ask the contract PDF"), or right after attaching a file to check that it answers.
+For an open question, use the retrieval loop above.
 
 ## Reading around a hit
 
