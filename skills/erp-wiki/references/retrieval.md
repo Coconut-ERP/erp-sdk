@@ -70,6 +70,17 @@ stopping the indexing — check the status it returns. A large PDF can outlast t
 default wait. The usual `failed` cause is an upload under an unmapped extension,
 stored as `application/octet-stream`; pass `mimeType` at upload.
 
+A `ready` copy is frozen: it is never read from the drive again, so editing or
+replacing the file there changes nothing the wiki answers with, and lint does not
+flag it. To index a new version, detach the file and attach it again — it becomes a
+new source. Attaching a file that is already on the page answers 409.
+
+```ts
+await erp.wiki.detachFile(slug, oldSource.id);
+const fresh = await erp.wiki.attachFile(slug, file.id);
+await erp.wiki.waitForIndex(fresh.id);
+```
+
 ## The retrieval loop
 
 To answer a question, don't open pages one at a time and ask each of them.

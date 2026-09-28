@@ -130,7 +130,10 @@ const attached = await erp.wiki.attachFile(slug, file.id);   // 202, indexing qu
 await erp.wiki.waitForIndex(attached.id);                    // check indexStatus: ready | failed
 ```
 
-Changed content is a new source; that keeps citations stable.
+Changed content is a new source; that keeps citations stable. An attachment works the
+same way: a `ready` copy is frozen, and editing or replacing the file in the drive
+changes nothing in the wiki. To pick up a new version, `detachFile` then `attachFile`
+again — attaching a file that is already on the page is a 409.
 
 > **Attaching a file discloses it to the page's readers.** The copy stops following
 > the file's own sharing, so everyone who can read the page can ask what it says —
@@ -224,6 +227,8 @@ the next round of work.
 | Nothing found even across the whole wiki | Sources are still `pending` or `failed`, or the wiki really doesn't cover it |
 | Looping `askWiki` over page after page | Use `autoRetrieve` or no `pages`; one call searches the whole wiki |
 | `indexStatus: "failed"` | Usually uploaded as `application/octet-stream`; set `mimeType` on upload |
+| Answers quote an old version of a document | The attached copy is frozen; detach and attach the file again |
+| 409 attaching a file | It is already on the page; detach it first to re-index a new version |
 | 503 with `autoRetrieve` | No decisions model for page selection; ask with no `pages` |
 | 503 without `autoRetrieve` | The indexer or embedding model is down, not an empty wiki |
 | Duplicate pages on one topic | The catalog was not read first |

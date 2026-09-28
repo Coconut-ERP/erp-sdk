@@ -576,6 +576,11 @@ Field types: `text`, `long_text`, `number`, `currency`, `percent`, `checkbox`,
 `date`, `datetime`, `single_select`, `multi_select`, `url`, `email`, `phone`,
 `relation`, `lookup`, `rollup`, `formula`, `attachment`.
 
+A `lookup` follows a relation of its own object; a `rollup` aggregates the
+records that link **in** — the relation lives on the child object and points at
+the parent, and the parent's rollup folds every child pointing at it (`sum` over
+none is `0`). Writing a child's relation is all it takes to count it.
+
 ## DataFrame — pandas-style analysis
 
 `toFrame()` pulls all matching records and wraps them in an immutable,
@@ -932,7 +937,9 @@ const passages = await app.wiki.askWiki("Nhóm A giữ tồn tối thiểu bao n
 - **Sources and attachments are different things.** A source is immutable text
   the page cites; an attachment is a drive file copied into the wiki and
   indexed. Attaching hands the document to everyone who may read the page — the
-  file's own sharing stops applying at that moment.
+  file's own sharing stops applying at that moment. A `ready` copy is frozen:
+  changing the file in the drive changes nothing in the wiki, so a new version
+  is `detachFile` then `attachFile` again (attaching it twice is a 409).
 - **Each page also has its own ACL.** `workspace` opens it to everyone the
   `wiki` gate lets in; `restricted` limits it to the creator plus grants, and
   excluded members see a 404 rather than a 403. `pageSharing(slug)` reads the

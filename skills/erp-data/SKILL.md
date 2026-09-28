@@ -135,6 +135,10 @@ fields, where `null` clears the value. To add one link, send
 - `get(id)` returns no relations; query instead, or `preload`.
 - `formula` / `lookup` / `rollup` values live in `computedData` and recalculate in
   the background, so they can lag a write.
+- A `rollup` aggregates the rows that **link in**: the relation sits on the child
+  object and points at the parent, and the parent sums its children. To total child
+  rows onto a parent, set the child's relation, not the parent's. `sum` over no
+  children is `0`; `avg` / `min` / `max` are empty.
 - `sum` / `avg` turn unparseable strings into `0`; check the column first.
 - After a structure change the client did not make, call `erp.invalidate()` or the
   cache keeps the old fields.

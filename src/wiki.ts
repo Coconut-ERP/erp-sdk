@@ -569,6 +569,10 @@ export class WikiApi {
    * stops applying, so everyone who may read this page may ask about what the
    * document says — on a `restricted` page that is still a disclosure. The
    * caller must be able to read the file themselves.
+   *
+   * A `ready` copy is frozen: later edits to the drive file never reach the
+   * wiki. Detach and attach again to index a new version; attaching a file
+   * already on the page is a 409.
    */
   async attachFile(slug: string, fileId: string): Promise<WikiSourceDto> {
     return this.pageCall<WikiSourceDto>(

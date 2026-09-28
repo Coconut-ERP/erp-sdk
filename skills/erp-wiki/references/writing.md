@@ -155,6 +155,7 @@ const report = await erp.wiki.lint();
 | `contested` page | Resolve it with the user; don't pick a side silently |
 | Stale page | Re-check against current sources; set `confidence` honestly |
 | Thin provenance | Add `sourceIds`, or lower `confidence` |
+| `index_failed` attachment | Read `indexError`; usually re-upload with the right `mimeType` and attach again |
 | Tag outside taxonomy | Use an existing tag, or ask before widening the taxonomy |
 
 Lint needs `wiki:update` because it stamps `lintedAt` and writes to the log. Run it

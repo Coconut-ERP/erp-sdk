@@ -98,6 +98,9 @@ transaction as the rest of the row.
   bulk calls included.
 - A query returns every outgoing relation as an id array; `create` / `update` return
   only the fields they wrote; `get(id)` returns none.
+- A `rollup` reads a relation from the other side: it lives on the parent and
+  aggregates every child row whose relation points at it. Link a new child by
+  writing the child's relation; nothing on the parent needs re-linking.
 - In a bulk update the patch applies to every matched row, so
   `{ "Line Items": [] }` clears links on up to 5,000 records at once.
 
