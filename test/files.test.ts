@@ -175,4 +175,29 @@ describe("trash", () => {
       DryRunUnsupportedError,
     );
   });
+
+  it("asks one file and validates the options client-side", async () => {
+    const http = new FakeHttp({
+      "POST /files/file-1/ask": [[{ text: "Nhóm A: 30 ngày.", score: 0.7 }]],
+    });
+    const files = new FilesApi(http);
+
+    const passages = await files.ask("file-1", "Tồn tối thiểu nhóm A", {
+      queries: ["safety stock nhóm A"],
+      limit: 5,
+    });
+    expect(passages).toHaveLength(1);
+    expect(http.body(0)).toEqual({
+      query: "Tồn tối thiểu nhóm A",
+      queries: ["safety stock nhóm A"],
+      limit: 5,
+    });
+
+    await expect(files.ask("file-1", "x", { limit: 50 })).rejects.toThrow(
+      /at most 20/,
+    );
+    await expect(
+      files.ask("file-1", "x", { queries: ["a", "b", "c", "d", "e"] }),
+    ).rejects.toThrow(/at most 4/);
+  });
 });

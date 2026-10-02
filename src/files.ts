@@ -12,7 +12,9 @@ import type {
   PageMeta,
   SharingEntry,
   TrashItemDto,
+  WikiPassageDto,
 } from "./types";
+import { assertAskOptions, type WikiAskWikiOptions } from "./wiki";
 
 /** What the server stores when an upload names no type of its own. */
 export const DEFAULT_MIME_TYPE = "application/octet-stream";
@@ -83,6 +85,8 @@ export interface ListFilesOptions {
   page?: number;
   perPage?: number;
 }
+
+export type FileAskOptions = Pick<WikiAskWikiOptions, "limit" | "queries">;
 
 export interface FolderChanges {
   name?: string;
@@ -365,6 +369,20 @@ export class FilesApi {
       );
     }
     return new Uint8Array(await response.arrayBuffer());
+  }
+
+  async ask(
+    fileId: string,
+    query: string,
+    options: FileAskOptions = {},
+  ): Promise<WikiPassageDto[]> {
+    assertAskOptions(options);
+    const passages = await this.http.request<WikiPassageDto[]>(
+      "POST",
+      `/files/${fileId}/ask`,
+      { body: { query, queries: options.queries, limit: options.limit } },
+    );
+    return passages ?? [];
   }
 
   /** {@link download} decoded as UTF-8 — for the text files an app writes. */

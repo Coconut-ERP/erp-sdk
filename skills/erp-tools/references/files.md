@@ -12,6 +12,7 @@ Permissions: `file:create` / `read` / `update` / `delete`, plus the matching
 - [Folders](#folders)
 - [Uploading](#uploading)
 - [Listing and downloading](#listing-and-downloading)
+- [Asking a file](#asking-a-file)
 - [Sharing](#sharing)
 - [Trash](#trash)
 - [Pitfalls](#pitfalls)
@@ -69,6 +70,27 @@ await erp.files.downloadUrl(id);    // { downloadUrl, expiresInSeconds } — for
 With `search`, a listing covers the whole subtree; without it, only the folder —
 `recursive` flips either. A download URL carries no ERP credential and expires: pass it
 on, never store it.
+
+## Asking a file
+
+```ts
+const passages = await erp.files.ask(file.id, "Điều khoản thanh toán?", {
+  queries: ["hạn thanh toán", "payment terms"],   // optional phrasings, at most 4
+  limit: 8,                                       // at most 20
+});
+```
+
+Retrieval over this one file's current version, gated by `file:read` and the file's
+own access — no wiki permission, no page to attach to. It returns passages (`text`,
+`headingPath`, `pageNumber`, `score`, `link`), not an answer.
+
+- The first ask of a version reads and embeds it inside the request, so it is slow;
+  every later ask, and any wiki page attaching the same version, reuses that index.
+- `503` means another run held the file past the timeout — retry. `422` means the
+  file could not be read; it stays failed until the file changes.
+- A new upload of the file is a new version and is indexed again on its next ask.
+- Asking does not add the file to the wiki. To make it part of `erp.wiki.askWiki`
+  retrieval, attach it to a page (`erp-wiki`).
 
 ## Sharing
 

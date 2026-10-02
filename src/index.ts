@@ -47,6 +47,7 @@ export {
 } from "./errors";
 export {
   DEFAULT_MIME_TYPE,
+  type FileAskOptions,
   type FileChanges,
   type FileContent,
   FilesApi,

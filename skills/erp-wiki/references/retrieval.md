@@ -191,6 +191,17 @@ page's body once published. Use it when the user names the page or the document
 ("ask the contract PDF"), or right after attaching a file to check that it answers.
 For an open question, use the retrieval loop above.
 
+## Asking one drive file
+
+```ts
+const passages = await erp.files.ask(fileId, question, { queries, limit: 8 });
+```
+
+When the question is about a single document and no wiki page is involved, skip the
+attach step: `files.ask` gates on `file:read` and the file's own access, indexes the
+current version on first ask, and shares that index with any page attaching the same
+version. Asking does not put the file in the wiki.
+
 ## Reading around a hit
 
 A passage arrives merged with its neighbours; when even that is not enough,

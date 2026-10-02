@@ -103,6 +103,7 @@ const file = await erp.files.upload({
 
 const { files } = await erp.files.list({ folderId: folder.id, search: "hợp đồng" });
 const bytes = await erp.files.download(file.id);        // Uint8Array; downloadText() for a string
+const hits = await erp.files.ask(file.id, "câu hỏi");  // passages from this one file
 const { downloadUrl } = await erp.files.downloadUrl(file.id);   // for a browser; expires
 ```
 

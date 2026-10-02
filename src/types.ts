@@ -653,6 +653,7 @@ export interface WikiSourceDto {
   createdAt: string;
   /** Set on a source that came from a drive file, not from pasted text. */
   fileId?: string;
+  fileVersion?: number;
   mimeType?: string;
   pageCount?: number;
   /**

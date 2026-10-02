@@ -878,9 +878,22 @@ const { files } = await app.files.list({ folderId: folder.id, search: "báo cáo
 const bytes = await app.files.download(file.id);
 await app.files.update(file.id, { name: "bao-cao.csv" });
 await app.files.delete(file.id);                      // to the trash
+
+const passages = await app.files.ask(file.id, "Điều khoản thanh toán?", {
+  queries: ["hạn thanh toán"],
+  limit: 8,
+});
 ```
 
-Four things shape it:
+Four things shape it, and a fifth for questions:
+
+- **`files.ask` answers from one file, not the wiki.** It needs `file:read` and
+  the file's own access, nothing on the wiki. The first ask of a file version reads
+  and embeds it inside the request (it can take a while; `503` if another run holds
+  it past the timeout, `422` if the file cannot be read), every later ask reuses
+  the index, and so does attaching that version to a wiki page. Like `askWiki` it
+  returns passages, not an answer, and `limit` ≤ 20, `queries` ≤ 4. Asking does not
+  put the file in the wiki.
 
 - **The root is not writable.** Listing folders with no parent returns exactly
   two — the caller's personal folder and the workspace's shared `Public` tree

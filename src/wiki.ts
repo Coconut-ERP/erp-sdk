@@ -242,7 +242,7 @@ function assertPageFields(
   }
 }
 
-function assertAskOptions(options: WikiAskWikiOptions): void {
+export function assertAskOptions(options: WikiAskWikiOptions): void {
   if (options.limit !== undefined && options.limit > MAX_WIKI_ASK_PASSAGES) {
     throw new WikiPageError(
       "ask limit",
